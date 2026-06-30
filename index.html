@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Crime Data-Viz · Stage 0 spike</title>
+    <style>
+      :root { color-scheme: dark; }
+      html, body { margin: 0; height: 100%; background: #05060a; overflow: hidden; }
+      #app { position: fixed; inset: 0; }
+      canvas { display: block; }
+
+      .hud {
+        position: fixed;
+        left: 22px;
+        bottom: 20px;
+        font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+        color: #6b7689;
+        letter-spacing: 0.02em;
+        pointer-events: none;
+        user-select: none;
+      }
+      .hud b { color: #cdd6ee; font-weight: 500; }
+      .hud .hint { color: #ffce86; }
+      #fps { position: fixed; right: 20px; top: 16px; font: 12px ui-monospace, monospace; color: #46506a; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div class="hud">
+      <div><b>Stage 0</b> — engine spike · fake data</div>
+      <div><span class="hint">click / space</span> to morph &nbsp;·&nbsp; blob &harr; ring</div>
+    </div>
+    <div id="fps"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

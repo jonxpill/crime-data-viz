@@ -1,0 +1,21 @@
+{
+  "name": "crime-data-viz",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Crime data as one living field of luminous points. Stage 0 — engine spike on fake data.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^6.0.7"
+  },
+  "dependencies": {
+    "three": "^0.171.0"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true
+  }
+}
