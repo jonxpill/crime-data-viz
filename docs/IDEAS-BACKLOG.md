@@ -21,11 +21,12 @@
   tallest→shortest — additive: the map shows *where*, the bars the exact order+magnitude) · **year bars**
   (the 15-yr trend, partner to the scrub) · **crime × elevation scatter** (bridges the terrain — crime hugs
   the low ground). Mostly a new layout function; the existing morph + stagger/swarm animate the fly-over.
-  Lean: ranked station bars first. Do after the terrain instrument lands.
+  Lean: ranked station bars first. **Terrain has landed (2026-07-01) → this is now the ripe NEXT instrument.**
+  (The crime × elevation scatter is already half-built — crime rides the terrain's baked height.)
 - **Specific instruments** — decided later, *by the data + what's worth showing* (the engine renders any
   layout; don't pre-spec the catalogue). Loose candidates seen so far: the particle-morph, the year
   time-lapse, the **discrepancy lens** (reported vs experienced vs died), a per-capita choropleth, the
-  **elevation terrain**, the history/apartheid overlay, type breakdowns, comparison.
+  **elevation terrain** (✅ shipped 2026-07-01), the history/apartheid overlay, type breakdowns, comparison.
 - **Where it lives / distribution** — a static site (it bakes to static; GitHub Pages-able). Portfolio host?
 - **A name** — working title is "Crime Data-Viz"; the concept ("a living field of light") wants something
   more evocative eventually.

@@ -12,6 +12,42 @@ for the maker's own pleasure — play, not a product.** Honesty discipline: *it'
 tell, just told beautifully.* On resuming: read this + BUILD-PLAN + the idea note, play back understanding,
 and remember the eye is the judge — render and look.
 
+## Current state (2026-07-01) — where a cold session picks up
+**Live:** https://jonxpill.github.io/crime-data-viz/ · repo `jonxpill/crime-data-viz` (public) · trunk =
+`main` · deploy = `npm run deploy` (builds + pushes `dist` to the `gh-pages` branch). All real SAPS data.
+
+**Shipped & working:**
+- **Map** — 60 Cape Town precincts; glowing crime (robbery · burglary · murder, 2008–2023); grey precinct
+  mesh + coastline + Robben Island.
+- **Year-scrub** (2008→2023; the COVID-2020 dip reads) · **3-crime flip** (↑↓; reads as move / grow / thin
+  honestly) · **swarm transitions** (surplus dots roost off-screen and fly back).
+- **Terrain view (`T`)** — the overhead map RISES into Cape Town's 3D relief (slope-shaded; the land ends
+  at the coast, ocean culled). **Crime CLIMBS** the land (rides the same baked DEM), pooling low in the
+  Cape Flats basin with the mountains climbing around it.
+
+**Architecture as it now stands — TWO conserved swarms** sharing one frame (`fieldGroup`): `field` = DATA
+(glowing crime), `terrainField` = TOOL (the single map⇄terrain pool). Each holds a fixed buffer; active
+dots sit on-screen, surplus parks off-screen; **a view = {layout + active count}, and only the delta ever
+flies** (restructure what you have; swarm the shortfall in / surplus out). The engine gained its first 3D
+axis (per-point `aZ` × one `uZScale`) and is still pure — it knows nothing of crime or maps. Layouts live
+in `src/layouts/capeTown.js` (`buildCrimeLayouts` · `terrainLayout` · `structureMapSource`).
+
+**Immediate next threads (none blocking; the maker drives by curiosity):**
+- **Per-capita toggle** — the load-bearing honesty TODO (WorldPop/census → precinct join; WorldPop clip is
+  on disk). Raw counts alone redden poor areas; the `mode:'percapita'` layout path already exists.
+- **"Leave the map" chart-morph** — the ripe next instrument (ranked-station bars); see IDEAS-BACKLOG.
+- **Zoom/orbit into the relief** — parked by the maker; now just a `controls.enableRotate` flip (it's real 3D).
+- Polish backlog: polygon-fill jitter · coastline / Table-Mountain void · VOCS "experienced" leg.
+
+**Gotchas a cold session MUST know:**
+- `src/main.js` keeps a `window.__viz` debug/tuning console (drift · stagger · terrainNow · terrainAt ·
+  tdbg · hideData · matte · zpeak · tilt · roost). Intentionally kept for live tinkering — console-only,
+  harmless in production. Strip only if a truly clean ship is wanted.
+- Re-bake: `node pipeline/bake.mjs` (needs `data/raw/terrain/` DEM tiles + `pipeline/sapacr-*`, both
+  git-ignored / re-downloadable). Baked `public/data/capetown.json` (~673 KB) is what ships.
+- `.gitignore` inline `#` comments are NOT comments — one became part of a pattern and leaked the raw DEM
+  tiles as untracked once (now fixed: comment on its own line).
+
 ## The mental model (why this exists)
 The maker lives in South Africa, is genuinely curious about crime, and wants to **enjoy looking at the
 data** — to make it more interesting than a SAPS/government stat sheet. **For himself first** (same footing

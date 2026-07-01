@@ -3,11 +3,12 @@
 Crime data as **one living field of light** — a luminous point-field where the data glows and
 the geography greys, so it's something you actually *want* to look at instead of a stat sheet.
 Cape Town robbery, burglary and murder (2008–2023) as a morphing swarm: flip between crimes,
-scrub the years, and watch the light move, grow and thin.
+scrub the years, and watch the light move, grow and thin. Press `T` and the whole map rises into
+Cape Town's 3D landform — the crime pooling low in the Flats with the mountains climbing around it.
 
 **▶ Live:** https://jonxpill.github.io/crime-data-viz/
 
-**Controls:** `space` play/pause · `← →` year · `↑ ↓` crime · `scroll` zoom · `drag` pan
+**Controls:** `space` play/pause · `← →` year · `↑ ↓` crime · `T` terrain · `scroll` zoom · `drag` pan
 
 Each glowing dot is one real crime; colour is local density (cool/sparse → warm/dense); the grey
 mesh is the real police-precinct geography. When a crime is rarer the swarm honestly thins — surplus
@@ -38,6 +39,7 @@ Download → process → **bake a static asset** the page loads. No backend.
 npm install
 npm run dev      # local dev server
 npm run build    # → dist/ (base /crime-data-viz/ for GitHub Pages)
+npm run deploy   # build + publish dist to the gh-pages branch (updates the live site)
 node pipeline/bake.mjs   # re-bake public/data/capetown.json from data/raw + pipeline/sapacr-*
 ```
 
