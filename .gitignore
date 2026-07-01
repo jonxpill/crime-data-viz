@@ -38,3 +38,5 @@ pipeline/sapacr-2008-2023-v1.1/*.dta
 pipeline/sapacr-2008-2023-v1.1/*.sav
 data/raw/*.tif
 data/raw/sal-pop.csv
+# AWS Terrain Tiles (z10) — re-downloadable elevation DEM (an inline # is NOT a gitignore comment)
+data/raw/terrain/

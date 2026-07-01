@@ -104,6 +104,23 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
     }
   }
 
+  // Terrain height under each crime dot (sampled from the baked DEM) so in the terrain view
+  // the crime "climbs" the relief — high-ground crime rides the mountains, the flats stay low.
+  const T = data.terrain;
+  const crimeZ = new Float32Array(COUNT);
+  if (T) {
+    const BW = data.meta.box.w, BH = data.meta.box.h;
+    for (const sl of slots) {
+      for (let j = 0; j < sl.K; j++) {
+        const x = sl.s.x + sl.offs[j * 2], y = sl.s.y + sl.offs[j * 2 + 1];
+        const gi = Math.max(0, Math.min(T.cols - 1, Math.round(((x + BW / 2) / BW) * (T.cols - 1))));
+        const gj = Math.max(0, Math.min(T.rows - 1, Math.round(((BH / 2 - y) / BH) * (T.rows - 1))));
+        const e = T.elev[gj * T.cols + gi];
+        crimeZ[sl.base + j] = (e > 0 ? e / T.peak : 0) + 0.04; // +lift → sits ABOVE the land dots
+      }
+    }
+  }
+
   const layouts = {};
   const totals = {};
   for (const type of types) {
@@ -145,7 +162,7 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
         const d = Math.pow(Math.min(p.raw[k] / gMax, 1), 0.55);
         density[p.activeIdx[k]] = ACTIVE_FLOOR + (1 - ACTIVE_FLOOR) * d;
       }
-      return { positions: p.positions, density };
+      return { positions: p.positions, density, z: crimeZ };
     });
 
     totals[type] = years.map((y) => stations.reduce((a, s) => a + (s.crimes[type][y] || 0), 0));
@@ -157,7 +174,79 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
 /** Structure layout from the baked precinct boundaries: { positions, density }. */
 export function structureLayout(data) {
   const positions = Float32Array.from(data.structure);
-  return { positions, density: new Float32Array(positions.length / 2).fill(0.5) };
+  return { positions, density: new Float32Array(positions.length / 2).fill(0.8) };
+}
+
+/**
+ * Terrain layout from the baked elevation grid: grey points laid on the projected box
+ * with a per-point height z (normalised 0..1). Grid orientation matches bake.mjs so the
+ * relief registers with the crime + precincts. The engine lifts z via uZScale.
+ */
+export function terrainLayout(data) {
+  const { cols, rows, peak, elev } = data.terrain;
+  const { w: W, h: H } = data.meta.box;
+  const rng = mulberry32(0x7e44a1);
+  const jit = 0.75 * (W / cols); // scatter points off the grid so no rows/columns read
+  const land = (ii, jj) => Math.max(0, elev[Math.max(0, Math.min(cols - 1, ii)) + Math.max(0, Math.min(rows - 1, jj)) * cols]);
+  const SLOPE_NORM = 130; // elevation drop (m) between neighbours that reads as a full slope
+  const n = cols * rows;
+  const positions = new Float32Array(n * 2);
+  const roosts = new Float32Array(n * 2); // off-screen start points — the land flies IN from here
+  const z = new Float32Array(n);
+  const density = new Float32Array(n);
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const idx = j * cols + i;
+      const cx = -W / 2 + (i / (cols - 1)) * W;
+      const cy = H / 2 - (j / (rows - 1)) * H;
+      positions[idx * 2] = cx + (rng() - 0.5) * 2 * jit;
+      positions[idx * 2 + 1] = cy + (rng() - 0.5) * 2 * jit;
+      const ang = Math.atan2(cy, cx) + (rng() - 0.5) * 0.7; // fly in radially from its own direction
+      const rr = 720 * (0.85 + rng() * 0.4);
+      roosts[idx * 2] = Math.cos(ang) * rr;
+      roosts[idx * 2 + 1] = Math.sin(ang) * rr;
+      const raw = elev[idx];
+      if (raw < 0) { density[idx] = 0; continue; } // ocean → hidden; the land ends at the coastline
+      const h = peak ? Math.min(1, raw / peak) : 0;
+      const slope = Math.min(1, Math.hypot(land(i + 1, j) - land(i - 1, j), land(i, j + 1) - land(i, j - 1)) / SLOPE_NORM);
+      z[idx] = h;
+      // brighter the HIGHER the land and the STEEPER the slope (ridges + faces glow).
+      // steep gamma on h + low base sinks the flats deep into the dark; the ridges keep the light.
+      density[idx] = 0.03 + 0.6 * Math.pow(h, 1.6) + 0.6 * slope;
+    }
+  }
+  return { positions, density, z, roosts };
+}
+
+/**
+ * ONE tool swarm. The map arrangement (source) for the unified structure field: 17.8k of the
+ * terrain dots — spread across the land — start on the precinct-boundary positions (that IS the
+ * overhead map); the rest wait off-screen. The target is terrainLayout (each dot to its OWN
+ * landscape spot). So on the flip: boundary dots RESTRUCTURE, parked dots SWARM IN, ocean stays
+ * culled — only the delta ever flies. The swarm conserves what it can.
+ */
+export function structureMapSource(data, terr) {
+  const boundary = data.structure;           // flat xy of the precinct mesh
+  const B = boundary.length / 2;
+  const n = terr.density.length;
+  const positions = new Float32Array(n * 2);
+  const density = new Float32Array(n);
+  const landIdx = [];
+  for (let idx = 0; idx < n; idx++) if (terr.density[idx] > 0) landIdx.push(idx);
+  const L = landIdx.length || 1;
+  const boundaryOf = new Int32Array(n).fill(-1);
+  for (let b = 0; b < B; b++) boundaryOf[landIdx[Math.min(L - 1, Math.floor((b * L) / B))]] = b;
+  for (let idx = 0; idx < n; idx++) {
+    const b = boundaryOf[idx];
+    if (b >= 0) {                              // shows the overhead precinct boundary
+      positions[idx * 2] = boundary[b * 2]; positions[idx * 2 + 1] = boundary[b * 2 + 1];
+      density[idx] = 0.35;
+    } else {                                   // parked off-screen; flies in for the terrain view
+      positions[idx * 2] = terr.roosts[idx * 2]; positions[idx * 2 + 1] = terr.roosts[idx * 2 + 1];
+      density[idx] = terr.density[idx];        // ocean=0 stays culled; land is off-screen anyway
+    }
+  }
+  return { positions, density, z: terr.z };
 }
 
 function gauss(rng) {

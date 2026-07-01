@@ -97,11 +97,27 @@ toggle (WorldPop→precinct join; the clip is on disk).*
   the built-in lesson in how stats mislead).
 - **Year scrubber** (if the year-lapse is the morph). Basic controls.
 
+## Stage 3 — elevation terrain instrument ✅ DONE (2026-07-01)
+**Result: the overhead map RISES into Cape Town's landform.** Press `T` and the field morphs from the flat
+precinct map into a slope-shaded 3D relief (AWS Terrain Tiles z10, baked *signed* so the land ends at the
+coastline; ocean culled). Brightness climbs with height + slope — ridges glow, the flats sink into the dark.
+- **ONE tool swarm, conserved.** Map + terrain are a single ~44.5k-dot pool: in map view some dots sit on
+  the precinct boundaries, the rest park off-screen; on `T` every dot morphs to its OWN landscape spot —
+  boundary dots RESTRUCTURE, the parked shortfall SWARMS IN, ocean stays culled. **Only the delta ever
+  flies** (the two-swarm conservation rule — see CONTINUITY principle candidates).
+- **Crime climbs the relief.** The data field samples the SAME baked DEM (same grid/peak/orientation) for a
+  per-dot height, so crime rides the land — pooling low in the Cape Flats basin with the mountains climbing
+  around it. Honest: most crime IS on the low flats; it lifts only where it sits on high ground.
+- **First 3D axis in the pure engine:** per-point `aZ` × one `uZScale` uniform (still GPU-only, CPU idle).
+  The relief is real 3D geometry, so zoom/orbit into it later is a controls flip, not a rebuild.
+- Files: `terrainLayout` + `structureMapSource` + crime-z in `capeTown.js`; `aZ`/`uZScale` + slope shading
+  in `PointField.js`; terrain mosaic bake in `bake.mjs`. Re-bake: `node pipeline/bake.mjs`.
+
 ## Stage 3+ — grow by curiosity (no spec; play)
 New layouts/instruments as curiosity strikes: the **history / apartheid Group-Areas overlay** (let the
 correlation sit, say nothing); the **discrepancy instrument** (SAPS reported vs VOCS experienced vs SAMRC
-died — the gaps are the story); the **elevation terrain** (grey points clustered by DEM height; crime glows
-on the low ground); type breakdowns; comparison. Each = a new layout function over the same field.
+died — the gaps are the story); the **elevation terrain** ✅ (done, above); the **"leave the map" chart-morph**
+(ranked station bars — see IDEAS-BACKLOG); type breakdowns; comparison. Each = a new layout function.
 
 ## Data (summary — full in the idea note + CONTINUITY)
 - **Download → process → bake static asset → page loads it. No backend.** Crime stats are annual batch

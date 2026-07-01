@@ -49,6 +49,8 @@ export class PointField {
     const seed = new Float32Array(count);
     for (let i = 0; i < count; i++) seed[i] = Math.random() * Math.PI * 2;
     geometry.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
+    // Per-point terrain height (0 for flat fields; the terrain field fills it).
+    geometry.setAttribute('aZ', new THREE.BufferAttribute(new Float32Array(count), 1));
     // BufferGeometry needs *some* `position`; we drive xy ourselves, keep z=0.
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
     geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1e6);
@@ -71,6 +73,8 @@ export class PointField {
         // Per-dot transition stagger: each point crosses on its own slice of uT, so a
         // big change ripples like a flock instead of sliding as one rigid sheet.
         uStagger: { value: 0.55 },
+        uZScale: { value: 0 }, // terrain vertical scale (0 = flat map; raised = relief)
+        uOpacity: { value: 1 }, // global fade — cross-fades map structure ↔ terrain relief
         uRampCool: { value: ramp[0] },
         uRampMid: { value: ramp[1] },
         uRampWarm: { value: ramp[2] },
@@ -100,6 +104,10 @@ export class PointField {
     const g = this.points.geometry;
     g.getAttribute(posAttr).copyArray(layout.positions).needsUpdate = true;
     g.getAttribute(densAttr).copyArray(layout.density).needsUpdate = true;
+    if (layout.z) {
+      const z = layout.z instanceof Float32Array ? layout.z : Float32Array.from(layout.z);
+      g.setAttribute('aZ', new THREE.BufferAttribute(z, 1)); // fresh attribute → reliably uploads
+    }
   }
 
   /** @param {number} t 0 = source, 1 = target */
@@ -112,6 +120,10 @@ export class PointField {
   setDriftSpeed(mult) { this.material.uniforms.uDriftSpeed.value = mult; }
   /** Per-dot transition stagger (0 = all move together; ~0.6 = a cascading swarm). */
   setStagger(w) { this.material.uniforms.uStagger.value = w; }
+  /** Terrain vertical scale — 0 = flat map, higher lifts each point's aZ into relief. */
+  setZScale(s) { this.material.uniforms.uZScale.value = s; }
+  /** Global opacity 0..1 — for cross-fading fields (map mesh ↔ terrain). */
+  setOpacity(o) { this.material.uniforms.uOpacity.value = o; }
 }
 
 const VERT = /* glsl */ `
@@ -123,12 +135,14 @@ const VERT = /* glsl */ `
   uniform float uDrift;
   uniform float uDriftSpeed;
   uniform float uStagger;
+  uniform float uZScale;
 
   attribute vec2 aSource;
   attribute vec2 aTarget;
   attribute float aSourceDensity;
   attribute float aTargetDensity;
   attribute float aSeed;
+  attribute float aZ;
 
   varying float vDensity;
   varying float vTwinkle;
@@ -158,7 +172,7 @@ const VERT = /* glsl */ `
     // Gentle per-point twinkle — denser data breathes a touch; structure is still.
     vTwinkle = uGlow > 0.5 ? (0.85 + 0.15 * sin(uTime * 1.6 + aSeed)) : 1.0;
 
-    vec4 mvPosition = modelViewMatrix * vec4(pos, 0.0, 1.0);
+    vec4 mvPosition = modelViewMatrix * vec4(pos, aZ * uZScale, 1.0);
     gl_Position = projectionMatrix * mvPosition;
 
     // Data: dense cores read a touch larger. Structure: uniform fine dust.
@@ -171,6 +185,7 @@ const FRAG = /* glsl */ `
   precision highp float;
 
   uniform float uGlow;
+  uniform float uOpacity;
   uniform vec3 uRampCool;
   uniform vec3 uRampMid;
   uniform vec3 uRampWarm;
@@ -206,10 +221,13 @@ const FRAG = /* glsl */ `
       float brightness = (0.14 + 0.70 * vDensity) * vTwinkle;
       gl_FragColor = vec4(col, glow * brightness);
     } else {
-      // STRUCTURE — grey, matte, recessive. Flat alpha, no density, no twinkle;
-      // a soft-edged dot so the scaffolding reads as a quiet grey field, not stars.
+      // STRUCTURE — grey, matte, recessive. Brightness rides vDensity so the terrain
+      // relief reads tonally (paler high ground); the precinct mesh (flat density) is
+      // barely touched. A soft-edged dot: a quiet grey field, not stars.
+      if (vDensity < 0.01) discard;              // ocean (density 0) → the land ends at the coast
       float a = smoothstep(1.0, 0.15, r) * 0.92;
-      gl_FragColor = vec4(uMatte, a);
+      gl_FragColor = vec4(uMatte * (0.32 + 4.5 * vDensity), a);
     }
+    gl_FragColor.a *= uOpacity;
   }
 `;

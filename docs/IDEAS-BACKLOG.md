@@ -14,6 +14,14 @@
   (data-supported, the "watch it shift" payoff). Confirm once the engine exists.
 
 ## Later (deferred by design)
+- **The "leave the map" morph — dots fly off geography to form a CHART** (the vision's map↔chart morph;
+  raised 2026-07-01). The big conceptual leap: abandon geography and organise the field by a NON-spatial
+  variable. Same visual grammar — grey STRUCTURE dots form the **axes / baseline / gridlines** (the frame),
+  glowing DATA dots form the **bars / marks** (the values). Candidates: **ranked station bars** (worst areas
+  tallest→shortest — additive: the map shows *where*, the bars the exact order+magnitude) · **year bars**
+  (the 15-yr trend, partner to the scrub) · **crime × elevation scatter** (bridges the terrain — crime hugs
+  the low ground). Mostly a new layout function; the existing morph + stagger/swarm animate the fly-over.
+  Lean: ranked station bars first. Do after the terrain instrument lands.
 - **Specific instruments** — decided later, *by the data + what's worth showing* (the engine renders any
   layout; don't pre-spec the catalogue). Loose candidates seen so far: the particle-morph, the year
   time-lapse, the **discrepancy lens** (reported vs experienced vs died), a per-capita choropleth, the

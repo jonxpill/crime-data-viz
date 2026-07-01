@@ -101,6 +101,14 @@ specific instruments (deferred) · where it lives / distribution · a name.
 - **A different pairing, not a different mechanic, makes a morph show "move" vs "grow" vs "shrink."** One
   shared buffer + per-crime layouts: robbery↔burglary moves (different geography), robbery↔murder shrinks
   (same geography, rarer). The engine stayed dumb; the *data pair* supplied the story. (?)
+- **Conserved swarms + an off-screen reservoir: only the DELTA ever flies.** A field morphing between
+  arrangements of *different size* should restructure the dots already on screen, swarm IN the shortfall
+  from a parked off-screen reservoir, swarm OUT the surplus — never rebuild. A view is just
+  `{layout + active count}`; the pool conserves what it can and exchanges only the difference. (Two such
+  swarms here — DATA + TOOL — each self-managing; scales to any number of views without per-pair wiring.) (?)
+- **When two fields share a frame, let one READ the other's derived axis from the same source — don't
+  recompute.** The crime field samples the *same* baked DEM the terrain does (same grid, peak, orientation),
+  so it rides the relief in perfect register for free; independent height calcs would drift apart. (?)
 - *(tooling traps, kept local — not universal):* d3-geo `fitExtent` to ArcGIS polygons fails (clockwise
   winding → global bounds → microscopic scale); fit to vertices-as-points. `import.meta.url` URL-encodes
   spaces in paths. Calling both `THREE.Clock.getElapsedTime()` and `getDelta()` per frame zeroes the delta

@@ -3,11 +3,12 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Crime data as one living field of luminous points. Stage 0 — engine spike on fake data.",
+  "description": "Crime data as one living field of luminous points — real Cape Town crime (2008–2023) on a reusable WebGL point-field engine: morphing map, year-scrub, 3-crime flip, and a terrain relief.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "npm run build && npx --yes gh-pages -d dist -t -m deploy"
   },
   "devDependencies": {
     "vite": "^6.0.7"

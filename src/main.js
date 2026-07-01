@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointField } from './engine/PointField.js';
-import { loadCapeTown, buildCrimeLayouts, structureLayout } from './layouts/capeTown.js';
+import { loadCapeTown, buildCrimeLayouts, terrainLayout, structureMapSource } from './layouts/capeTown.js';
 
 const BLOOM_LAYER = 1;
 
@@ -81,8 +81,9 @@ function render() {
 }
 
 // ---- state ------------------------------------------------------------------
-let field = null;          // data PointField (built once data loads)
-let structure = null;      // structure PointField
+let field = null;          // DATA swarm (glowing crime)
+let terrainField = null;   // TOOL swarm (one pool: map boundaries ⇄ terrain relief)
+let terrainMode = false, zScaleCur = 0, tiltCur = 0, zPeak = 700, tiltAngle = -0.62, terrainT = 0;
 let years = [], yearLabels = [], layouts = [];
 let crimeTypes = [], crimeLabels = {}, crimeType = '', layoutsByType = {}, totalsByType = {}, capeData = null;
 let yi = 0;                // current year index (source of the morph)
@@ -118,16 +119,6 @@ async function init() {
   totalsByType = built.totals;
   layouts = layoutsByType[crimeType];
 
-  // STRUCTURE — real precinct boundaries, grey/matte, off the bloom layer.
-  const struct = structureLayout(data);
-  structure = new PointField(struct.positions.length / 2, { glow: false, size: 2.0, matte: '#56647e' });
-  structure.setSource(struct);
-  structure.setTarget(struct);
-  structure.setPixelRatio(renderer.getPixelRatio());
-  structure.setDrift(0.12);      // barely strays — the frame stays anchored
-  structure.setDriftSpeed(0.8);  // and moves slowly; the geography is the calm anchor
-  fieldGroup.add(structure.points);
-
   // DATA — glowing crime field; one fixed buffer, morphed across years.
   field = new PointField(built.count, { glow: true, size: 1.9 });
   field.setPixelRatio(renderer.getPixelRatio());
@@ -137,6 +128,19 @@ async function init() {
   field.setTarget(layouts[1]);
   field.points.layers.enable(BLOOM_LAYER);
   fieldGroup.add(field.points);
+
+  // TOOL SWARM — ONE pool of dots. Map view: some sit on the precinct boundaries (that IS the
+  // overhead map), the rest park off-screen. On 'T' every dot morphs to its OWN landscape spot —
+  // boundary dots RESTRUCTURE, parked dots SWARM IN, ocean stays culled. Only the delta flies.
+  const terr = terrainLayout(data);
+  terrainField = new PointField(terr.positions.length / 2, { glow: false, size: 3.4, matte: '#6fe0a0' });
+  terrainField.setSource(structureMapSource(data, terr)); // overhead map: boundaries + parked
+  terrainField.setTarget(terr);                            // the landscape (each dot to its own spot)
+  terrainField.setPixelRatio(renderer.getPixelRatio());
+  terrainField.setDrift(0.0);
+  terrainField.setZScale(0);
+  terrainField.setT(0);            // t=0 → map arrangement; t=1 → assembled relief
+  fieldGroup.add(terrainField.points);
 
   refreshHud();
   const flagEl = document.getElementById('flag');
@@ -190,6 +194,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'ArrowLeft') { e.preventDefault(); stepYear(-1); }
   else if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
   else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
+  else if (e.code === 'KeyT') { e.preventDefault(); terrainMode = !terrainMode; }
 });
 
 // Debug hook.
@@ -205,8 +210,6 @@ window.__viz = {
   },
   drift: (px) => field && field.setDrift(px),                 // data swarm — how FAR it strays
   driftSpeed: (m) => field && field.setDriftSpeed(m),         // data swarm — how FAST (felt-ness)
-  structDrift: (px) => structure && structure.setDrift(px),   // grey frame — how far
-  structDriftSpeed: (m) => structure && structure.setDriftSpeed(m), // grey frame — how fast
   stagger: (w) => field && field.setStagger(w),              // swarm cascade (0=together … ~0.6)
   roost: (d) => {                                            // how far off-screen dots fly & wait
     if (!capeData) return;
@@ -214,6 +217,32 @@ window.__viz = {
     layoutsByType = b.layouts; totalsByType = b.totals; layouts = layoutsByType[crimeType];
     setYearPair(yi);
   },
+  terrain: () => { terrainMode = !terrainMode; },            // toggle the elevation relief
+  zpeak: (v) => { zPeak = v; },                              // relief height (layout units)
+  tilt: (r) => { tiltAngle = r; },                           // terrain-mode view tilt (radians)
+  terrainNow: (on = true) => {                               // debug: jump to/from terrain (no ease)
+    terrainMode = on; zScaleCur = on ? zPeak : 0; tiltCur = on ? tiltAngle : 0; terrainT = on ? 1 : 0;
+    if (terrainField) { terrainField.setZScale(zScaleCur); terrainField.setT(terrainT); }
+    if (field) field.setZScale(zScaleCur);
+    fieldGroup.rotation.x = tiltCur;                          // apply directly (don't wait for a frame)
+  },
+  terrainAt: (v) => {                                        // debug: hold the fly-in at t=v (0..1)
+    terrainMode = true; terrainT = v; zScaleCur = zPeak * v; tiltCur = tiltAngle * v;
+    if (terrainField) { terrainField.setT(v); terrainField.setZScale(zScaleCur); }
+    if (field) field.setZScale(zScaleCur);
+    fieldGroup.rotation.x = tiltCur;
+  },
+  matte: (hex) => {                                          // live-tune the structure colour
+    if (terrainField) terrainField.material.uniforms.uMatte.value.set(hex);
+  },
+  hideData: (hide = true) => { if (field) field.points.visible = !hide; }, // judge terrain alone
+  tdbg: () => JSON.stringify({                                // debug: inspect live terrain state
+    terrainMode, terrainT: +terrainT.toFixed(2),
+    zScaleCur: +zScaleCur.toFixed(0), rotX: +fieldGroup.rotation.x.toFixed(2),
+    terr_uT: +terrainField.material.uniforms.uT.value.toFixed(2),
+    terr_uZScale: +terrainField.material.uniforms.uZScale.value.toFixed(0),
+    crime_uZScale: +field.material.uniforms.uZScale.value.toFixed(0),
+  }),
 };
 
 // ---- loop -------------------------------------------------------------------
@@ -252,8 +281,15 @@ function tick() {
 
   field.setT(t);
   field.setTime(time);
-  structure.setTime(time);
-  fieldGroup.rotation.z = Math.sin(time * 0.03) * 0.02;
+  if (terrainField) {
+    zScaleCur += ((terrainMode ? zPeak : 0) - zScaleCur) * 0.06;   // ease the land up/down
+    tiltCur += ((terrainMode ? tiltAngle : 0) - tiltCur) * 0.06;   // ease the view tilt
+    terrainT += ((terrainMode ? 1 : 0) - terrainT) * 0.05;         // the tool swarm restructures / flies in
+    terrainField.setZScale(zScaleCur); terrainField.setT(terrainT); terrainField.setTime(time);
+    field.setZScale(zScaleCur);       // crime CLIMBS the relief with the land beneath it
+  }
+  fieldGroup.rotation.x = tiltCur;
+  fieldGroup.rotation.z = Math.sin(time * 0.03) * 0.02 * (1 - Math.min(1, Math.abs(tiltCur))); // calm the wobble when tilted
   controls.update();
 
   render();
@@ -276,5 +312,5 @@ window.addEventListener('resize', () => {
   bloomComposer.setSize(window.innerWidth, window.innerHeight);
   finalComposer.setSize(window.innerWidth, window.innerHeight);
   if (field) field.setPixelRatio(renderer.getPixelRatio());
-  if (structure) structure.setPixelRatio(renderer.getPixelRatio());
+  if (terrainField) terrainField.setPixelRatio(renderer.getPixelRatio());
 });

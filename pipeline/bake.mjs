@@ -25,6 +25,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { geoMercator } from 'd3-geo';
+import { fromFile } from 'geotiff';
 
 const ROOT = decodeURIComponent(new URL('..', import.meta.url).pathname);
 const read = (p) => JSON.parse(readFileSync(ROOT + p, 'utf8'));
@@ -156,6 +157,51 @@ for (const f of precincts) {
   }
 }
 
+// ---- terrain: sample a DEM into an elevation grid over the projected box -----
+// AWS Terrain Tiles (z10, 12 tiles, metres) → one mosaic; invert each grid node
+// back to lng/lat through the SAME projection and read its height. Sea (negative
+// bathymetry) clamps to 0. The client lifts these into a grey relief — the
+// structure "doing its job" as the actual land. Re-fetch tiles: see README / the
+// curl loop in data/raw/terrain (elevation-tiles-prod, no login).
+const TILE = 512, TZ = 10, TX0 = 564, TY0 = 613, TNX = 3, TNY = 4;
+const MOS_W = TNX * TILE, MOS_H = TNY * TILE;
+const mosaic = new Float32Array(MOS_W * MOS_H);
+for (let tx = 0; tx < TNX; tx++) {
+  for (let ty = 0; ty < TNY; ty++) {
+    const img = await (await fromFile(`${ROOT}data/raw/terrain/${TZ}_${TX0 + tx}_${TY0 + ty}.tif`)).getImage();
+    const [band] = await img.readRasters();
+    for (let py = 0; py < TILE; py++)
+      for (let px = 0; px < TILE; px++)
+        mosaic[(ty * TILE + py) * MOS_W + (tx * TILE + px)] = band[py * TILE + px];
+  }
+}
+const MERC = 20037508.342789244;        // half the Web-Mercator extent (metres)
+const WORLD_PX = TILE * (1 << TZ);       // full-world pixels at z10
+const oxpx = TX0 * TILE, oypx = TY0 * TILE; // mosaic top-left in world pixels
+function elevAt(lng, lat) {
+  const X = (lng * Math.PI / 180) * 6378137;
+  const Y = Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI / 180) / 2)) * 6378137;
+  const gx = (X + MERC) / (2 * MERC) * WORLD_PX - oxpx;
+  const gy = (MERC - Y) / (2 * MERC) * WORLD_PX - oypx;
+  if (gx < 0 || gy < 0 || gx >= MOS_W - 1 || gy >= MOS_H - 1) return -9999; // out of DEM → treat as ocean (culled)
+  const x0 = Math.floor(gx), y0 = Math.floor(gy), fx = gx - x0, fy = gy - y0;
+  const a = mosaic[y0 * MOS_W + x0], b = mosaic[y0 * MOS_W + x0 + 1];
+  const c = mosaic[(y0 + 1) * MOS_W + x0], d = mosaic[(y0 + 1) * MOS_W + x0 + 1];
+  return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+}
+const TGX = 300, TGY = 324;              // terrain grid resolution over the box (dense = reads as a surface)
+const elev = new Array(TGX * TGY);
+let emax = 0;
+for (let j = 0; j < TGY; j++) {
+  for (let i = 0; i < TGX; i++) {
+    const [lng, lat] = proj.invert([(i / (TGX - 1)) * W, (j / (TGY - 1)) * H]);
+    const e = Math.round(elevAt(lng, lat)); // signed: < 0 = below sea level (ocean)
+    elev[j * TGX + i] = e;
+    if (e > emax) emax = e;
+  }
+}
+console.log(`terrain grid: ${TGX}×${TGY} (${TGX * TGY} pts) · peak ${emax} m`);
+
 // ---- sanity read: real totals + where each hotspot moved --------------------
 for (const cr of CRIMES) {
   const totalByYear = {};
@@ -180,6 +226,7 @@ const asset = {
   },
   stations,
   structure,
+  terrain: { cols: TGX, rows: TGY, peak: emax, elev },
 };
 writeFileSync(ROOT + 'public/data/capetown.json', JSON.stringify(asset));
 console.log(`baked public/data/capetown.json (${stations.length} stations, ${YEARS.length} years, ${CRIMES.length} crimes)`);
