@@ -80,3 +80,17 @@ specific instruments (deferred) · where it lives / distribution · a name.
 - **Tune additive+bloom from too-DIM upward, never from too-bright down.** Blown-out white hides the data
   and collapses the colour ramp; start under-exposed and add light until the gradient just sings — the
   gradient is the read, not the brightness. (?)
+- **Build on real STRUCTURE even when the VALUES are placeholder.** Splitting "geography (real, fetchable)"
+  from "measurements (walled)" let the whole prototype stand on real Cape Town shapes with simulated counts
+  — and the real-data swap touches only the numbers, nothing downstream. Foundation/identity first, values
+  later. (?)
+- **A morph reads as alive only if each point keeps a stable identity across frames.** Fixed buffer slots +
+  "park surplus at the centroid and grow back" makes the year-scrub breathe in place; re-deriving the point
+  set per frame would reshuffle and read as noise. The smoothness is in the *correspondence*, not the tween. (?)
+- **Normalise across the whole comparison set, not per-frame — or you erase the change you're animating.**
+  Per-year density normalisation re-inflated every year to look equally "full", flattening the temporal
+  signal the year-scrub exists to show; one global max across all years made growth/redistribution visible.
+  (Generalises: any per-frame auto-scale — colour, axis, gain — hides the cross-frame trend.) (?)
+- *(tooling traps, kept local — not universal):* d3-geo `fitExtent` to ArcGIS polygons fails (clockwise
+  winding → global bounds → microscopic scale); fit to vertices-as-points. `import.meta.url` URL-encodes
+  spaces in paths.

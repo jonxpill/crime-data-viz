@@ -34,6 +34,31 @@ export function blob(n, radius = 360) {
   return { positions, density: computeDensity(positions, radius * 0.05) };
 }
 
+/**
+ * A faint structure grid — stand-in for real geography (coast, axes, mountain).
+ * STRUCTURE points carry no density meaning; we hand a flat value so the engine's
+ * data-only density logic is bypassed for this role. This is throwaway: Stage 1
+ * replaces it with a real Cape Town structure function of the same shape.
+ */
+export function grid(n, extent = 760, lines = 22) {
+  const positions = new Float32Array(n * 2);
+  const half = extent / 2;
+  const step = extent / (lines - 1);
+  for (let i = 0; i < n; i++) {
+    // Lay each point on a random gridline, jittered slightly off it.
+    if (Math.random() < 0.5) {
+      const gx = -half + Math.round(Math.random() * (lines - 1)) * step;
+      positions[i * 2] = gx + (Math.random() - 0.5) * 1.5;
+      positions[i * 2 + 1] = -half + Math.random() * extent;
+    } else {
+      const gy = -half + Math.round(Math.random() * (lines - 1)) * step;
+      positions[i * 2] = -half + Math.random() * extent;
+      positions[i * 2 + 1] = gy + (Math.random() - 0.5) * 1.5;
+    }
+  }
+  return { positions, density: new Float32Array(n).fill(0.5) };
+}
+
 /** A luminous ring — points hug a circle with a soft radial scatter. */
 export function ring(n, radius = 320) {
   const positions = new Float32Array(n * 2);

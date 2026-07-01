@@ -22,6 +22,19 @@
 - **A name** — working title is "Crime Data-Viz"; the concept ("a living field of light") wants something
   more evocative eventually.
 
+## Stage-1 refinements (raised during the build — pick up when curiosity strikes)
+- **Extend the year window to 2008–2023** — current real data is 2005/06–2015/16 (free GitHub mirror of the
+  cleaned SAPS CSV). For the fuller decade-and-a-half, register at DataFirst (cat. 1012, 2008–2023, has GIS),
+  aggregate robbery per station/year, join by normalised name, drop into `pipeline/bake.mjs`. (Base real
+  swap is DONE — 2026-07-01.)
+- **Polygon-fill jitter** — scatter data points inside each precinct's *real polygon* (point-in-polygon),
+  not a disc around the centroid, so the field is truly continuous and precinct-shaped, not a touch
+  circular. Bake per-precinct interior sample offsets so the client stays cheap.
+- **More evocative structure** — the precinct mesh reads as a map but not unmistakably *Cape Town*; add the
+  coastline + a Table Mountain void (the reference mocks) so the silhouette is instantly recognisable.
+- **Real per-capita** — area-weighted census-population → precinct join (the one fiddly GIS step), to
+  replace the population proxy. Then the Stage-2 raw↔per-capita toggle rearranges on *true* rates.
+
 ## Flag (foundation-first hygiene)
 - **Honesty is a build-time discipline, not a final polish** — per-capita and the counterweights must be in
   from the first real-data stage, or the default fear-map reading creeps in. Don't defer them.
