@@ -212,6 +212,9 @@ window.__viz = {
   driftSpeed: (m) => field && field.setDriftSpeed(m),         // data swarm — how FAST (felt-ness)
   stagger: (w) => field && field.setStagger(w),              // swarm cascade (0=together … ~0.6)
   maxSize: (px) => { if (field) field.setMaxSize(px); if (terrainField) terrainField.setMaxSize(px); }, // cap dot px on zoom
+  shimmer: (a) => { if (terrainField) terrainField.setShimmer(a); },         // structure breath amplitude (0=still)
+  shimmerSpeed: (s) => { if (terrainField) terrainField.setShimmerSpeed(s); },
+  band: (w) => { if (terrainField && capeData) terrainField.setSource(structureMapSource(capeData, terrainLayout(capeData), { band: w })); }, // ribbon width
   roost: (d) => {                                            // how far off-screen dots fly & wait
     if (!capeData) return;
     const b = buildCrimeLayouts(capeData, { types: crimeTypes, mode: 'raw', roost: d });

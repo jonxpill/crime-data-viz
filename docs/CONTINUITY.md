@@ -17,20 +17,23 @@ and remember the eye is the judge — render and look.
 `main` · deploy = `npm run deploy` (builds + pushes `dist` to the `gh-pages` branch). All real SAPS data.
 
 **Shipped & working:**
-- **Map** — 60 Cape Town precincts; glowing crime (robbery · burglary · murder, 2008–2023); grey precinct
-  mesh + coastline + Robben Island.
+- **Map** — 60 Cape Town precincts; glowing crime (robbery · burglary · murder, 2008–2023); the precinct
+  outlines are a soft grey-green **band** of dots (with a gentle per-dot shimmer) + coastline + Robben Island.
 - **Year-scrub** (2008→2023; the COVID-2020 dip reads) · **3-crime flip** (↑↓; reads as move / grow / thin
   honestly) · **swarm transitions** (surplus dots roost off-screen and fly back).
 - **Terrain view (`T`)** — the overhead map RISES into Cape Town's 3D relief (slope-shaded; the land ends
   at the coast, ocean culled). **Crime CLIMBS** the land (rides the same baked DEM), pooling low in the
   Cape Flats basin with the mountains climbing around it.
 
-**Architecture as it now stands — TWO conserved swarms** sharing one frame (`fieldGroup`): `field` = DATA
-(glowing crime), `terrainField` = TOOL (the single map⇄terrain pool). Each holds a fixed buffer; active
-dots sit on-screen, surplus parks off-screen; **a view = {layout + active count}, and only the delta ever
-flies** (restructure what you have; swarm the shortfall in / surplus out). The engine gained its first 3D
-axis (per-point `aZ` × one `uZScale`) and is still pure — it knows nothing of crime or maps. Layouts live
-in `src/layouts/capeTown.js` (`buildCrimeLayouts` · `terrainLayout` · `structureMapSource`).
+**Architecture as it now stands — TWO swarms** sharing one frame (`fieldGroup`): `field` = DATA (glowing
+crime), `terrainField` = TOOL (the single map⇄terrain pool — all ~97k grid dots). The **TOOL** field is
+fully on-screen in both views: in map view every land dot (~44k) forms a soft boundary **band**
+(`structureMapSource`), and on `T` those same dots reconfigure into the relief — a pure on-screen swarm,
+**no off-screen roosts, no fly-in** (dropped; the band already holds every dot the relief needs). The
+**DATA** field keeps its own honest-volume swarm — surplus dots roost off-screen when a year genuinely has
+fewer crimes, and fly back (that one's about honesty, not a dot-budget patch). The engine gained its first
+3D axis (per-point `aZ` × one `uZScale`) and is still pure — it knows nothing of crime or maps. Layouts
+live in `src/layouts/capeTown.js` (`buildCrimeLayouts` · `terrainLayout` · `structureMapSource`).
 
 **Immediate next threads (none blocking; the maker drives by curiosity):**
 - **Per-capita toggle** — the load-bearing honesty TODO (WorldPop/census → precinct join; WorldPop clip is
@@ -41,7 +44,7 @@ in `src/layouts/capeTown.js` (`buildCrimeLayouts` · `terrainLayout` · `structu
 
 **Gotchas a cold session MUST know:**
 - `src/main.js` keeps a `window.__viz` debug/tuning console (drift · stagger · terrainNow · terrainAt ·
-  tdbg · hideData · matte · zpeak · tilt · roost · maxSize). Intentionally kept for live tinkering — console-only,
+  tdbg · hideData · matte · zpeak · tilt · roost · maxSize · shimmer · shimmerSpeed · band). Kept for live tinkering — console-only,
   harmless in production. Strip only if a truly clean ship is wanted.
 - Re-bake: `node pipeline/bake.mjs` (needs `data/raw/terrain/` DEM tiles + `pipeline/sapacr-*`, both
   git-ignored / re-downloadable). Baked `public/data/capetown.json` (~673 KB) is what ships.
@@ -150,6 +153,11 @@ specific instruments (deferred) · where it lives / distribution · a name.
   clamp it; density (more dots), not size, is how you fill space. And sample an outline by walking it at a
   constant arc-length step, not per-edge: a per-edge min-1-dot sampler clumps at dense vertices and starves
   long edges, so halving the spacing barely changes the count — you can't dial density until it's uniform. (?)
+- **A cross-view morph is cleaner as on-screen RECONFIGURATION than fly-in-from-off-screen.** A fly-in is
+  usually a patch for "the source view holds fewer dots than the target needs" — but fatten the source
+  (here a line → a filled band) until it already holds the target's dot budget, and the morph becomes a
+  pure reconfiguration of *visible* dots: no reservoir, no fades, the swarm launches from what you can see.
+  Conserve by making both states use the same on-screen dots. (?)
 - *(tooling traps, kept local — not universal):* d3-geo `fitExtent` to ArcGIS polygons fails (clockwise
   winding → global bounds → microscopic scale); fit to vertices-as-points. `import.meta.url` URL-encodes
   spaces in paths. Calling both `THREE.Clock.getElapsedTime()` and `getDelta()` per frame zeroes the delta

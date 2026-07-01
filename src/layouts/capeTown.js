@@ -191,7 +191,6 @@ export function terrainLayout(data) {
   const SLOPE_NORM = 130; // elevation drop (m) between neighbours that reads as a full slope
   const n = cols * rows;
   const positions = new Float32Array(n * 2);
-  const roosts = new Float32Array(n * 2); // off-screen start points — the land flies IN from here
   const z = new Float32Array(n);
   const density = new Float32Array(n);
   for (let j = 0; j < rows; j++) {
@@ -201,10 +200,6 @@ export function terrainLayout(data) {
       const cy = H / 2 - (j / (rows - 1)) * H;
       positions[idx * 2] = cx + (rng() - 0.5) * 2 * jit;
       positions[idx * 2 + 1] = cy + (rng() - 0.5) * 2 * jit;
-      const ang = Math.atan2(cy, cx) + (rng() - 0.5) * 0.7; // fly in radially from its own direction
-      const rr = 720 * (0.85 + rng() * 0.4);
-      roosts[idx * 2] = Math.cos(ang) * rr;
-      roosts[idx * 2 + 1] = Math.sin(ang) * rr;
       const raw = elev[idx];
       if (raw < 0) { density[idx] = 0; continue; } // ocean → hidden; the land ends at the coastline
       const h = peak ? Math.min(1, raw / peak) : 0;
@@ -215,36 +210,38 @@ export function terrainLayout(data) {
       density[idx] = 0.03 + 0.6 * Math.pow(h, 1.6) + 0.6 * slope;
     }
   }
-  return { positions, density, z, roosts };
+  return { positions, density, z };
 }
 
 /**
- * ONE tool swarm. The map arrangement (source) for the unified structure field: 17.8k of the
- * terrain dots — spread across the land — start on the precinct-boundary positions (that IS the
- * overhead map); the rest wait off-screen. The target is terrainLayout (each dot to its OWN
- * landscape spot). So on the flip: boundary dots RESTRUCTURE, parked dots SWARM IN, ocean stays
- * culled — only the delta ever flies. The swarm conserves what it can.
+ * ONE tool swarm, land-only BAND. EVERY land dot (~44k) starts on the precinct outlines, scattered
+ * into a soft world-space ribbon — that IS the overhead map, now with body. The ocean dots sit
+ * culled. The target is terrainLayout (each dot → its own landscape spot), so map ⇄ terrain is a
+ * pure ON-SCREEN reconfiguration: the boundary band spreads out to BECOME the relief and back —
+ * still a staggered swarm, but launched from the boundary, not flown in from off-screen. No
+ * reservoir, no fly-in: everything you see rebuilds out of what's already on screen.
  */
-export function structureMapSource(data, terr) {
-  const boundary = data.structure;           // flat xy of the precinct mesh
-  const B = boundary.length / 2;
+export function structureMapSource(data, terr, { band = 0.4 } = {}) {
+  const centre = data.structure;             // baked outline centreline points (flat xy)
+  const C = centre.length / 2;
   const n = terr.density.length;
   const positions = new Float32Array(n * 2);
   const density = new Float32Array(n);
+  const rng = mulberry32(0x5eed1e);
   const landIdx = [];
   for (let idx = 0; idx < n; idx++) if (terr.density[idx] > 0) landIdx.push(idx);
   const L = landIdx.length || 1;
-  const boundaryOf = new Int32Array(n).fill(-1);
-  for (let b = 0; b < B; b++) boundaryOf[landIdx[Math.min(L - 1, Math.floor((b * L) / B))]] = b;
+  for (let k = 0; k < L; k++) {
+    const idx = landIdx[k];
+    const c = Math.min(C - 1, Math.floor((k * C) / L)); // spread land dots along the whole outline
+    positions[idx * 2] = centre[c * 2] + gauss(rng) * band;        // soft ribbon, world-space width
+    positions[idx * 2 + 1] = centre[c * 2 + 1] + gauss(rng) * band;
+    density[idx] = 0.35;                       // matte, recessive
+  }
   for (let idx = 0; idx < n; idx++) {
-    const b = boundaryOf[idx];
-    if (b >= 0) {                              // shows the overhead precinct boundary
-      positions[idx * 2] = boundary[b * 2]; positions[idx * 2 + 1] = boundary[b * 2 + 1];
-      density[idx] = 0.35;
-    } else {                                   // parked off-screen; flies in for the terrain view
-      positions[idx * 2] = terr.roosts[idx * 2]; positions[idx * 2 + 1] = terr.roosts[idx * 2 + 1];
-      density[idx] = terr.density[idx];        // ocean=0 stays culled; land is off-screen anyway
-    }
+    if (terr.density[idx] > 0) continue;        // ocean → stays culled (density 0); park at its own cell
+    positions[idx * 2] = terr.positions[idx * 2];
+    positions[idx * 2 + 1] = terr.positions[idx * 2 + 1];
   }
   return { positions, density, z: terr.z };
 }

@@ -74,6 +74,10 @@ export class PointField {
         // Per-dot transition stagger: each point crosses on its own slice of uT, so a
         // big change ripples like a flock instead of sliding as one rigid sheet.
         uStagger: { value: 0.55 },
+        // Structure shimmer — each grey/matte dot fades slightly in/out on its own phase so the
+        // frame breathes like faint stars. Data has its own twinkle; these are ignored there.
+        uShimmer: { value: 0.3 },      // amplitude (0 = still; ~0.3 = a gentle breath)
+        uShimmerSpeed: { value: 0.8 }, // how fast the breath cycles (slow = calm)
         uZScale: { value: 0 }, // terrain vertical scale (0 = flat map; raised = relief)
         uOpacity: { value: 1 }, // global fade — cross-fades map structure ↔ terrain relief
         uRampCool: { value: ramp[0] },
@@ -117,6 +121,9 @@ export class PointField {
   setPixelRatio(r) { this.material.uniforms.uPixelRatio.value = r; }
   /** Cap on-screen point size (px) so dots stay fine, not fat discs, when zoomed in. */
   setMaxSize(px) { this.material.uniforms.uMaxSize.value = px; }
+  /** Structure shimmer — per-dot brightness-breath amplitude (0 = still) and speed. */
+  setShimmer(a) { this.material.uniforms.uShimmer.value = a; }
+  setShimmerSpeed(s) { this.material.uniforms.uShimmerSpeed.value = s; }
   /** Idle-drift AMPLITUDE — how far a point strays from home (keep small). */
   setDrift(px) { this.material.uniforms.uDrift.value = px; }
   /** Idle-drift SPEED — how fast the orbit runs (makes motion felt; no extra stray). */
@@ -138,6 +145,8 @@ const VERT = /* glsl */ `
   uniform float uDrift;
   uniform float uDriftSpeed;
   uniform float uStagger;
+  uniform float uShimmer;
+  uniform float uShimmerSpeed;
   uniform float uZScale;
   uniform float uMaxSize;
 
@@ -173,8 +182,11 @@ const VERT = /* glsl */ `
     pos.x += wander * (sin(tt * 0.5 + ph) + 0.5 * sin(tt * 1.1 + ph * 2.0));
     pos.y += wander * (cos(tt * 0.43 + ph * 1.3) + 0.5 * cos(tt * 0.9 + ph * 1.7));
 
-    // Gentle per-point twinkle — denser data breathes a touch; structure is still.
-    vTwinkle = uGlow > 0.5 ? (0.85 + 0.15 * sin(uTime * 1.6 + aSeed)) : 1.0;
+    // Per-point breath. Data: a gentle twinkle. Structure: each dot fades slightly in/out on
+    // its OWN phase (never brighter than base), so the frame shimmers like faint stars.
+    vTwinkle = uGlow > 0.5
+      ? (0.85 + 0.15 * sin(uTime * 1.6 + aSeed))
+      : (1.0 - uShimmer * (0.5 - 0.5 * sin(uTime * uShimmerSpeed + aSeed * 1.7)));
 
     vec4 mvPosition = modelViewMatrix * vec4(pos, aZ * uZScale, 1.0);
     gl_Position = projectionMatrix * mvPosition;
@@ -233,7 +245,7 @@ const FRAG = /* glsl */ `
       // barely touched. A soft-edged dot: a quiet grey field, not stars.
       if (vDensity < 0.01) discard;              // ocean (density 0) → the land ends at the coast
       float a = smoothstep(1.0, 0.15, r) * 0.92;
-      gl_FragColor = vec4(uMatte * (0.32 + 4.5 * vDensity), a);
+      gl_FragColor = vec4(uMatte * (0.32 + 4.5 * vDensity) * vTwinkle, a);
     }
     gl_FragColor.a *= uOpacity;
   }
