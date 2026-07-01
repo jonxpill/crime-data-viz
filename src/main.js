@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointField } from './engine/PointField.js';
-import { loadCapeTown, buildCrimeLayouts, terrainLayout, structureMapSource } from './layouts/capeTown.js';
+import { loadCapeTown, buildCrimeLayouts, terrainViewLayout, bandFor, pieFrameLayout } from './layouts/capeTown.js';
 
 const BLOOM_LAYER = 1;
 
@@ -38,6 +38,8 @@ controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGH
 controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
 controls.target.set(0, FOCUS_Y, 0);
 controls.update();
+// When a zoom/pan settles, re-evaluate the detail level (jumps only on a threshold cross / drift).
+controls.addEventListener('end', () => updateLevel());
 
 // Data + structure share one frame so geography and crime stay in register.
 const fieldGroup = new THREE.Group();
@@ -83,7 +85,36 @@ function render() {
 // ---- state ------------------------------------------------------------------
 let field = null;          // DATA swarm (glowing crime)
 let terrainField = null;   // TOOL swarm (one pool: map boundaries ⇄ terrain relief)
-let terrainMode = false, zScaleCur = 0, tiltCur = 0, zPeak = 700, tiltAngle = -0.62, terrainT = 0;
+// zPeak = height of the tallest peak (1729 m) in projected units. TRUE 1:1 with the land:
+// the projection is 150.7 m/unit, so 1729 m = 11.5 units. (Was 700 = a 61× stretch that read
+// as an alien tractor-beam.) Dial with __viz.zpeak() — raise it for honest, gentle drama.
+let terrainMode = false, zScaleCur = 0, tiltCur = 0, zPeak = 11.5, tiltAngle = -0.62;
+let bandW = 0.4;                  // boundary-band ribbon width (map view)
+let terrainDotSize = 2.5;         // structure dot px — small = a finer relief stipple
+const GX = 432, GY = 378;         // FIXED terrain dot budget (163,296), independent of DEM resolution
+let terrainTargetLayout = null;   // relief the pool currently targets (couples the band + LOD)
+// ---- discrete detail LEVELS (neighbourhood LOD) -----------------------------
+// Terrain resolves in JUMPS, not continuously: each level covers a smaller square of ground at the
+// SAME dot budget → finer DEM sampling. Crossing a camera-distance threshold triggers ONE staggered
+// swarm inward (outer dots stream in to build the detail); within a level the field holds still.
+// LEVEL_IN[i] = zoom-IN distance to reach level i; LEVEL_HALF[i] = that level's coverage half-size
+// (map units). Level 0 = the whole box. Hysteresis on zoom-out stops threshold flicker.
+const LEVEL_IN = [Infinity, 470, 250, 130];
+const LEVEL_HALF = [0, 200, 100, 52];   // [0] = full box (special-cased in levelLayout)
+let curLevel = -1;                // -1 = map/band; 0..3 = terrain detail levels
+let curCenter = { x: 0, y: 0 };   // map-local centre of the current level's coverage
+let terrainCurrent = null;        // CPU copy of the layout the pool currently shows (transition source)
+let trProg = 1, trStart = 0, trDur = 950, trTo = null; // terrain transition progress → drives uT
+let swarmDur = 2400, swarmStagger = 0.6;                // structure swarm: duration (ms) + flock cascade
+// The visible map-local rect, derived from the camera each time we (re)build the relief. Zoom in →
+// smaller rect → the fixed pool samples a finer DEM patch → detail blooms (neighbourhood LOD).
+function currentView() {
+  fieldGroup.updateWorldMatrix(true, false);
+  const localTarget = fieldGroup.worldToLocal(controls.target.clone());
+  const dist = camera.position.distanceTo(controls.target);
+  const halfH = dist * Math.tan((camera.fov * Math.PI / 180) / 2);
+  return { cx: localTarget.x, cy: localTarget.y, hw: halfH * camera.aspect, hh: halfH };
+}
 let years = [], yearLabels = [], layouts = [];
 let crimeTypes = [], crimeLabels = {}, crimeType = '', layoutsByType = {}, totalsByType = {}, capeData = null;
 let yi = 0;                // current year index (source of the morph)
@@ -98,6 +129,22 @@ let holdUntil = 0;
 let flipping = false, flipStart = 0, flipTo = '';
 const FLIP_MS = 1100;
 const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+// Swarm-transition easing, swappable via __viz.ease(). 'out' = quick launch, gentle arrival (no
+// start-delay); 'linear' = constant speed; 'inout' = the current slow-fast-slow.
+const EASES = {
+  linear: (x) => x,
+  in: (x) => x * x * x,
+  out: (x) => 1 - Math.pow(1 - x, 3),
+  inout: easeInOut,
+};
+let swarmEase = EASES.linear;   // constant speed — no acceleration pull at either end
+// Pie instrument (spike): 'P' morphs the field off the map into a robbery pie — data dots fill the
+// wedges, structure dots swarm into the ring + spokes. Everything travels; nothing fades.
+let pieBuilder = null, pieMode = false, pieMorphing = false, pieMorphStart = 0, lastPie = null, pieYears = null;
+const PIE_LINE_SIZE = 1.3;                 // frame dots render thinner than the map's (px)
+let PIE_MS = 2400;                          // map ⇄ pie morph duration (ms) — slower = more graceful
+let PIE_R = 200;
+let pieFrameDots = 200000, pieThin = 0.22; // condense (almost) ALL structure dots into thin tight lines — no mass fly-away
 
 const yearEl = document.getElementById('year');
 const fpsEl = document.getElementById('fps');
@@ -117,6 +164,7 @@ async function init() {
   const built = buildCrimeLayouts(data, { types: crimeTypes, mode: 'raw' });
   layoutsByType = built.layouts;
   totalsByType = built.totals;
+  pieBuilder = built.pieLayout;
   layouts = layoutsByType[crimeType];
 
   // DATA — glowing crime field; one fixed buffer, morphed across years.
@@ -132,15 +180,7 @@ async function init() {
   // TOOL SWARM — ONE pool of dots. Map view: some sit on the precinct boundaries (that IS the
   // overhead map), the rest park off-screen. On 'T' every dot morphs to its OWN landscape spot —
   // boundary dots RESTRUCTURE, parked dots SWARM IN, ocean stays culled. Only the delta flies.
-  const terr = terrainLayout(data);
-  terrainField = new PointField(terr.positions.length / 2, { glow: false, size: 3.4, matte: '#6fe0a0' });
-  terrainField.setSource(structureMapSource(data, terr)); // overhead map: boundaries + parked
-  terrainField.setTarget(terr);                            // the landscape (each dot to its own spot)
-  terrainField.setPixelRatio(renderer.getPixelRatio());
-  terrainField.setDrift(0.0);
-  terrainField.setZScale(0);
-  terrainField.setT(0);            // t=0 → map arrangement; t=1 → assembled relief
-  fieldGroup.add(terrainField.points);
+  makeTerrainField();
 
   refreshHud();
   const flagEl = document.getElementById('flag');
@@ -149,17 +189,119 @@ async function init() {
   requestAnimationFrame(tick);
 }
 
+// TOOL SWARM builder — ONE pool of dots that is BOTH the overhead map and the relief.
+// Rebuilt live when the steep-face fill (A) or the band width changes (both alter the dot
+// count), preserving the current terrain state so a rebuild mid-view doesn't jump.
+// Build the relief for a detail level, centred on a map-local point (level 0 = the whole box).
+function levelLayout(level, cx = 0, cy = 0) {
+  const { w: W, h: H } = capeData.meta.box;
+  if (level <= 0) return terrainViewLayout(capeData, { cx: 0, cy: 0, hw: W / 2, hh: H / 2 }, GX, GY);
+  const half = LEVEL_HALF[level];
+  return terrainViewLayout(capeData, { cx, cy, hw: half, hh: half }, GX, GY);
+}
+
+// Which level should the current camera distance be at (deepest threshold crossed)?
+function levelForDist(dist) {
+  let lvl = 0;
+  for (let i = 1; i < LEVEL_IN.length; i++) if (dist < LEVEL_IN[i]) lvl = i;
+  return lvl;
+}
+
+function makeTerrainField() {
+  if (terrainField) { fieldGroup.remove(terrainField.points); terrainField.points.geometry.dispose(); terrainField.material.dispose(); }
+  terrainTargetLayout = levelLayout(0);
+  terrainCurrent = bandFor(capeData, terrainTargetLayout, { band: bandW }); // start on the map (band)
+  curLevel = -1; curCenter = { x: 0, y: 0 };
+  terrainField = new PointField(GX * GY, { glow: false, size: terrainDotSize, matte: '#6fe0a0' });
+  terrainField.setSource(terrainCurrent);
+  terrainField.setTarget(terrainCurrent);
+  terrainField.setPixelRatio(renderer.getPixelRatio());
+  terrainField.setDrift(0.0);
+  terrainField.setZScale(zScaleCur);
+  terrainField.setT(1);
+  trProg = 1;
+  fieldGroup.add(terrainField.points);
+}
+
+// Start a staggered swarm from whatever's shown (terrainCurrent) to a new layout — the "jump".
+function startTransition(toLayout, dur = swarmDur, stagger = swarmStagger) {
+  if (!terrainField) return;
+  terrainField.setSource(terrainCurrent);
+  terrainField.setTarget(toLayout);
+  terrainField.setStagger(stagger);
+  trTo = toLayout; trStart = performance.now(); trDur = dur; trProg = 0;
+}
+
+// Toggle map ⇄ terrain (the `T` key). Entering, we assemble the level for the current distance;
+// leaving, we morph the current relief back to the band (ocean parked → no exodus).
+function toggleTerrain() {
+  if (pieMode) {
+    // Leaving the pie for the map/terrain: the DATA must swarm back too (bug: it was stranded in the pie).
+    pieMode = false;
+    field.setSource({ positions: lastPie.positions, density: lastPie.density });
+    field.setTarget(layoutsByType[crimeType][yi]);
+    field.setStagger(0.55);
+    t = 0; pieMorphStart = performance.now(); pieMorphing = true;
+    if (terrainField) terrainField.setSize(terrainDotSize);   // restore full dot size for band/relief
+    refreshHud();
+  }
+  terrainMode = !terrainMode;
+  if (terrainMode) {
+    const v = currentView();
+    curLevel = levelForDist(camera.position.distanceTo(controls.target));
+    curCenter = { x: curLevel <= 0 ? 0 : v.cx, y: curLevel <= 0 ? 0 : v.cy };
+    terrainTargetLayout = levelLayout(curLevel, curCenter.x, curCenter.y);
+    startTransition(terrainTargetLayout);          // band → relief (rises via the zScale ease)
+  } else {
+    curLevel = -1;
+    startTransition(bandFor(capeData, terrainCurrent, { band: bandW })); // relief → band
+  }
+}
+
+// Re-evaluate the detail level when a zoom/pan SETTLES. Only swarms if the level changed OR the view
+// drifted far enough off the current coverage — so within a level the terrain holds perfectly still.
+function updateLevel() {
+  if (!(terrainMode && terrainField)) return;
+  const v = currentView();
+  const dist = camera.position.distanceTo(controls.target);
+  let want = levelForDist(dist);
+  if (want < curLevel && dist < LEVEL_IN[curLevel] * 1.2) want = curLevel; // hysteresis on zoom-out
+  const half = want <= 0 ? Infinity : LEVEL_HALF[want];
+  const drifted = want > 0 && Math.hypot(v.cx - curCenter.x, v.cy - curCenter.y) > half * 0.5;
+  if (want === curLevel && !drifted) return;      // nothing changed → stay still
+  curLevel = want;
+  curCenter = { x: want <= 0 ? 0 : v.cx, y: want <= 0 ? 0 : v.cy };
+  terrainTargetLayout = levelLayout(want, curCenter.x, curCenter.y);
+  startTransition(terrainTargetLayout);           // the inward swarm
+}
+
 // ---- year-scrub control -----------------------------------------------------
 function setYearPair(i) {
   yi = (i + years.length) % years.length;
   const next = (yi + 1) % years.length;
-  field.setSource(layouts[yi]);
-  field.setTarget(layouts[next]);
+  if (pieMode && pieYears) {                       // scrub the PIE through the years — frame holds, wedges re-fill
+    lastPie = pieYears[yi];
+    field.setSource({ positions: pieYears[yi].positions, density: pieYears[yi].density });
+    field.setTarget({ positions: pieYears[next].positions, density: pieYears[next].density });
+  } else {
+    field.setSource(layouts[yi]);
+    field.setTarget(layouts[next]);
+  }
   t = 0;
   refreshHud();
 }
 function stepYear(dir) {
   playing = false;
+  if (pieMode && pieYears) {                       // step the PIE year with an ANIMATED morph — dots
+    yi = (yi + dir + years.length) % years.length; // fly out / re-enter as that year's count changes
+    field.setSource({ positions: lastPie.positions, density: lastPie.density });
+    lastPie = pieYears[yi];
+    field.setTarget({ positions: pieYears[yi].positions, density: pieYears[yi].density });
+    field.setStagger(0.6);
+    t = 0; pieMorphStart = performance.now(); pieMorphing = true;
+    refreshHud();
+    return;
+  }
   setYearPair(yi + dir);
   t = 0; morphStart = -1;
 }
@@ -172,6 +314,20 @@ function flipCrime(dir) {
   const i = crimeTypes.indexOf(crimeType);
   const next = crimeTypes[(i + dir + crimeTypes.length) % crimeTypes.length];
   if (next === crimeType) return;
+  if (pieMode) {
+    // Flip the PIE to another crime: rebuild its per-year pies and morph. Volume is honest — murder
+    // is ~8× rarer, so most dots fly OUT (the pie empties toward its sparse murder pattern).
+    crimeType = next;
+    layouts = layoutsByType[crimeType];
+    pieYears = years.map((_, k) => pieBuilder(crimeType, k, { cx: 0, cy: 0, R: PIE_R }));
+    field.setSource({ positions: lastPie.positions, density: lastPie.density });
+    lastPie = pieYears[yi];
+    field.setTarget({ positions: pieYears[yi].positions, density: pieYears[yi].density });
+    field.setStagger(0.6);
+    t = 0; pieMorphStart = performance.now(); pieMorphing = true;
+    refreshHud();
+    return;
+  }
   flipTo = next;
   flipping = true;
   flipStart = performance.now();
@@ -188,13 +344,56 @@ function refreshHud(type = crimeType) {
   if (crimeEl) crimeEl.textContent = crimeLabels[type] || type;
   if (countEl) countEl.textContent = ((totalsByType[type] && totalsByType[type][yi]) || 0).toLocaleString();
 }
+// Spike: morph off the map into a robbery pie and back. Data dots swarm into the wedges, structure
+// dots swarm into the ring + spokes — conserved, staggered, no fades.
+function togglePie() {
+  if (!pieBuilder || !field) return;
+  pieMode = !pieMode;
+  playing = false;
+  if (pieMode) {
+    pieYears = years.map((_, i) => pieBuilder(crimeType, i, { cx: 0, cy: 0, R: PIE_R })); // one pie per year
+    const pie = pieYears[yi];
+    lastPie = pie;
+    field.setSource(layoutsByType[crimeType][yi]);
+    field.setTarget({ positions: pie.positions, density: pie.density });
+    field.setStagger(0.6);
+    terrainMode = false;                          // flatten (face-on pie, no relief tilt)
+    if (terrainField) { terrainField.setSize(PIE_LINE_SIZE); startTransition(pieFrameLayout(GX * GY, { cx: 0, cy: 0, R: PIE_R, boundaries: pie.boundaries, frameDots: pieFrameDots, thin: pieThin })); }
+  } else {
+    field.setSource({ positions: lastPie.positions, density: lastPie.density });
+    field.setTarget(layoutsByType[crimeType][yi]);
+    field.setStagger(0.55);
+    if (terrainField) { terrainField.setSize(terrainDotSize); startTransition(bandFor(capeData, terrainTargetLayout, { band: bandW })); } // back to the map band, full dot size
+  }
+  t = 0; pieMorphStart = performance.now(); pieMorphing = true;
+  refreshHud();
+}
+
+// Jump straight to the 2D map from anywhere — data + structure swarm home (the `M` key).
+function goToMap() {
+  if (!pieMode && !terrainMode) return;            // already on the map
+  if (pieMode) {                                   // pie → map: data swarms back
+    pieMode = false;
+    field.setSource({ positions: lastPie.positions, density: lastPie.density });
+    field.setTarget(layoutsByType[crimeType][yi]);
+    field.setStagger(0.55);
+    t = 0; pieMorphStart = performance.now(); pieMorphing = true;
+    if (terrainField) terrainField.setSize(terrainDotSize);
+    refreshHud();
+  }
+  terrainMode = false; curLevel = -1;              // flatten the relief; structure → the map band
+  if (terrainField) startTransition(bandFor(capeData, terrainTargetLayout, { band: bandW }));
+}
+
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'Space') { e.preventDefault(); playing = !playing; if (playing) holdUntil = performance.now(); }
+  if (e.code === 'Space') { e.preventDefault(); playing = !playing; if (playing) { holdUntil = performance.now(); if (pieMode) setYearPair(yi); } }
+  else if (e.code === 'KeyP') { e.preventDefault(); togglePie(); }
+  else if (e.code === 'KeyM') { e.preventDefault(); goToMap(); }
   else if (e.code === 'ArrowRight') { e.preventDefault(); stepYear(1); }
   else if (e.code === 'ArrowLeft') { e.preventDefault(); stepYear(-1); }
   else if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
   else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
-  else if (e.code === 'KeyT') { e.preventDefault(); terrainMode = !terrainMode; }
+  else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); }
 });
 
 // Debug hook.
@@ -214,7 +413,34 @@ window.__viz = {
   maxSize: (px) => { if (field) field.setMaxSize(px); if (terrainField) terrainField.setMaxSize(px); }, // cap dot px on zoom
   shimmer: (a) => { if (terrainField) terrainField.setShimmer(a); },         // structure breath amplitude (0=still)
   shimmerSpeed: (s) => { if (terrainField) terrainField.setShimmerSpeed(s); },
-  band: (w) => { if (terrainField && capeData) terrainField.setSource(structureMapSource(capeData, terrainLayout(capeData), { band: w })); }, // ribbon width
+  band: (w) => { bandW = w; if (terrainField && terrainTargetLayout) terrainField.setSource(bandFor(capeData, terrainTargetLayout, { band: w })); }, // map ribbon width
+  terrainDots: (px) => { terrainDotSize = px; if (terrainField) terrainField.setSize(px); }, // structure dot size (finer stipple)
+  lod: () => { curLevel = -99; updateLevel(); },                              // force a level re-resolve (swarm)
+  pieR: (r) => {                                                             // live-tune the pie radius (denser = brighter data)
+    if (r != null) PIE_R = r;
+    if (pieMode && pieBuilder) {
+      const pie = pieBuilder(crimeType, yi, { cx: 0, cy: 0, R: PIE_R }); lastPie = pie;
+      field.setSource({ positions: pie.positions, density: pie.density }); field.setTarget({ positions: pie.positions, density: pie.density }); field.setT(1);
+      if (terrainField) { const f = pieFrameLayout(GX * GY, { cx: 0, cy: 0, R: PIE_R, boundaries: pie.boundaries, frameDots: pieFrameDots, thin: pieThin }); terrainField.setSource(f); terrainField.setTarget(f); terrainField.setT(1); trProg = 1; }
+    }
+    return PIE_R;
+  },
+  pieFrame: (dots, thin) => { if (dots != null) pieFrameDots = dots; if (thin != null) pieThin = thin; if (window.__viz) window.__viz.pieR(); return { frameDots: pieFrameDots, thin: pieThin }; }, // thin/tight frame
+  view: (x = 0, y = 0, dist = 200) => {                                       // debug: fly to a map-local point + zoom
+    const world = fieldGroup.localToWorld(new THREE.Vector3(x, y, 0));
+    const dir = camera.position.clone().sub(controls.target).normalize();
+    controls.target.copy(world);
+    camera.position.copy(world).addScaledVector(dir, dist);
+    controls.update(); curLevel = -99; updateLevel();
+  },
+  levels: (a, b, c) => { if (a != null) LEVEL_IN[1] = a; if (b != null) LEVEL_IN[2] = b; if (c != null) LEVEL_IN[3] = c; return LEVEL_IN.slice(); }, // tune zoom-in thresholds
+  swarm: (stagger, dur) => { if (stagger != null) swarmStagger = stagger; if (dur != null) swarmDur = dur; return { stagger: swarmStagger, dur: swarmDur }; }, // tune the structure flock
+  speed: (ms) => { if (ms != null) { PIE_MS = ms; swarmDur = ms; } return { pie: PIE_MS, swarm: swarmDur }; }, // slow/quicken BOTH transition speeds at once
+  ease: (name) => { if (name && EASES[name]) swarmEase = EASES[name]; return { current: Object.keys(EASES).find((k) => EASES[k] === swarmEase), options: Object.keys(EASES) }; }, // swap the transition curve
+  station: (name) => {                                                        // debug: find a station's map-local xy
+    const s = (capeData.stations || []).find((s) => s.name.toLowerCase().includes(name.toLowerCase()));
+    return s ? { name: s.name, x: s.x, y: s.y } : 'not found';
+  },
   roost: (d) => {                                            // how far off-screen dots fly & wait
     if (!capeData) return;
     const b = buildCrimeLayouts(capeData, { types: crimeTypes, mode: 'raw', roost: d });
@@ -225,27 +451,34 @@ window.__viz = {
   zpeak: (v) => { zPeak = v; },                              // relief height (layout units)
   tilt: (r) => { tiltAngle = r; },                           // terrain-mode view tilt (radians)
   terrainNow: (on = true) => {                               // debug: jump to/from terrain (no ease)
-    terrainMode = on; zScaleCur = on ? zPeak : 0; tiltCur = on ? tiltAngle : 0; terrainT = on ? 1 : 0;
-    if (terrainField) { terrainField.setZScale(zScaleCur); terrainField.setT(terrainT); }
-    if (field) field.setZScale(zScaleCur);
+    terrainMode = on;
+    zScaleCur = on ? zPeak : 0; tiltCur = on ? tiltAngle : 0;
     fieldGroup.rotation.x = tiltCur;                          // apply directly (don't wait for a frame)
-  },
-  terrainAt: (v) => {                                        // debug: hold the fly-in at t=v (0..1)
-    terrainMode = true; terrainT = v; zScaleCur = zPeak * v; tiltCur = tiltAngle * v;
-    if (terrainField) { terrainField.setT(v); terrainField.setZScale(zScaleCur); }
     if (field) field.setZScale(zScaleCur);
-    fieldGroup.rotation.x = tiltCur;
+    if (!terrainField) return;
+    if (on) {
+      const v = currentView();
+      curLevel = levelForDist(camera.position.distanceTo(controls.target));
+      curCenter = { x: curLevel <= 0 ? 0 : v.cx, y: curLevel <= 0 ? 0 : v.cy };
+      terrainCurrent = levelLayout(curLevel, curCenter.x, curCenter.y);
+      terrainTargetLayout = terrainCurrent;
+    } else {
+      curLevel = -1;
+      terrainCurrent = bandFor(capeData, terrainTargetLayout || levelLayout(0), { band: bandW });
+    }
+    terrainField.setSource(terrainCurrent); terrainField.setTarget(terrainCurrent);
+    terrainField.setZScale(zScaleCur); terrainField.setT(1); trProg = 1;
   },
   matte: (hex) => {                                          // live-tune the structure colour
     if (terrainField) terrainField.material.uniforms.uMatte.value.set(hex);
   },
   hideData: (hide = true) => { if (field) field.points.visible = !hide; }, // judge terrain alone
   tdbg: () => JSON.stringify({                                // debug: inspect live terrain state
-    terrainMode, terrainT: +terrainT.toFixed(2),
+    terrainMode, curLevel, trProg: +trProg.toFixed(2),
+    dist: +camera.position.distanceTo(controls.target).toFixed(0),
+    center: { x: +curCenter.x.toFixed(0), y: +curCenter.y.toFixed(0) },
     zScaleCur: +zScaleCur.toFixed(0), rotX: +fieldGroup.rotation.x.toFixed(2),
     terr_uT: +terrainField.material.uniforms.uT.value.toFixed(2),
-    terr_uZScale: +terrainField.material.uniforms.uZScale.value.toFixed(0),
-    crime_uZScale: +field.material.uniforms.uZScale.value.toFixed(0),
   }),
 };
 
@@ -257,7 +490,12 @@ function tick() {
   const now = performance.now();
   const time = clock.getElapsedTime();
 
-  if (flipping) {
+  if (pieMorphing) {
+    // Morphing the field between the map and the pie (both fields swarm; nothing fades).
+    const p = Math.min((now - pieMorphStart) / PIE_MS, 1);
+    t = swarmEase(p);
+    if (p >= 1) pieMorphing = false;
+  } else if (flipping) {
     // Crossing between crimes at the current year; year-advance is suspended.
     const p = Math.min((now - flipStart) / FLIP_MS, 1);
     t = easeInOut(p);
@@ -288,8 +526,12 @@ function tick() {
   if (terrainField) {
     zScaleCur += ((terrainMode ? zPeak : 0) - zScaleCur) * 0.06;   // ease the land up/down
     tiltCur += ((terrainMode ? tiltAngle : 0) - tiltCur) * 0.06;   // ease the view tilt
-    terrainT += ((terrainMode ? 1 : 0) - terrainT) * 0.05;         // the tool swarm restructures / flies in
-    terrainField.setZScale(zScaleCur); terrainField.setT(terrainT); terrainField.setTime(time);
+    if (trProg < 1) {                                              // advance the current swarm transition
+      trProg = Math.min((now - trStart) / trDur, 1);
+      terrainField.setT(swarmEase(trProg));
+      if (trProg >= 1 && trTo) terrainCurrent = trTo;              // it's now the resting arrangement
+    }
+    terrainField.setZScale(zScaleCur); terrainField.setTime(time);
     field.setZScale(zScaleCur);       // crime CLIMBS the relief with the land beneath it
   }
   fieldGroup.rotation.x = tiltCur;

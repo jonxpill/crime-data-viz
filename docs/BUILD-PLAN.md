@@ -113,6 +113,27 @@ coastline; ocean culled). Brightness climbs with height + slope — ridges glow,
 - Files: `terrainLayout` + `structureMapSource` + crime-z in `capeTown.js`; `aZ`/`uZScale` + slope shading
   in `PointField.js`; terrain mosaic bake in `bake.mjs`. Re-bake: `node pipeline/bake.mjs`.
 
+## Stage 3.5 — terrain detail-on-demand (neighbourhood LOD) 🔨 IN PROGRESS (2026-07-02)
+**Goal: the closer you zoom, the more the terrain resolves — everywhere (Table Mountain, Hout Bay,
+Noordhoek), not just far-out.** Today the terrain is a *smudge* because it's baked coarse (300×324 ≈ 380 m/
+sample) and zooming only magnifies the same coarse dots. The maker's model (agreed 2026-07-02): **whatever's
+on screen always gets the full dot budget** — zoom in and the dots you already have *concentrate* into the
+visible patch and resample a *finer* DEM there, so detail blooms. Constant on-screen detail-density.
+- **Scope: NEIGHBOURHOOD scale** (stops resolving ~100 m grain). Street-scale (multi-res tiles/streaming)
+  is explicitly deferred — discuss later. **Terrain ONLY**; crime stays precinct-level (no fabricated
+  sub-precinct detail — the honesty line). Detail is REAL (from a finer DEM); honest ceiling = baked res.
+- **Two parts:** (1) *put the detail in the shipped data* — re-bake the DEM at ~native z10 (~900×972, ~127 m,
+  **no new downloads** — we currently discard ⅔ of the z10 tiles we have) as a compact **Int16 `.bin`** the
+  client loads (slim the JSON: drop the inline `elev` array). (2) *reveal it* — decouple the dot budget from
+  the DEM grid: a **fixed ~130k-dot pool** placed to fill the current viewport, each dot sampling the fine
+  DEM (bilinear) for height+slope. Zoom shrinks the viewport → finer sampling → detail. Perf unchanged
+  (same dot count, just repositioned).
+- **Mechanism, staged:** (A) CPU spike — on zoom/pan settle, recompute the viewport rect, retarget the pool,
+  tween in (proves the *feel* fast). (B) ship = GPU-parametric — dots carry `(u,v)`, two uniforms map them
+  into the viewport, sample a DEM texture in the shader (CPU idle; the pure engine fit; continuous LOD).
+- **Open:** map↔terrain morph target becomes viewport-aware; the visible-rect maths under tilt; feel-tuning
+  the bloom. New layout `terrainViewLayout` (replaces per-cell `terrainLayout`) + `structureBandLayout`.
+
 ## Stage 3+ — grow by curiosity (no spec; play)
 New layouts/instruments as curiosity strikes: the **history / apartheid Group-Areas overlay** (let the
 correlation sit, say nothing); the **discrepancy instrument** (SAPS reported vs VOCS experienced vs SAMRC

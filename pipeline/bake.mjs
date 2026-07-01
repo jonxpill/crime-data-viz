@@ -194,7 +194,10 @@ function elevAt(lng, lat) {
   const c = mosaic[(y0 + 1) * MOS_W + x0], d = mosaic[(y0 + 1) * MOS_W + x0 + 1];
   return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
 }
-const TGX = 300, TGY = 324;              // terrain grid resolution over the box (dense = reads as a surface)
+// Terrain grid ≈ native z10 over the box (~127 m/sample) — 3× finer per axis than before, so
+// detail-on-demand (Stage 3.5) has real data to reveal when you zoom. Shipped as a compact Int16
+// .bin the client loads, NOT inline JSON (874k numbers would bloat the asset ~4 MB → ~1.7 MB bin).
+const TGX = 900, TGY = 972;
 const elev = new Array(TGX * TGY);
 let emax = 0;
 for (let j = 0; j < TGY; j++) {
@@ -231,10 +234,15 @@ const asset = {
   },
   stations,
   structure,
-  terrain: { cols: TGX, rows: TGY, peak: emax, elev },
+  terrain: { cols: TGX, rows: TGY, peak: emax, dem: 'capetown-dem.bin' }, // elev shipped separately as Int16
 };
+// Elevation → compact Int16 binary (signed metres; < 0 = ocean, culled client-side). Clamped to the
+// Int16 range; our peak is ~1729 m and the ocean sentinel −9999 both fit comfortably.
+const demBuf = new Int16Array(TGX * TGY);
+for (let i = 0; i < demBuf.length; i++) demBuf[i] = Math.max(-32768, Math.min(32767, elev[i]));
+writeFileSync(ROOT + 'public/data/capetown-dem.bin', Buffer.from(demBuf.buffer));
 writeFileSync(ROOT + 'public/data/capetown.json', JSON.stringify(asset));
-console.log(`baked public/data/capetown.json (${stations.length} stations, ${YEARS.length} years, ${CRIMES.length} crimes)`);
+console.log(`baked public/data/capetown.json + capetown-dem.bin (${TGX}×${TGY} DEM, ${(demBuf.byteLength/1e6).toFixed(2)} MB) — ${stations.length} stations, ${YEARS.length} years`);
 
 // ---- helpers ----------------------------------------------------------------
 function parseCSVLine(line) {

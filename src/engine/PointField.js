@@ -76,7 +76,7 @@ export class PointField {
         uStagger: { value: 0.55 },
         // Structure shimmer — each grey/matte dot fades slightly in/out on its own phase so the
         // frame breathes like faint stars. Data has its own twinkle; these are ignored there.
-        uShimmer: { value: 0.3 },      // amplitude (0 = still; ~0.3 = a gentle breath)
+        uShimmer: { value: 0.45 },     // amplitude (0 = still; ~0.3 gentle, ~0.45 more present)
         uShimmerSpeed: { value: 0.8 }, // how fast the breath cycles (slow = calm)
         uZScale: { value: 0 }, // terrain vertical scale (0 = flat map; raised = relief)
         uOpacity: { value: 1 }, // global fade — cross-fades map structure ↔ terrain relief
@@ -119,6 +119,8 @@ export class PointField {
   setT(t) { this.material.uniforms.uT.value = t; }
   setTime(s) { this.material.uniforms.uTime.value = s; }
   setPixelRatio(r) { this.material.uniforms.uPixelRatio.value = r; }
+  /** Base point size (px, before density boost / perspective). */
+  setSize(px) { this.material.uniforms.uSize.value = px; }
   /** Cap on-screen point size (px) so dots stay fine, not fat discs, when zoomed in. */
   setMaxSize(px) { this.material.uniforms.uMaxSize.value = px; }
   /** Structure shimmer — per-dot brightness-breath amplitude (0 = still) and speed. */
@@ -245,7 +247,8 @@ const FRAG = /* glsl */ `
       // barely touched. A soft-edged dot: a quiet grey field, not stars.
       if (vDensity < 0.01) discard;              // ocean (density 0) → the land ends at the coast
       float a = smoothstep(1.0, 0.15, r) * 0.92;
-      gl_FragColor = vec4(uMatte * (0.32 + 4.5 * vDensity) * vTwinkle, a);
+      // 0.9 = a 10% overall brightness trim on the grey-green frame (keeps the tonal shape).
+      gl_FragColor = vec4(uMatte * (0.9 * (0.32 + 4.5 * vDensity)) * vTwinkle, a);
     }
     gl_FragColor.a *= uOpacity;
   }
