@@ -140,7 +140,7 @@ async function init() {
 
   refreshHud();
   const flagEl = document.getElementById('flag');
-  if (flagEl) flagEl.textContent = `◆ real SAPS · ${yearLabels[0]}–${yearLabels.at(-1)}`;
+  if (flagEl) flagEl.textContent = `◆ SAPS crime records via DataFirst (CC-BY) · ${yearLabels[0]}–${yearLabels.at(-1)}`;
   holdUntil = performance.now() + 900;
   requestAnimationFrame(tick);
 }

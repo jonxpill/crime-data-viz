@@ -27,11 +27,14 @@ npm-debug.log*
 scratchpad/
 *.tmp
 
-# Raw data INPUTS — kept OUT of the (public) repo; only the baked
-# public/data/capetown.json ships. Re-obtain each from its source:
-#  · pipeline/sapacr-2008-2023-v1.1/  → DataFirst cat. 1012 (login; LICENSED — do not redistribute)
-#  · data/raw/*.tif                   → WorldPop 2020 (URLs in pipeline/clip-worldpop.mjs)
-#  · data/raw/sal-pop.csv             → Stats SA Census 2011 Small Area Layer population
-pipeline/sapacr-2008-2023-v1.1/
+# Raw data INPUTS. The baked public/data/capetown.json is what ships; these are the
+# re-processable sources. The SAPACR crime data is CC-BY (redistributable WITH
+# attribution — see README), so its CSV stays tracked for reproducibility; only the
+# redundant Stata/SPSS copies and the bulky/derived rasters are omitted:
+#  · *.dta / *.sav        → duplicate formats of the tracked SAPACR CSV
+#  · data/raw/*.tif       → WorldPop 2020 rasters (URLs in pipeline/clip-worldpop.mjs)
+#  · data/raw/sal-pop.csv → Stats SA Census 2011 Small Area Layer (not used yet)
+pipeline/sapacr-2008-2023-v1.1/*.dta
+pipeline/sapacr-2008-2023-v1.1/*.sav
 data/raw/*.tif
 data/raw/sal-pop.csv
