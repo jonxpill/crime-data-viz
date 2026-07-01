@@ -138,21 +138,26 @@ console.log(`Cape Town stations: ${stations.length} · years ${YEAR_LABELS[0]}�
 
 // ---- structure: sample real precinct boundaries as grey points --------------
 const structure = [];
-const STEP = 1.7;
+// Walk each precinct ring at a CONSTANT arc-length step so boundary dots are evenly
+// spaced no matter how the polygon vertices fall. The old per-edge sampler forced ≥1 dot
+// per edge, so dense-vertex outlines couldn't get any denser — halving the spacing barely
+// moved the count. Uniform spacing lets us spend the pool waiting off-screen: MANY small
+// dots, never bigger ones. Keep the total under the land-dot count (they live in that pool).
+const STEP = 0.38; // units between boundary dots along the outline (denser = more little dots)
 for (const f of precincts) {
   for (const ring of allRings(f.geometry)) {
-    let prev = null;
-    for (const c of ring) {
-      const p = project(c);
-      if (prev) {
-        const dx = p[0] - prev[0], dy = p[1] - prev[1];
-        const steps = Math.max(1, Math.floor(Math.hypot(dx, dy) / STEP));
-        for (let s = 0; s < steps; s++) {
-          const tt = s / steps;
-          structure.push(+(prev[0] + dx * tt).toFixed(1), +(prev[1] + dy * tt).toFixed(1));
-        }
+    const pts = ring.map(project);
+    let acc = 0; // distance walked since the last dot, carried across edges
+    for (let i = 1; i < pts.length; i++) {
+      const ax = pts[i - 1][0], ay = pts[i - 1][1];
+      const dx = pts[i][0] - ax, dy = pts[i][1] - ay;
+      const segLen = Math.hypot(dx, dy);
+      if (segLen === 0) continue;
+      for (let d = STEP - acc; d <= segLen; d += STEP) {
+        const tt = d / segLen;
+        structure.push(+(ax + dx * tt).toFixed(1), +(ay + dy * tt).toFixed(1));
       }
-      prev = p;
+      acc = (acc + segLen) % STEP; // leftover into the next edge keeps spacing continuous
     }
   }
 }

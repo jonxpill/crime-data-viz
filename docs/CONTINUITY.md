@@ -41,7 +41,7 @@ in `src/layouts/capeTown.js` (`buildCrimeLayouts` · `terrainLayout` · `structu
 
 **Gotchas a cold session MUST know:**
 - `src/main.js` keeps a `window.__viz` debug/tuning console (drift · stagger · terrainNow · terrainAt ·
-  tdbg · hideData · matte · zpeak · tilt · roost). Intentionally kept for live tinkering — console-only,
+  tdbg · hideData · matte · zpeak · tilt · roost · maxSize). Intentionally kept for live tinkering — console-only,
   harmless in production. Strip only if a truly clean ship is wanted.
 - Re-bake: `node pipeline/bake.mjs` (needs `data/raw/terrain/` DEM tiles + `pipeline/sapacr-*`, both
   git-ignored / re-downloadable). Baked `public/data/capetown.json` (~673 KB) is what ships.
@@ -145,6 +145,11 @@ specific instruments (deferred) · where it lives / distribution · a name.
 - **When two fields share a frame, let one READ the other's derived axis from the same source — don't
   recompute.** The crime field samples the *same* baked DEM the terrain does (same grid, peak, orientation),
   so it rides the relief in perfect register for free; independent height calcs would drift apart. (?)
+- **A perspective point-field needs a point-size CAP, and lines want UNIFORM arc-length sampling.**
+  `gl_PointSize ∝ 1/dist` grows every dot without limit, so a zoom-in turns a fine field into fat discs —
+  clamp it; density (more dots), not size, is how you fill space. And sample an outline by walking it at a
+  constant arc-length step, not per-edge: a per-edge min-1-dot sampler clumps at dense vertices and starves
+  long edges, so halving the spacing barely changes the count — you can't dial density until it's uniform. (?)
 - *(tooling traps, kept local — not universal):* d3-geo `fitExtent` to ArcGIS polygons fails (clockwise
   winding → global bounds → microscopic scale); fit to vertices-as-points. `import.meta.url` URL-encodes
   spaces in paths. Calling both `THREE.Clock.getElapsedTime()` and `getDelta()` per frame zeroes the delta

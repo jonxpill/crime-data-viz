@@ -211,6 +211,7 @@ window.__viz = {
   drift: (px) => field && field.setDrift(px),                 // data swarm — how FAR it strays
   driftSpeed: (m) => field && field.setDriftSpeed(m),         // data swarm — how FAST (felt-ness)
   stagger: (w) => field && field.setStagger(w),              // swarm cascade (0=together … ~0.6)
+  maxSize: (px) => { if (field) field.setMaxSize(px); if (terrainField) terrainField.setMaxSize(px); }, // cap dot px on zoom
   roost: (d) => {                                            // how far off-screen dots fly & wait
     if (!capeData) return;
     const b = buildCrimeLayouts(capeData, { types: crimeTypes, mode: 'raw', roost: d });

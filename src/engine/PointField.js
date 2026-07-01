@@ -61,6 +61,7 @@ export class PointField {
         uTime: { value: 0 },
         uSize: { value: size },
         uPixelRatio: { value: 1 },
+        uMaxSize: { value: 7.0 }, // cap on-screen size (px) — stops dots ballooning into discs when you zoom in
         uGlow: { value: this.glow ? 1 : 0 },
         // Idle drift — the at-rest "living swarm" shimmer, on two independent levers:
         //   uDrift      = AMPLITUDE (how far a point strays from home). Keep small so
@@ -114,6 +115,8 @@ export class PointField {
   setT(t) { this.material.uniforms.uT.value = t; }
   setTime(s) { this.material.uniforms.uTime.value = s; }
   setPixelRatio(r) { this.material.uniforms.uPixelRatio.value = r; }
+  /** Cap on-screen point size (px) so dots stay fine, not fat discs, when zoomed in. */
+  setMaxSize(px) { this.material.uniforms.uMaxSize.value = px; }
   /** Idle-drift AMPLITUDE — how far a point strays from home (keep small). */
   setDrift(px) { this.material.uniforms.uDrift.value = px; }
   /** Idle-drift SPEED — how fast the orbit runs (makes motion felt; no extra stray). */
@@ -136,6 +139,7 @@ const VERT = /* glsl */ `
   uniform float uDriftSpeed;
   uniform float uStagger;
   uniform float uZScale;
+  uniform float uMaxSize;
 
   attribute vec2 aSource;
   attribute vec2 aTarget;
@@ -178,6 +182,9 @@ const VERT = /* glsl */ `
     // Data: dense cores read a touch larger. Structure: uniform fine dust.
     float sizeBoost = uGlow > 0.5 ? (0.6 + 0.95 * density) : 1.0;
     gl_PointSize = uSize * sizeBoost * uPixelRatio * (300.0 / -mvPosition.z);
+    // Cap on-screen size so a zoom-in keeps a FINE field of dots instead of fat discs
+    // (perspective otherwise grows each point ∝ 1/distance without limit).
+    gl_PointSize = min(gl_PointSize, uMaxSize * uPixelRatio);
   }
 `;
 
