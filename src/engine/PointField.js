@@ -60,10 +60,17 @@ export class PointField {
         uSize: { value: size },
         uPixelRatio: { value: 1 },
         uGlow: { value: this.glow ? 1 : 0 },
-        // Idle drift amplitude (px) — the at-rest "living swarm" shimmer. Set per
-        // field via setDrift: data breathes, structure only whispers (data stays
-        // markedly more alive — living field, near-fixed frame).
+        // Idle drift — the at-rest "living swarm" shimmer, on two independent levers:
+        //   uDrift      = AMPLITUDE (how far a point strays from home). Keep small so
+        //                 dots feel alive without "wandering away".
+        //   uDriftSpeed = SPEED (how fast the orbit runs). This is what makes the
+        //                 movement FELT; raising it does NOT increase how far a dot
+        //                 strays. Data breathes; structure only whispers.
         uDrift: { value: this.glow ? 0.4 : 0.0 },
+        uDriftSpeed: { value: 1.0 },
+        // Per-dot transition stagger: each point crosses on its own slice of uT, so a
+        // big change ripples like a flock instead of sliding as one rigid sheet.
+        uStagger: { value: 0.55 },
         uRampCool: { value: ramp[0] },
         uRampMid: { value: ramp[1] },
         uRampWarm: { value: ramp[2] },
@@ -99,8 +106,12 @@ export class PointField {
   setT(t) { this.material.uniforms.uT.value = t; }
   setTime(s) { this.material.uniforms.uTime.value = s; }
   setPixelRatio(r) { this.material.uniforms.uPixelRatio.value = r; }
-  /** Idle-drift amplitude in px (the at-rest "living swarm" shimmer). */
+  /** Idle-drift AMPLITUDE — how far a point strays from home (keep small). */
   setDrift(px) { this.material.uniforms.uDrift.value = px; }
+  /** Idle-drift SPEED — how fast the orbit runs (makes motion felt; no extra stray). */
+  setDriftSpeed(mult) { this.material.uniforms.uDriftSpeed.value = mult; }
+  /** Per-dot transition stagger (0 = all move together; ~0.6 = a cascading swarm). */
+  setStagger(w) { this.material.uniforms.uStagger.value = w; }
 }
 
 const VERT = /* glsl */ `
@@ -110,6 +121,8 @@ const VERT = /* glsl */ `
   uniform float uPixelRatio;
   uniform float uGlow;
   uniform float uDrift;
+  uniform float uDriftSpeed;
+  uniform float uStagger;
 
   attribute vec2 aSource;
   attribute vec2 aTarget;
@@ -122,8 +135,14 @@ const VERT = /* glsl */ `
 
   // Smooth, slightly eased blend so the field "settles" rather than slides linearly.
   void main() {
-    vec2 pos = mix(aSource, aTarget, uT);
-    float density = mix(aSourceDensity, aTargetDensity, uT);
+    // Per-dot staggered transition into a cascading swarm, not a rigid slide. Each dot
+    // crosses over a window w of uT, starting at a seed-based offset. Endpoints are
+    // preserved (everyone is fully at source at uT=0, fully at target at uT=1).
+    float seed01 = fract(aSeed * 0.1591549431);
+    float w = max(uStagger, 0.02);
+    float lt = clamp((uT - seed01 * (1.0 - w)) / w, 0.0, 1.0);
+    vec2 pos = mix(aSource, aTarget, lt);
+    float density = mix(aSourceDensity, aTargetDensity, lt);
     vDensity = density;
 
     // Idle drift — each point wanders a slow, tiny orbit on its own phase, so the
@@ -131,9 +150,10 @@ const VERT = /* glsl */ `
     // it organic (not a clean circle); sparse points float a touch more than packed
     // cores. Structure has uDrift = 0, so the frame stays solid.
     float ph = aSeed;
+    float tt = uTime * uDriftSpeed; // speed scales the orbit, NOT its radius
     float wander = uDrift * (1.3 - 0.5 * density);
-    pos.x += wander * (sin(uTime * 0.5 + ph) + 0.5 * sin(uTime * 1.1 + ph * 2.0));
-    pos.y += wander * (cos(uTime * 0.43 + ph * 1.3) + 0.5 * cos(uTime * 0.9 + ph * 1.7));
+    pos.x += wander * (sin(tt * 0.5 + ph) + 0.5 * sin(tt * 1.1 + ph * 2.0));
+    pos.y += wander * (cos(tt * 0.43 + ph * 1.3) + 0.5 * cos(tt * 0.9 + ph * 1.7));
 
     // Gentle per-point twinkle — denser data breathes a touch; structure is still.
     vTwinkle = uGlow > 0.5 ? (0.85 + 0.15 * sin(uTime * 1.6 + aSeed)) : 1.0;

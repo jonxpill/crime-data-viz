@@ -41,25 +41,40 @@ export async function loadCapeTown(url = 'data/capetown.json') {
 }
 
 /**
- * Build one fixed-buffer layout per year.
- * @returns {{ years:number[], count:number, layouts:{positions:Float32Array,density:Float32Array}[], totals:number[] }}
+ * Build fixed-buffer layouts for EVERY crime, sharing one point buffer so the field
+ * can flip between crimes as smoothly as it scrubs years.
+ *
+ * The buffer (slot count + jitter offsets per station) is sized to the BUSIEST
+ * (crime, year) per station — so a rarer crime (murder) leaves most slots parked at
+ * the precinct centre (invisible), and flipping robbery→murder reads as the cloud
+ * CONTRACTING to a few embers. That sparseness is the honest signal: murder really
+ * is ~8× rarer. Density-colour is normalised PER CRIME (across its own years), so
+ * each crime's spatial pattern still glows legibly instead of washing out — volume
+ * lives in the dot COUNT, pattern lives in the colour.
+ *
+ * @returns {{ years:number[], count:number,
+ *             layouts:Record<string,{positions:Float32Array,density:Float32Array}[]>,
+ *             totals:Record<string,number[]> }}
  */
-export function buildYearLayouts(data, { mode = 'raw' } = {}) {
+export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {}) {
   const years = data.meta.years;
   const stations = data.stations;
   const rng = mulberry32(0x1234);
 
-  const valueOf = (s, y) => (mode === 'percapita' ? (s.counts[y] / s.pop) * PC_SCALE : s.counts[y]);
+  const valueOf = (s, type, y) => {
+    const c = s.crimes[type][y] || 0;
+    return mode === 'percapita' ? (c / s.pop) * PC_SCALE : c;
+  };
 
-  // Slot allocation: K points per station from its peak year → constant buffer.
+  // Shared slot allocation: K = busiest (crime, year) per station → constant buffer
+  // across every crime, so a slot keeps its identity through BOTH a flip and a scrub.
   const slots = stations.map((s) => {
-    const peak = Math.max(...years.map((y) => valueOf(s, y)));
+    let peak = 0;
+    for (const type of types) for (const y of years) peak = Math.max(peak, valueOf(s, type, y));
     const K = Math.max(0, Math.round(peak / PER_POINT));
     const offs = new Float32Array(K * 2);
     for (let j = 0; j < K; j++) {
       // Gaussian falloff from the precinct centre — denser core, fading edge.
-      // NO hard radius clamp: clamping pinned ~10% of points to exactly r, which
-      // drew a visible ring around every hotspot. Let it taper off naturally.
       const ang = rng() * TAU;
       const rad = Math.abs(gauss(rng)) * 0.5 * s.r;
       offs[j * 2] = Math.cos(ang) * rad;
@@ -72,51 +87,70 @@ export function buildYearLayouts(data, { mode = 'raw' } = {}) {
   for (const sl of slots) { sl.base = base; base += sl.K; }
   const COUNT = base;
 
-  // Pass 1 — build each year's positions + RAW neighbour crowding. Active points
-  // are gathered for one cross-precinct density pass so adjacent hotspots merge.
-  const per = years.map((y) => {
-    const positions = new Float32Array(COUNT * 2);
-    const activeXY = [];
-    const activeIdx = [];
-    for (const sl of slots) {
-      const n = Math.min(sl.K, Math.round(valueOf(sl.s, y) / PER_POINT));
-      for (let j = 0; j < sl.K; j++) {
-        const idx = sl.base + j;
-        if (j < n) {
-          const px = sl.s.x + sl.offs[j * 2];
-          const py = sl.s.y + sl.offs[j * 2 + 1];
-          positions[idx * 2] = px;
-          positions[idx * 2 + 1] = py;
-          activeXY.push(px, py);
-          activeIdx.push(idx);
-        } else {
-          // parked at the precinct centre, invisible (density 0), ready to grow.
-          positions[idx * 2] = sl.s.x;
-          positions[idx * 2 + 1] = sl.s.y;
+  // Per-slot "roost" — an OFF-SCREEN waiting spot out past the frame edge, in the
+  // direction of the station (jittered). A parked dot flies OUT to its roost when its
+  // hotspot cools and flies BACK IN when it fills — so the field reads as a living
+  // swarm gathering and dispersing, not points blinking on at a centroid.
+  const roostPos = new Float32Array(COUNT * 2);
+  for (const sl of slots) {
+    const central = Math.hypot(sl.s.x, sl.s.y) < 30; // stations near the centre → random bearing
+    const baseAng = Math.atan2(sl.s.y, sl.s.x);
+    for (let j = 0; j < sl.K; j++) {
+      const idx = sl.base + j;
+      const ang = central ? rng() * TAU : baseAng + (rng() - 0.5) * 0.9;
+      const rr = roost * (0.8 + rng() * 0.5);
+      roostPos[idx * 2] = Math.cos(ang) * rr;
+      roostPos[idx * 2 + 1] = Math.sin(ang) * rr;
+    }
+  }
+
+  const layouts = {};
+  const totals = {};
+  for (const type of types) {
+    // Pass 1 — each year's positions + RAW cross-precinct neighbour crowding.
+    const per = years.map((y) => {
+      const positions = new Float32Array(COUNT * 2);
+      const activeXY = [];
+      const activeIdx = [];
+      for (const sl of slots) {
+        const n = Math.min(sl.K, Math.round(valueOf(sl.s, type, y) / PER_POINT));
+        for (let j = 0; j < sl.K; j++) {
+          const idx = sl.base + j;
+          if (j < n) {
+            const px = sl.s.x + sl.offs[j * 2];
+            const py = sl.s.y + sl.offs[j * 2 + 1];
+            positions[idx * 2] = px;
+            positions[idx * 2 + 1] = py;
+            activeXY.push(px, py);
+            activeIdx.push(idx);
+          } else {
+            // parked OFF-SCREEN at the slot's roost (invisible); flies back in when
+            // the hotspot fills again, instead of growing from the centre.
+            positions[idx * 2] = roostPos[idx * 2];
+            positions[idx * 2 + 1] = roostPos[idx * 2 + 1];
+          }
         }
       }
-    }
-    return { positions, activeIdx, raw: neighbourCounts(Float32Array.from(activeXY), DENSITY_CELL) };
-  });
+      return { positions, activeIdx, raw: neighbourCounts(Float32Array.from(activeXY), DENSITY_CELL) };
+    });
 
-  // GLOBAL normalisation across every year — the crux of "feeling the shift".
-  // Normalising each year to its own max would re-inflate light years to look as
-  // full as heavy ones, hiding the very change the scrub exists to show. One max
-  // for all years means more crime → genuinely warmer + denser, year over year.
-  let gMax = 1;
-  for (const p of per) for (let k = 0; k < p.raw.length; k++) if (p.raw[k] > gMax) gMax = p.raw[k];
+    // GLOBAL normalisation across THIS crime's years (not per-year, not cross-crime):
+    // year-over-year growth stays visible, and each crime keeps its own legible ramp.
+    let gMax = 1;
+    for (const p of per) for (let k = 0; k < p.raw.length; k++) if (p.raw[k] > gMax) gMax = p.raw[k];
 
-  // Pass 2 — normalised density per year against the shared global max.
-  const layouts = per.map((p) => {
-    const density = new Float32Array(COUNT);
-    for (let k = 0; k < p.activeIdx.length; k++) {
-      const d = Math.pow(Math.min(p.raw[k] / gMax, 1), 0.55);
-      density[p.activeIdx[k]] = ACTIVE_FLOOR + (1 - ACTIVE_FLOOR) * d;
-    }
-    return { positions: p.positions, density };
-  });
+    layouts[type] = per.map((p) => {
+      const density = new Float32Array(COUNT);
+      for (let k = 0; k < p.activeIdx.length; k++) {
+        const d = Math.pow(Math.min(p.raw[k] / gMax, 1), 0.55);
+        density[p.activeIdx[k]] = ACTIVE_FLOOR + (1 - ACTIVE_FLOOR) * d;
+      }
+      return { positions: p.positions, density };
+    });
 
-  const totals = years.map((y) => stations.reduce((a, s) => a + s.counts[y], 0));
+    totals[type] = years.map((y) => stations.reduce((a, s) => a + (s.crimes[type][y] || 0), 0));
+  }
+
   return { years, count: COUNT, layouts, totals };
 }
 

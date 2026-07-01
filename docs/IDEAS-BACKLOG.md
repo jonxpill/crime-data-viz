@@ -23,10 +23,10 @@
   more evocative eventually.
 
 ## Stage-1 refinements (raised during the build — pick up when curiosity strikes)
-- **Extend the year window to 2008–2023** — current real data is 2005/06–2015/16 (free GitHub mirror of the
-  cleaned SAPS CSV). For the fuller decade-and-a-half, register at DataFirst (cat. 1012, 2008–2023, has GIS),
-  aggregate robbery per station/year, join by normalised name, drop into `pipeline/bake.mjs`. (Base real
-  swap is DONE — 2026-07-01.)
+- **✅ DONE (2026-07-01) — year window extended to 2008/09–2022/23** via DataFirst SAPS Annual Crime
+  Records (cat. 1012). Stations self-locate from the file's own lng/lat (name-join deleted); metro = our 60
+  stations' precincts. Re-bake: `node pipeline/bake.mjs`. *Next grab from the same DataFirst login:* **VOCS**
+  (Victims of Crime Survey) — the "experienced crime" counterweight leg (reported-vs-experienced-vs-died).
 - **Polygon-fill jitter** — scatter data points inside each precinct's *real polygon* (point-in-polygon),
   not a disc around the centroid, so the field is truly continuous and precinct-shaped, not a touch
   circular. Bake per-precinct interior sample offsets so the client stays cheap.

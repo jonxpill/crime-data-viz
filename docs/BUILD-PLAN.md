@@ -40,6 +40,16 @@ A Vite + three.js web app. ~50–100k tiny points of light on near-black. Three 
 **Result: real Cape Town crime as a living, morphing starfield.** The map + 2008→2023 year-scrub both
 work; the field breathes across years (the COVID-2020 dip reads), structure (real precinct mesh) greys
 behind glowing data, ~90k pts at 2,700+ fps.
+
+**⬆ UPDATE (2026-07-01, data extended to 2008–2023):** crime swapped to the DataFirst **SAPS Annual
+Crime Records 2008/09–2022/23** (cat. 1012, registered download; `pipeline/sapacr-2008-2023-v1.1/`).
+Stations now **self-locate** from the crime file's own lng/lat — the fragile GIS name-join is deleted;
+the metro = exactly our **60 stations' precincts** (all 60 name-match a precinct polygon). The
+**COVID-2020 dip** (27.8k→20.1k robberies) and the **hotspot shift** (Mitchells Plain→Nyanga by 2022/23)
+both read in the scrub. ~34k pts @ 60fps (fixed a dead fps meter: `getElapsedTime()`+`getDelta()` per
+frame zeroed the delta). Footer year-range now driven from `meta` (no more stale label). **WorldPop 2020**
+population clip on disk (`data/raw/capetown_pop_2020.tif`, verified 5.26M in-box) for the real per-capita
+join — the next step. Re-bake: `node pipeline/bake.mjs`.
 - **Geography is REAL** (no login): fetched from the Western Cape GIS server — 73 metro police-station
   coordinates + precinct boundary polygons, as free GeoJSON. `data/raw/{stations,precincts}.geojson`.
 - **Counts are now REAL** (swapped in 2026-07-01): SAPS station-level robbery (aggravated + common),
@@ -76,6 +86,13 @@ behind glowing data, ~90k pts at 2,700+ fps.
   north star.
 
 ## Stage 2 — light interactivity (the fidelity counterweight, made visible)
+**⬆ IN PROGRESS (2026-07-01):** the field now flips between **three crimes** (robbery · burglary · murder)
+with ↑/↓ as well as scrubbing years — one shared point-buffer, each crime a pure layout; the pairs read
+honestly as **move** (robbery↔burglary, different geography), **diminish** (robbery↔murder, ~8× rarer) and
+**grow**. Transitions are a **swarm**: surplus dots fly to fixed off-screen "roosts" and back, staggered
+per-dot like a flock (`uStagger` + roost distance, both live-tunable via `__viz`). Idle drift split into
+amplitude + speed levers. Shipped to **GitHub Pages** (public repo). *Still TODO here: the per-capita
+toggle (WorldPop→precinct join; the clip is on disk).*
 - **Per-capita toggle** — watch the field rearrange between raw counts and per-capita rate (delightful *and*
   the built-in lesson in how stats mislead).
 - **Year scrubber** (if the year-lapse is the morph). Basic controls.

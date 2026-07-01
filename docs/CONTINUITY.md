@@ -91,6 +91,17 @@ specific instruments (deferred) · where it lives / distribution · a name.
   Per-year density normalisation re-inflated every year to look equally "full", flattening the temporal
   signal the year-scrub exists to show; one global max across all years made growth/redistribution visible.
   (Generalises: any per-frame auto-scale — colour, axis, gain — hides the cross-frame trend.) (?)
+- **Idle/ambient motion is FELT through SPEED, not amplitude — split the two levers.** Adding "life" by
+  raising how FAR a point strays makes it read as *wandering off*; raising how FAST it orbits (same tiny
+  radius) reads as alive-but-anchored. Expose speed and amplitude as independent controls. (?)
+- **Surplus points should roost OFF-SCREEN and fly back, not blink on at a centroid.** Give each parked
+  slot a fixed off-frame home + per-dot staggered timing, and every density change becomes a swarm
+  gathering/dispersing — the "one living field" reads as alive. Honesty holds: at rest the count is exact;
+  only the *arrival/departure* is animated, never the resting volume. (?)
+- **A different pairing, not a different mechanic, makes a morph show "move" vs "grow" vs "shrink."** One
+  shared buffer + per-crime layouts: robbery↔burglary moves (different geography), robbery↔murder shrinks
+  (same geography, rarer). The engine stayed dumb; the *data pair* supplied the story. (?)
 - *(tooling traps, kept local — not universal):* d3-geo `fitExtent` to ArcGIS polygons fails (clockwise
   winding → global bounds → microscopic scale); fit to vertices-as-points. `import.meta.url` URL-encodes
-  spaces in paths.
+  spaces in paths. Calling both `THREE.Clock.getElapsedTime()` and `getDelta()` per frame zeroes the delta
+  (each resets `oldTime`) → an fps meter silently never ticks; measure off one time source.

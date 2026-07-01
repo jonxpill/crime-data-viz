@@ -26,3 +26,12 @@ npm-debug.log*
 # scratch / data work (kept out of the engine repo until baked)
 scratchpad/
 *.tmp
+
+# Raw data INPUTS — kept OUT of the (public) repo; only the baked
+# public/data/capetown.json ships. Re-obtain each from its source:
+#  · pipeline/sapacr-2008-2023-v1.1/  → DataFirst cat. 1012 (login; LICENSED — do not redistribute)
+#  · data/raw/*.tif                   → WorldPop 2020 (URLs in pipeline/clip-worldpop.mjs)
+#  · data/raw/sal-pop.csv             → Stats SA Census 2011 Small Area Layer population
+pipeline/sapacr-2008-2023-v1.1/
+data/raw/*.tif
+data/raw/sal-pop.csv
