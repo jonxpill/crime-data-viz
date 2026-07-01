@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Crime Data-Viz · Cape Town robbery</title>
+    <style>
+      :root { color-scheme: dark; }
+      html, body { margin: 0; height: 100%; background: #05060a; overflow: hidden; }
+      #app { position: fixed; inset: 0; }
+      canvas { display: block; }
+
+      .hud {
+        position: fixed;
+        left: 22px;
+        bottom: 20px;
+        font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+        color: #6b7689;
+        letter-spacing: 0.02em;
+        pointer-events: none;
+        user-select: none;
+      }
+      .hud b { color: #cdd6ee; font-weight: 500; }
+      .hud .hint { color: #ffce86; }
+      #fps { position: fixed; right: 20px; top: 16px; font: 12px ui-monospace, monospace; color: #46506a; }
+    </style>
+    <script type="module" crossorigin src="/crime-data-viz/assets/index-DJhc_4AZ.js"></script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div class="hud">
+      <div><b>Cape Town</b> — <span id="crime">robbery</span> &nbsp;·&nbsp; <span id="year">—</span> &nbsp;·&nbsp; <span id="count" style="color:#8792a6;"></span></div>
+      <div><span class="hint">space</span> play/pause &nbsp;·&nbsp; <span class="hint">&larr; &rarr;</span> year &nbsp;·&nbsp; <span class="hint">&uarr; &darr;</span> crime &nbsp;·&nbsp; <span class="hint">scroll</span> zoom &nbsp;·&nbsp; <span class="hint">drag</span> pan</div>
+      <div id="flag" style="color:#5e6a52; margin-top:4px;">◆ real SAPS robbery</div>
+    </div>
+    <div id="fps"></div>
+  </body>
+</html>
