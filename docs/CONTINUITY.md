@@ -25,8 +25,8 @@ between-formations model **is** how drone light shows work — a physics-free, u
 
 ## Current state (2026-07-02) — where a cold session picks up
 **Live:** https://jonxpill.github.io/crime-data-viz/ · repo `jonxpill/crime-data-viz` (public) · trunk =
-`main` · deploy = `npm run deploy`. All real SAPS data. **NOTE: `main` is well AHEAD of the live site** —
-the reality-terrain + pie + all-dots-on-land work below is committed but not yet deployed.
+`main` · deploy = `npm run deploy`. All real SAPS data. `main` and the live site are IN SYNC as of the
+hover-readout deploy (commit `3ff4b88`) — re-check `git log` vs when you last looked before assuming drift.
 
 **Three views, one pool each — nav `M` map · `T` terrain · `P` pie** (HUD legend). Everything swarms
 between arrangements; nothing fades (conserved-swarm law). `field` = DATA (glowing crime), `terrainField` =
@@ -39,12 +39,19 @@ TOOL/STRUCTURE (grey). Engine still pure. Layouts in `src/layouts/capeTown.js`.
   zoom" was tried and **reverted** (feel; see BUILD-PLAN 3.5, preserved on branch `wip/terrain-lod`).
 - **Pie (`P`)** — equal per-precinct wedges, **density = crime level**, volume-honest fly-away across years
   (`←→`) and crimes (`↑↓` → murder empties out). First non-geographic instrument. See BUILD-PLAN 3.6.
+- **Hover readout** — roll over any mark in ANY of the three views → "Name · N crime · year", exact from the
+  baked counts, live with the year-scrub/crime-flip. One view-agnostic mechanism (project each precinct's
+  field-local anchor through the live transform, nearest-to-cursor wins) — see BUILD-PLAN 3.7.
 
 **Immediate next threads (none blocking; maker drives by curiosity):**
-- **Hover-to-identify readout** — a view-agnostic tooltip: each layout exposes `{label, anchor, value}`,
-  project the anchor to screen, nearest-to-cursor wins (pie = trivial angle math). Fits the engine vision.
-  Parked, wanted. (IDEAS-BACKLOG.)
+- **VR presentation object** (raised 2026-07-02, parked, not started) — the field as a floating holographic
+  object in a VR meeting (Workrooms/Spatial-style), NOT a walk-through world: presenter picks it up, spins,
+  zooms, tilts. Gesture (pinch, snap-flavoured) triggers landscape↔pie↔map morphs with dots flying REAL 3D
+  arcs (not the current flat slide + one global z) — the arc is what sells "swarm" once there's stereo depth.
+  Full detail + honest scoping in IDEAS-BACKLOG.
 - **Per-capita toggle** — still the load-bearing honesty TODO (WorldPop→precinct join; clip on disk).
+- **Precise map/terrain hit-test** — hover currently uses nearest-centroid; point-in-polygon (bake the
+  boundary rings) would make it exact everywhere inside a precinct's true shape. Small, not urgent.
 - **Flows archetype** (truck routes) · **more instruments** as curiosity strikes.
 
 **Gotchas a cold session MUST know:**

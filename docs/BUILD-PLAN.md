@@ -142,6 +142,19 @@ dots** fill it. Design the maker drove:
 - Files: `pieLayout` (closure in `buildCrimeLayouts`) + `pieFrameLayout` in `capeTown.js`; `togglePie` +
   per-year `pieYears` in `main.js`. Transition feel knobs: `__viz.speed/ease/swarm` (default linear, 2400 ms).
 
+## Stage 3.7 — hover-to-identify readout ✅ DONE (2026-07-02)
+**Roll over any mark → "Name · N crime · year", exact from the baked counts**, in map, terrain, AND the pie
+— one mechanism, not three. Each precinct gets an **anchor in field-local space** (its centroid for map/
+terrain; three points along its wedge centreline for the pie), projected each `mousemove` through whichever
+transform is currently live (`fieldGroup` world matrix + camera, so tilt/z-lift/pie-radius all fall out for
+free) to screen space; nearest-to-cursor within a threshold wins, else the tooltip hides. Updates live with
+the year-scrub and crime-flip (reads straight off `capeData.stations[si].crimes`).
+- Map/terrain hit-test = nearest-CENTROID (not exact polygon) — good enough (hovering a cluster names it
+  correctly) but not pixel-perfect at precinct edges; point-in-polygon is a small future upgrade if wanted.
+- Files: `precinctAnchors` / `hoverPrecinct` / the `mousemove` listener + tooltip `div`, all in `main.js`.
+- Fits the generic-engine vision named this session: every mark can answer "what am I?" — a reusable pattern
+  for any future dataset/layout, not a Cape-Town-only feature.
+
 ## Stage 3+ — grow by curiosity (no spec; play)
 New layouts/instruments as curiosity strikes: the **history / apartheid Group-Areas overlay** (let the
 correlation sit, say nothing); the **discrepancy instrument** (SAPS reported vs VOCS experienced vs SAMRC

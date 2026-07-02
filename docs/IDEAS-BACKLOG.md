@@ -14,12 +14,27 @@
   (data-supported, the "watch it shift" payoff). Confirm once the engine exists.
 
 ## Later (deferred by design)
-- **Hover-to-identify readout (raised 2026-07-02, maker WANTS it, parked).** Roll over any mark → a tooltip
-  with its datum ("Nyanga · 2,300 burglaries · 2019/20"), exact from the baked counts. Build it **view-
-  agnostic**: each layout registers `{label, anchor, value}`; the hover layer projects each anchor through
-  the *live* transform (tilt/z-lift/camera) to screen and picks the nearest to the cursor — so ONE mechanism
-  covers map, terrain (3D) AND pie for free. Pie is trivial (angle → wedge → precinct). Map can go precise
-  with point-in-polygon (bake the rings). Fits the generic-engine vision: every mark answers "what am I?".
+- **VR presentation object (raised 2026-07-02).** NOT a walk-through world — the maker's correction: the
+  whole field is a **holographic object floating in a VR meeting room** (à la Horizon Workrooms/Spatial),
+  which the presenter picks up, spins, tilts, zooms, sets on its side — a tabletop hologram, not an
+  environment you walk into. Fits what's already built almost unchanged: the pie is already a flat disc (just
+  reorient it as a floating object instead of face-on to a fixed camera); the terrain is already a bounded,
+  liftable slab. Core scope is small — same one-camera/one-scene/source-target-buffer architecture; the real
+  work is the INPUT layer (hand-tracking/controller grab-rotate-scale replacing mouse-drag/scroll) and the
+  WebXR session plumbing (three.js supports it natively), not a rebuild of the viz. **Gesture-triggered
+  morphs**: a snap/pinch flips landscape↔pie↔map and the dots swarm in true 3D. This wants the swarm to
+  fly REAL 3D arcs per dot (lift–arc–descend during transit), not the current flat (x,y)-slide-plus-one-
+  global-z-dial — stereo depth + head-parallax would expose a flat slide as fake, so the arc is the part that
+  actually sells "swarm of fireflies reforming" in VR (extends the existing per-dot stagger with a z-bump
+  during transit — not a new system). Gesture note: a literal finger-SNAP is hard to detect from hand-
+  skeleton joints alone (it's mostly audio); a **pinch** (thumb-to-index) is the pragmatic, WebXR-native
+  stand-in with the same "make a gesture, it reforms" feel.
+- **Hover-to-identify readout — ✅ SHIPPED (2026-07-02).** Roll over any mark in map/terrain/pie → a tooltip
+  with its exact datum ("Steenberg · 289 robbery · 2018/19"), from the baked counts, live with the year-scrub
+  + crime-flip. Built view-agnostic as planned: each precinct gets an anchor in field-local space, projected
+  through the live transform (tilt/z-lift/camera) to the screen; nearest-to-cursor wins — one mechanism
+  covers all three views. Map/terrain hit-test is nearest-CENTROID (not exact polygon) — upgrading to
+  precise point-in-polygon (bake the boundary rings) is a small future refinement, not a gap.
 - **The "leave the map" chart-morph — ✅ FIRST ONE SHIPPED as the PIE (2026-07-02, `P`).** Equal per-precinct
   wedges, density = crime level, volume-honest fly-away. Remaining chart candidates on the same grammar:
   **ranked station bars** (worst→shortest, exact order) · **year bars** (15-yr trend) · **crime × elevation
