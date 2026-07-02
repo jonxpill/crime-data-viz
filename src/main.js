@@ -417,6 +417,70 @@ window.__viz = {
   }),
 };
 
+// ---- hover readout — "Nyanga · 2,300 robbery · 2019/20" (works in map, terrain, AND pie) ----
+// One mechanism, view-agnostic: give each precinct an ANCHOR in field-local space (its centroid on
+// the map/relief; its wedge centreline in the pie), project it through the LIVE transform (tilt,
+// z-lift, camera) to the screen, and pick the anchor nearest the cursor. The pie gets a few anchors
+// along each wedge so anywhere in the slice resolves. Numbers are exact — straight from the baked counts.
+const tip = document.createElement('div');
+tip.style.cssText = 'position:fixed;pointer-events:none;z-index:20;padding:4px 9px;border-radius:5px;' +
+  'background:rgba(8,10,16,.86);border:1px solid rgba(140,170,210,.28);color:#e4ebf4;' +
+  'font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;opacity:0;' +
+  'transition:opacity .12s;transform:translate(-50%,calc(-100% - 14px))';
+app.appendChild(tip);
+const _hv = new THREE.Vector3();
+function demHeightAt(x, y) {                                  // normalised DEM height (0..1) at a map-local point
+  const T = capeData && capeData.terrain; if (!T) return 0;
+  const { w: W, h: H } = capeData.meta.box;
+  const gi = Math.max(0, Math.min(T.cols - 1, Math.round(((x + W / 2) / W) * (T.cols - 1))));
+  const gj = Math.max(0, Math.min(T.rows - 1, Math.round(((H / 2 - y) / H) * (T.rows - 1))));
+  const e = T.elev[gj * T.cols + gi];
+  return e > 0 && T.peak ? e / T.peak : 0;
+}
+function precinctAnchors() {                                  // [{si, x, y, z}] in field-local space, per view
+  const out = [], st = capeData.stations;
+  if (pieMode) {
+    const dth = (Math.PI * 2) / st.length;
+    for (let si = 0; si < st.length; si++) {
+      const a = -Math.PI / 2 + (si + 0.5) * dth;             // same wedge order as pieLayout
+      for (const rr of [0.32, 0.58, 0.86]) out.push({ si, x: Math.cos(a) * PIE_R * rr, y: Math.sin(a) * PIE_R * rr, z: 0 });
+    }
+  } else {
+    for (let si = 0; si < st.length; si++) {
+      const s = st[si];
+      out.push({ si, x: s.x, y: s.y, z: terrainMode ? demHeightAt(s.x, s.y) * zScaleCur : 0 });
+    }
+  }
+  return out;
+}
+function hoverPrecinct(clientX, clientY) {
+  if (!capeData) return -1;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const mx = clientX - rect.left, my = clientY - rect.top;
+  fieldGroup.updateWorldMatrix(true, false);
+  let best = -1, bestD = Infinity;
+  for (const a of precinctAnchors()) {
+    _hv.set(a.x, a.y, a.z);
+    fieldGroup.localToWorld(_hv);
+    _hv.project(camera);
+    const sx = (_hv.x * 0.5 + 0.5) * rect.width, sy = (-_hv.y * 0.5 + 0.5) * rect.height;
+    const d = Math.hypot(sx - mx, sy - my);
+    if (d < bestD) { bestD = d; best = a.si; }
+  }
+  return bestD <= (pieMode ? 30 : 48) ? best : -1;            // beyond the threshold → empty space
+}
+renderer.domElement.addEventListener('mousemove', (e) => {
+  const si = hoverPrecinct(e.clientX, e.clientY);
+  if (si < 0) { tip.style.opacity = '0'; return; }
+  const s = capeData.stations[si];
+  const n = (s.crimes[crimeType] && s.crimes[crimeType][years[yi]]) || 0;
+  tip.textContent = `${s.name} · ${n.toLocaleString()} ${crimeLabels[crimeType] || crimeType} · ${yearLabels[yi]}`;
+  tip.style.left = e.clientX + 'px';
+  tip.style.top = e.clientY + 'px';
+  tip.style.opacity = '1';
+});
+renderer.domElement.addEventListener('mouseleave', () => { tip.style.opacity = '0'; });
+
 // ---- loop -------------------------------------------------------------------
 const clock = new THREE.Clock();
 let frames = 0, fpsWall = -1; // fps measured off performance.now() (the `now` below)
