@@ -268,110 +268,11 @@ export function pieFrameLayout(n, { cx = 0, cy = 0, R = 240, boundaries = [], fr
   return { positions, density, z };
 }
 
-/** Structure layout from the baked precinct boundaries: { positions, density }. */
-export function structureLayout(data) {
-  const positions = Float32Array.from(data.structure);
-  return { positions, density: new Float32Array(positions.length / 2).fill(0.8) };
-}
-
 /**
- * Terrain layout from the baked elevation grid: grey points laid on the projected box
- * with a per-point height z (normalised 0..1). Grid orientation matches bake.mjs so the
- * relief registers with the crime + precincts. The engine lifts z via uZScale.
- *
- * A grid has fixed dots-per-GROUND-area, not per-SCREEN-area: a steep face tilted toward
- * the eye stretches its cell-spacing across far more screen height, so the mountains THIN
- * OUT exactly where they rise — and the ragged, dissolving peaks that follows is an
- * accident, not a choice. `fill` counters it: each cell scatters extra samples of the REAL
- * heightfield (bilinear-interpolated z, so they sit ON the surface) in proportion to its
- * slope, so the projected density stays even and the faces gain body + a defined edge.
- */
-export function terrainLayout(data, { fill = 4 } = {}) {
-  const { cols, rows, peak, elev } = data.terrain;
-  const { w: W, h: H } = data.meta.box;
-  const rng = mulberry32(0x7e44a1);
-  const jit = 0.75 * (W / cols); // scatter points off the grid so no rows/columns read
-  const land = (ii, jj) => Math.max(0, elev[Math.max(0, Math.min(cols - 1, ii)) + Math.max(0, Math.min(rows - 1, jj)) * cols]);
-  const SLOPE_NORM = 130; // elevation drop (m) between neighbours that reads as a full slope
-  // Bilinear height sample at continuous grid coords → an extra dot sits on the real surface.
-  const sampleRaw = (gi, gj) => {
-    const i0 = Math.max(0, Math.min(cols - 1, Math.floor(gi))), j0 = Math.max(0, Math.min(rows - 1, Math.floor(gj)));
-    const i1 = Math.min(cols - 1, i0 + 1), j1 = Math.min(rows - 1, j0 + 1);
-    const fx = gi - i0, fy = gj - j0;
-    const a = elev[i0 + j0 * cols], b = elev[i1 + j0 * cols], c = elev[i0 + j1 * cols], d = elev[i1 + j1 * cols];
-    return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
-  };
-  const px = [], pz = [], pd = [];
-  // Emit one dot at continuous grid coords (gi,gj): projected xy (+jitter), height z, brightness.
-  const emit = (gi, gj) => {
-    const cx = -W / 2 + (gi / (cols - 1)) * W;
-    const cy = H / 2 - (gj / (rows - 1)) * H;
-    px.push(cx + (rng() - 0.5) * 2 * jit, cy + (rng() - 0.5) * 2 * jit);
-    const raw = sampleRaw(gi, gj);
-    if (raw < 0) { pz.push(0); pd.push(0); return; } // ocean → hidden; the land ends at the coastline
-    const h = peak ? Math.min(1, raw / peak) : 0;
-    const ii = Math.round(gi), jj = Math.round(gj);
-    const slope = Math.min(1, Math.hypot(land(ii + 1, jj) - land(ii - 1, jj), land(ii, jj + 1) - land(ii, jj - 1)) / SLOPE_NORM);
-    pz.push(h);
-    // brighter the HIGHER the land and the STEEPER the slope (ridges + faces glow).
-    // steep gamma on h + low base sinks the flats deep into the dark; the ridges keep the light.
-    pd.push(0.03 + 0.6 * Math.pow(h, 1.6) + 0.6 * slope);
-  };
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      emit(i, j); // the grid node itself
-      const raw = elev[j * cols + i];
-      if (raw < 0) continue; // no fill over ocean
-      const slope = Math.min(1, Math.hypot(land(i + 1, j) - land(i - 1, j), land(i, j + 1) - land(i, j - 1)) / SLOPE_NORM);
-      const extra = Math.round(fill * slope); // steep faces get the most fill; flats get none
-      for (let e = 0; e < extra; e++) emit(i + (rng() - 0.5) * 2, j + (rng() - 0.5) * 2);
-    }
-  }
-  return { positions: Float32Array.from(px), density: Float32Array.from(pd), z: Float32Array.from(pz) };
-}
-
-/**
- * ONE tool swarm, land-only BAND. EVERY land dot (~44k) starts on the precinct outlines, scattered
- * into a soft world-space ribbon — that IS the overhead map, now with body. The ocean dots sit
- * culled. The target is terrainLayout (each dot → its own landscape spot), so map ⇄ terrain is a
- * pure ON-SCREEN reconfiguration: the boundary band spreads out to BECOME the relief and back —
- * still a staggered swarm, but launched from the boundary, not flown in from off-screen. No
- * reservoir, no fly-in: everything you see rebuilds out of what's already on screen.
- */
-export function structureMapSource(data, terr, { band = 0.4 } = {}) {
-  const centre = data.structure;             // baked outline centreline points (flat xy)
-  const C = centre.length / 2;
-  const n = terr.density.length;
-  const positions = new Float32Array(n * 2);
-  const density = new Float32Array(n);
-  const rng = mulberry32(0x5eed1e);
-  const landIdx = [];
-  for (let idx = 0; idx < n; idx++) if (terr.density[idx] > 0) landIdx.push(idx);
-  const L = landIdx.length || 1;
-  for (let k = 0; k < L; k++) {
-    const idx = landIdx[k];
-    const c = Math.min(C - 1, Math.floor((k * C) / L)); // spread land dots along the whole outline
-    positions[idx * 2] = centre[c * 2] + gauss(rng) * band;        // soft ribbon, world-space width
-    positions[idx * 2 + 1] = centre[c * 2 + 1] + gauss(rng) * band;
-    density[idx] = 0.35;                       // matte, recessive
-  }
-  for (let idx = 0; idx < n; idx++) {
-    if (terr.density[idx] > 0) continue;        // ocean → stays culled (density 0); park at its own cell
-    positions[idx * 2] = terr.positions[idx * 2];
-    positions[idx * 2 + 1] = terr.positions[idx * 2 + 1];
-  }
-  return { positions, density, z: terr.z };
-}
-
-/**
- * Detail-on-demand terrain (neighbourhood LOD). A FIXED dot budget (GX×GY) is laid out to
- * fill the current VIEWPORT rect (map-local cx,cy ± hw,hh), each dot sampling the DEM at its
- * own world position. The dot count is DECOUPLED from the DEM resolution: zoom the viewport
- * smaller and the same dots pack into it, sampling a finer patch → detail blooms. Zoom out and
- * they spread to a coarse overview. "Whatever's on screen gets the full budget."
- *
- * Honest: the detail is REAL (sampled from the baked DEM); it only grows until you hit the DEM's
- * native resolution, then holds. Terrain only — crime is never LOD'd (no fake street precision).
+ * Terrain relief: a FIXED dot budget (GX×GY) laid out to fill a rect (map-local cx,cy ± hw,hh),
+ * each dot sampling the baked DEM at its own world position for height + brightness. Called with
+ * the whole box → the static landform. Ocean dots are REDIRECTED onto the land (rejection sample),
+ * so every dot builds the relief and nothing is wasted in the sea (denser land, crisp coastline).
  */
 export function terrainViewLayout(data, view, GX, GY) {
   const { cx, cy, hw, hh } = view;

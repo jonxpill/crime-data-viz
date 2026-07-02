@@ -12,44 +12,49 @@ for the maker's own pleasure — play, not a product.** Honesty discipline: *it'
 tell, just told beautifully.* On resuming: read this + BUILD-PLAN + the idea note, play back understanding,
 and remember the eye is the judge — render and look.
 
-## Current state (2026-07-01) — where a cold session picks up
+## THE REFRAME (2026-07-02) — what this actually is
+The maker named the real product mid-session: **this is not "a Cape Town crime viz" — it's a general
+"make any solid dataset a beautiful, honest living field of light" ENGINE.** Cape Town crime is instance #1,
+the demo that proved the feel. Any dataset plugs in as a **data-shape archetype** + its layout kit:
+*events-in-space* (crime, rhino poaching — runs on today's layouts near-unchanged), *time-series* (climate),
+*proportions/rank* (the pie), *flows/routes* (trucks — a new archetype worth building; very drone-show).
+Generality = a reusable engine + per-domain modules (the maker's own architecture rule), NOT infinite magic;
+a new data shape = one new layout function. Honesty becomes a reusable toolkit (per-capita, normalisation,
+"measured-zero vs no-data"); the point-of-view lives per-instance. (Aside the maker clocked: this swarm-
+between-formations model **is** how drone light shows work — a physics-free, unlimited-drone version.)
+
+## Current state (2026-07-02) — where a cold session picks up
 **Live:** https://jonxpill.github.io/crime-data-viz/ · repo `jonxpill/crime-data-viz` (public) · trunk =
-`main` · deploy = `npm run deploy` (builds + pushes `dist` to the `gh-pages` branch). All real SAPS data.
+`main` · deploy = `npm run deploy`. All real SAPS data. **NOTE: `main` is well AHEAD of the live site** —
+the reality-terrain + pie + all-dots-on-land work below is committed but not yet deployed.
 
-**Shipped & working:**
-- **Map** — 60 Cape Town precincts; glowing crime (robbery · burglary · murder, 2008–2023); the precinct
-  outlines are a soft grey-green **band** of dots (with a gentle per-dot shimmer) + coastline + Robben Island.
-- **Year-scrub** (2008→2023; the COVID-2020 dip reads) · **3-crime flip** (↑↓; reads as move / grow / thin
-  honestly) · **swarm transitions** (surplus dots roost off-screen and fly back).
-- **Terrain view (`T`)** — the overhead map RISES into Cape Town's 3D relief (slope-shaded; the land ends
-  at the coast, ocean culled). **Crime CLIMBS** the land (rides the same baked DEM), pooling low in the
-  Cape Flats basin with the mountains climbing around it.
+**Three views, one pool each — nav `M` map · `T` terrain · `P` pie** (HUD legend). Everything swarms
+between arrangements; nothing fades (conserved-swarm law). `field` = DATA (glowing crime), `terrainField` =
+TOOL/STRUCTURE (grey). Engine still pure. Layouts in `src/layouts/capeTown.js`.
+- **Map** — 60 precinct outlines as a grey-green dot **band** (`bandFor`, ocean dots parked at their relief
+  cell → no ocean-exodus); glowing crime by density. Year-scrub + 3-crime flip (↑↓) + honest roost/fly-back.
+- **Terrain (`T`)** — a **true-1:1-scale** static relief (`zPeak 11.5`; the old 61× "tractor-beam" was the
+  bug the maker caught). Every dot lands on the land (`terrainViewLayout` redirects would-be-ocean dots →
+  ~2× denser, crisp coast). Finer z10 DEM (`capetown-dem.bin`). Zoom just magnifies — the LOD "detail-on-
+  zoom" was tried and **reverted** (feel; see BUILD-PLAN 3.5, preserved on branch `wip/terrain-lod`).
+- **Pie (`P`)** — equal per-precinct wedges, **density = crime level**, volume-honest fly-away across years
+  (`←→`) and crimes (`↑↓` → murder empties out). First non-geographic instrument. See BUILD-PLAN 3.6.
 
-**Architecture as it now stands — TWO swarms** sharing one frame (`fieldGroup`): `field` = DATA (glowing
-crime), `terrainField` = TOOL (the single map⇄terrain pool — all ~97k grid dots). The **TOOL** field is
-fully on-screen in both views: in map view every land dot (~44k) forms a soft boundary **band**
-(`structureMapSource`), and on `T` those same dots reconfigure into the relief — a pure on-screen swarm,
-**no off-screen roosts, no fly-in** (dropped; the band already holds every dot the relief needs). The
-**DATA** field keeps its own honest-volume swarm — surplus dots roost off-screen when a year genuinely has
-fewer crimes, and fly back (that one's about honesty, not a dot-budget patch). The engine gained its first
-3D axis (per-point `aZ` × one `uZScale`) and is still pure — it knows nothing of crime or maps. Layouts
-live in `src/layouts/capeTown.js` (`buildCrimeLayouts` · `terrainLayout` · `structureMapSource`).
-
-**Immediate next threads (none blocking; the maker drives by curiosity):**
-- **Per-capita toggle** — the load-bearing honesty TODO (WorldPop/census → precinct join; WorldPop clip is
-  on disk). Raw counts alone redden poor areas; the `mode:'percapita'` layout path already exists.
-- **"Leave the map" chart-morph** — the ripe next instrument (ranked-station bars); see IDEAS-BACKLOG.
-- **Zoom/orbit into the relief** — parked by the maker; now just a `controls.enableRotate` flip (it's real 3D).
-- Polish backlog: polygon-fill jitter · coastline / Table-Mountain void · VOCS "experienced" leg.
+**Immediate next threads (none blocking; maker drives by curiosity):**
+- **Hover-to-identify readout** — a view-agnostic tooltip: each layout exposes `{label, anchor, value}`,
+  project the anchor to screen, nearest-to-cursor wins (pie = trivial angle math). Fits the engine vision.
+  Parked, wanted. (IDEAS-BACKLOG.)
+- **Per-capita toggle** — still the load-bearing honesty TODO (WorldPop→precinct join; clip on disk).
+- **Flows archetype** (truck routes) · **more instruments** as curiosity strikes.
 
 **Gotchas a cold session MUST know:**
-- `src/main.js` keeps a `window.__viz` debug/tuning console (drift · stagger · terrainNow · terrainAt ·
-  tdbg · hideData · matte · zpeak · tilt · roost · maxSize · shimmer · shimmerSpeed · band). Kept for live tinkering — console-only,
-  harmless in production. Strip only if a truly clean ship is wanted.
-- Re-bake: `node pipeline/bake.mjs` (needs `data/raw/terrain/` DEM tiles + `pipeline/sapacr-*`, both
-  git-ignored / re-downloadable). Baked `public/data/capetown.json` (~673 KB) is what ships.
-- `.gitignore` inline `#` comments are NOT comments — one became part of a pattern and leaked the raw DEM
-  tiles as untracked once (now fixed: comment on its own line).
+- `src/main.js` keeps a `window.__viz` debug/tuning console (speed · ease · swarm · pieR · pieFrame ·
+  terrainDots · band · shimmer · matte · zpeak · tilt · view · station · terrainNow · tdbg · hideData …).
+  Console-only, harmless in production. Strip only if a truly clean ship is wanted.
+- Re-bake: `node pipeline/bake.mjs` → `public/data/capetown.json` + **`capetown-dem.bin`** (Int16 DEM,
+  900×972, loaded separately by `loadCapeTown`). Needs `data/raw/terrain/` z10 tiles + `pipeline/sapacr-*`
+  (git-ignored / re-downloadable).
+- `.gitignore` inline `#` comments are NOT comments (once leaked the raw DEM tiles; fixed: comment on its own line).
 
 ## The mental model (why this exists)
 The maker lives in South Africa, is genuinely curious about crime, and wants to **enjoy looking at the
@@ -158,6 +163,24 @@ specific instruments (deferred) · where it lives / distribution · a name.
   (here a line → a filled band) until it already holds the target's dot budget, and the morph becomes a
   pure reconfiguration of *visible* dots: no reservoir, no fades, the swarm launches from what you can see.
   Conserve by making both states use the same on-screen dots. (?)
+- **Bank the state the moment it's loved — an un-committed "good enough" can become unrecoverable.** We
+  nearly couldn't return to a relief look the maker liked because it was only ever an intermediate in one
+  big uncommitted blob; later work buried it. Commit/branch a liked state *when* it's liked, not "later." (?)
+- **Don't exile half the swarm off-stage — redistribute culled dots into the visible part.** The terrain
+  wasted ~⅓ of its pool on invisible ocean cells (dim, thin land); redirecting would-be-ocean dots onto the
+  land (rejection sample) doubled land density AND killed the map⇄view exodus for free. If a view culls
+  part of the field, spend those dots where the picture actually is. (?)
+- **Volume honesty = one mark per event, so a count change must be SEEN to fly, not just re-normalised.**
+  When the number drops (a quieter year, a rarer category), surplus marks should *fly away* and re-enter as
+  it climbs — the COVID-2020 pie visibly deflating ~7.7k dots reads the volume change that per-frame
+  brightness-normalisation would have hidden. Animate the delta; don't just recolour. (?)
+- **Equal categorical slices beat proportional-angle when density carries the value — and they don't hide
+  zeros.** A true pie (angle ∝ count) gives a zero-count category zero angle → it vanishes; equal wedges +
+  density-by-count keep every category visible (empty slice = a real "zero") and let "density = light" do
+  the reading. Choose the encoding that keeps absence legible. (?)
+- **Prove the FEEL before building the machinery — a calm static thing can beat a clever dynamic one.** A
+  full discrete-level LOD (zoom → swarm-in more detail) was built and rejected on feel; a static relief you
+  simply zoom into won. Elaborate motion is a cost, not a default; the eye decides, and often prefers still. (?)
 - *(tooling traps, kept local — not universal):* d3-geo `fitExtent` to ArcGIS polygons fails (clockwise
   winding → global bounds → microscopic scale); fit to vertices-as-points. `import.meta.url` URL-encodes
   spaces in paths. Calling both `THREE.Clock.getElapsedTime()` and `getDelta()` per frame zeroes the delta

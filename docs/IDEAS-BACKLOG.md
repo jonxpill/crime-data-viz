@@ -14,15 +14,19 @@
   (data-supported, the "watch it shift" payoff). Confirm once the engine exists.
 
 ## Later (deferred by design)
-- **The "leave the map" morph — dots fly off geography to form a CHART** (the vision's map↔chart morph;
-  raised 2026-07-01). The big conceptual leap: abandon geography and organise the field by a NON-spatial
-  variable. Same visual grammar — grey STRUCTURE dots form the **axes / baseline / gridlines** (the frame),
-  glowing DATA dots form the **bars / marks** (the values). Candidates: **ranked station bars** (worst areas
-  tallest→shortest — additive: the map shows *where*, the bars the exact order+magnitude) · **year bars**
-  (the 15-yr trend, partner to the scrub) · **crime × elevation scatter** (bridges the terrain — crime hugs
-  the low ground). Mostly a new layout function; the existing morph + stagger/swarm animate the fly-over.
-  Lean: ranked station bars first. **Terrain has landed (2026-07-01) → this is now the ripe NEXT instrument.**
-  (The crime × elevation scatter is already half-built — crime rides the terrain's baked height.)
+- **Hover-to-identify readout (raised 2026-07-02, maker WANTS it, parked).** Roll over any mark → a tooltip
+  with its datum ("Nyanga · 2,300 burglaries · 2019/20"), exact from the baked counts. Build it **view-
+  agnostic**: each layout registers `{label, anchor, value}`; the hover layer projects each anchor through
+  the *live* transform (tilt/z-lift/camera) to screen and picks the nearest to the cursor — so ONE mechanism
+  covers map, terrain (3D) AND pie for free. Pie is trivial (angle → wedge → precinct). Map can go precise
+  with point-in-polygon (bake the rings). Fits the generic-engine vision: every mark answers "what am I?".
+- **The "leave the map" chart-morph — ✅ FIRST ONE SHIPPED as the PIE (2026-07-02, `P`).** Equal per-precinct
+  wedges, density = crime level, volume-honest fly-away. Remaining chart candidates on the same grammar:
+  **ranked station bars** (worst→shortest, exact order) · **year bars** (15-yr trend) · **crime × elevation
+  scatter** (bridges terrain). Each = a new layout function; the swarm animates the fly-over.
+- **Flows / routes archetype** (raised 2026-07-02) — the new data-SHAPE for e.g. truck routes in/out of the
+  city: dots streaming along paths. A genuinely new archetype (not events-in-space); very drone-show. Would
+  prove the engine generalises past point-clusters.
 - **Specific instruments** — decided later, *by the data + what's worth showing* (the engine renders any
   layout; don't pre-spec the catalogue). Loose candidates seen so far: the particle-morph, the year
   time-lapse, the **discrepancy lens** (reported vs experienced vs died), a per-capita choropleth, the

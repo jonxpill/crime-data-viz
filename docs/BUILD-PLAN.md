@@ -113,26 +113,34 @@ coastline; ocean culled). Brightness climbs with height + slope — ridges glow,
 - Files: `terrainLayout` + `structureMapSource` + crime-z in `capeTown.js`; `aZ`/`uZScale` + slope shading
   in `PointField.js`; terrain mosaic bake in `bake.mjs`. Re-bake: `node pipeline/bake.mjs`.
 
-## Stage 3.5 — terrain detail-on-demand (neighbourhood LOD) 🔨 IN PROGRESS (2026-07-02)
-**Goal: the closer you zoom, the more the terrain resolves — everywhere (Table Mountain, Hout Bay,
-Noordhoek), not just far-out.** Today the terrain is a *smudge* because it's baked coarse (300×324 ≈ 380 m/
-sample) and zooming only magnifies the same coarse dots. The maker's model (agreed 2026-07-02): **whatever's
-on screen always gets the full dot budget** — zoom in and the dots you already have *concentrate* into the
-visible patch and resample a *finer* DEM there, so detail blooms. Constant on-screen detail-density.
-- **Scope: NEIGHBOURHOOD scale** (stops resolving ~100 m grain). Street-scale (multi-res tiles/streaming)
-  is explicitly deferred — discuss later. **Terrain ONLY**; crime stays precinct-level (no fabricated
-  sub-precinct detail — the honesty line). Detail is REAL (from a finer DEM); honest ceiling = baked res.
-- **Two parts:** (1) *put the detail in the shipped data* — re-bake the DEM at ~native z10 (~900×972, ~127 m,
-  **no new downloads** — we currently discard ⅔ of the z10 tiles we have) as a compact **Int16 `.bin`** the
-  client loads (slim the JSON: drop the inline `elev` array). (2) *reveal it* — decouple the dot budget from
-  the DEM grid: a **fixed ~130k-dot pool** placed to fill the current viewport, each dot sampling the fine
-  DEM (bilinear) for height+slope. Zoom shrinks the viewport → finer sampling → detail. Perf unchanged
-  (same dot count, just repositioned).
-- **Mechanism, staged:** (A) CPU spike — on zoom/pan settle, recompute the viewport rect, retarget the pool,
-  tween in (proves the *feel* fast). (B) ship = GPU-parametric — dots carry `(u,v)`, two uniforms map them
-  into the viewport, sample a DEM texture in the shader (CPU idle; the pure engine fit; continuous LOD).
-- **Open:** map↔terrain morph target becomes viewport-aware; the visible-rect maths under tilt; feel-tuning
-  the bloom. New layout `terrainViewLayout` (replaces per-cell `terrainLayout`) + `structureBandLayout`.
+## Stage 3.5 — terrain detail-on-demand (LOD) — TRIED & REVERTED (2026-07-02)
+**Built a neighbourhood-LOD spike (zoom → dots concentrate into the viewport + resample a finer DEM →
+detail blooms), then the maker didn't like the FEEL** (the terrain re-swarming on every zoom read as
+churny / "the zoom dots move thing that didn't work"). Reverted to a **calm STATIC relief** you just zoom
+into. **Kept the two genuinely-good pieces** the spike produced:
+- **Finer DEM shipped** — re-baked at ~native z10 (**900×972 ≈ 127 m**, 3× finer, no new downloads) as a
+  compact **Int16 `capetown-dem.bin`** (1.75 MB) the client loads (`loadCapeTown`); JSON slimmed (dropped the
+  inline `elev`). The static relief looks far better for it.
+- **Every dot on the land** — `terrainViewLayout` REDIRECTS would-be-ocean dots onto land (rejection sample),
+  so ~2× denser relief, crisp coastline, and the map⇄terrain morph has zero ocean-exodus (no parked-in-sea
+  dots). Fixed the old "dim overview" at the root.
+- The LOD level-system + viewport-swarm code is preserved on branch **`wip/terrain-lod`** (+ commit `479affe`)
+  if we ever revisit "detail on zoom" a different way (the maker's real want is neighbourhood scale; GPU-
+  parametric continuous LOD is the eventual-if-ever path). Hover-to-identify readout → IDEAS-BACKLOG.
+
+## Stage 3.6 — the PIE instrument ("leave the map" chart-morph) ✅ SPIKE DONE (2026-07-02)
+**First non-geographic view — the backlog's chart-morph.** `P` morphs the field off the map into a radial
+chart: **structure dots** build the frame (thin ring + spokes, surplus condensed not flown away), **data
+dots** fill it. Design the maker drove:
+- **EQUAL wedges, one per precinct** (not a true pie) — so a zero-count precinct still shows its (empty)
+  slice instead of vanishing at zero angle. **Density = crime level** (dots-per-wedge = that precinct's
+  count): Nyanga's wedge blazes, Camps Bay's barely fills. Even-area fill → areal density IS the count.
+- **Volume-honest across BOTH axes** — a dot is a crime, so surplus dots **fly away radially** (out through
+  the wedge) and re-enter as the number changes: `←→` animates the yearly count (COVID 2020 visibly
+  deflates ~7.7k dots), `↑↓` flips crime (murder ~8× rarer → empties out).
+- Nav: **`M` map · `T` terrain · `P` pie** (all in the HUD legend); everything swarms, nothing fades.
+- Files: `pieLayout` (closure in `buildCrimeLayouts`) + `pieFrameLayout` in `capeTown.js`; `togglePie` +
+  per-year `pieYears` in `main.js`. Transition feel knobs: `__viz.speed/ease/swarm` (default linear, 2400 ms).
 
 ## Stage 3+ — grow by curiosity (no spec; play)
 New layouts/instruments as curiosity strikes: the **history / apartheid Group-Areas overlay** (let the
