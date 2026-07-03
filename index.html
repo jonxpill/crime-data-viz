@@ -12,17 +12,30 @@
 
       .hud {
         position: fixed;
-        left: 22px;
-        bottom: 20px;
+        left: 16px;
+        bottom: 14px;
         font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
-        color: #6b7689;
+        color: #8792a6;
         letter-spacing: 0.02em;
         pointer-events: none;
         user-select: none;
+        /* Boxed so the legend stays readable even when glowing dots are behind it on a zoom-in. */
+        padding: 9px 13px;
+        border-radius: 8px;
+        background: rgba(6, 8, 13, 0.66);
+        border: 1px solid rgba(140, 170, 210, 0.10);
+        backdrop-filter: blur(3px);
+        -webkit-backdrop-filter: blur(3px);
       }
-      .hud b { color: #cdd6ee; font-weight: 500; }
+      .hud b { color: #d4dcef; font-weight: 500; }
       .hud .hint { color: #ffce86; }
-      #fps { position: fixed; right: 20px; top: 16px; font: 12px ui-monospace, monospace; color: #46506a; }
+      #fps {
+        position: fixed; right: 14px; top: 12px;
+        font: 12px ui-monospace, monospace; color: #6b7689;
+        padding: 4px 9px; border-radius: 6px;
+        background: rgba(6, 8, 13, 0.6);
+        backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+      }
     </style>
   </head>
   <body>
