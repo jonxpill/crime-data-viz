@@ -188,8 +188,10 @@ Cape Town and a conserved drill rebuilds into the detailed Cape Town view**, car
 - **Real per-capita across the WC** — `pipeline/bake-wc.mjs`: 150 stations (6 districts via `dc_mn`), real
   per-capita via a WINDOWED read of the national WorldPop raster. WC total 7.21M; Stellenbosch ~1043/100k
   rivals Nyanga ~1172/100k — the honest per-capita rebalance the maker was curious about.
-- **Folded into `main`** (multi-page build) — the Cape Town app (`index.html`) is byte-identical/untouched;
-  the explorer ships alongside as a second page. NOT yet deployed to gh-pages (maker's call).
+- **Consolidated to ONE app (2026-07-03)** — once the explorer's Cape Town region became a full superset of
+  the standalone Cape Town app, `src/main.js` + `wcExplore.html` were retired and `index.html` now loads the
+  explorer (single Vite entry → one clean bundle; the offline single-file share was repointed to inline BOTH
+  datasets). Opens on the province. NOT yet deployed to gh-pages (maker's call).
 - **Rebuilt from scratch mid-session:** the first (Sonnet-built) explorer modelled region as a second BUNDLE
   → two independent pools that could only cross-fade → the drill regressed to disappear/reappear. Binned and
   rebuilt on main.js + `wcMain.js` (the standalone conserved-drill spike, kept as reference with `wc.html`).

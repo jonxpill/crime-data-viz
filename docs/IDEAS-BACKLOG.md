@@ -49,11 +49,10 @@
   foundation is built for exactly it. Needs: per-district detail geometry/positions baked, and the drill
   target generalised from a hardcoded 'ct' to any district. Lean: bake per-district `fitExtent` positions,
   keep the single conserved-slice mechanic (each district's stations a contiguous slice).
-- **Fold the explorer INTO main — the deeper unification (raised 2026-07-03).** Today the Cape Town app
-  (`index.html`) and the WC explorer (`wcExplore.html`) are two pages sharing the engine; the Cape Town app
-  is untouched. The north-star end state is main ITSELF being the multi-region engine — no separate explorer
-  page, region is just a layout in the one app. Not done unprompted (it changes the deployed app). Decide
-  when the explorer's feel is fully settled.
+- **✅ Fold to one app — DONE (2026-07-03).** The explorer is now THE app: `index.html` loads `wcExplore.js`;
+  `src/main.js` + `wcExplore.html` retired (git history); single Vite entry → one clean bundle; the offline
+  single-file share repointed to inline both datasets. Opens on the province, drill into Cape Town. The
+  "main IS the multi-region engine" end state is reached — one app, region is just a layout.
 - **Specific instruments** — decided later, *by the data + what's worth showing* (the engine renders any
   layout; don't pre-spec the catalogue). Loose candidates seen so far: the particle-morph, the year
   time-lapse, the **discrepancy lens** (reported vs experienced vs died), a per-capita choropleth, the

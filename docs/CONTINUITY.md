@@ -33,23 +33,20 @@ structurally impossible — see the principle candidate.)
 ## Current state (2026-07-03) — where a cold session picks up
 **Live:** https://jonxpill.github.io/crime-data-viz/ · repo `jonxpill/crime-data-viz` (public) · trunk =
 `main` · deploy = `npm run deploy` (builds `dist/` → pushes the `gh-pages` branch; Pages serves that, NOT
-`main`). **⚠ `main` is AHEAD of the live site:** the whole Western Cape explorer + fold-in + Cape-Town
-terrain-in-explorer are pushed to `origin/main` but **NOT yet deployed** (gh-pages still serves the
-pre-explorer build). `npm run deploy` publishes; the Cape Town app is unchanged by any of it (source
-untouched — verified). Re-check `git log origin/main` vs the last gh-pages build before assuming state.
+`main`). **⚠ `main` is AHEAD of the live site:** the whole Western Cape explorer + the one-app consolidation
+are pushed to `origin/main` but **NOT yet deployed** (gh-pages still serves the old standalone Cape Town
+app). `npm run deploy` swaps the public root to the explorer. Re-check `git log origin/main` vs the last
+gh-pages build before assuming state.
 
-**The app is now TWO pages (multi-page Vite build; see `vite.config.js`):**
-- **`index.html` → `src/main.js` — the Cape Town app** (the deployed root, unchanged this session). Views
-  `M` map · `T` terrain · `P` pie; `↑↓` flip crime; **`3` = 3-pie compare** (robbery·burglary·murder side by
-  side, click one → all resolve into it); **`C` = raw ⇄ per-capita** (REAL WorldPop 2020 join — shipped,
-  the old "TODO" is done); hover readout. `field` = DATA (glow), `terrainField` = STRUCTURE (grey), engine
-  pure. **Also builds as a single offline `.html`** via `npm run build:single` (inlines JS + base64 data;
-  double-click, no server).
-- **`wcExplore.html` → `src/wcExplore.js` — the Western Cape explorer** (NEW this session; not in the build
-  before). The reusable engine proven MULTI-REGION: the whole province (150 stations, 6 districts) as one
-  overview; **click Cape Town → a conserved drill rebuilds into the detailed Cape Town view** carrying the
-  live toolkit state (crime · year · per-capita). Same toolkit as main + **`T` terrain, gated to Cape Town**
-  (the province has no DEM). See BUILD-PLAN Stage 4.
+**The app is now ONE page — `index.html` → `src/wcExplore.js`** (the whole Western Cape explorer). The
+standalone Cape Town app (`src/main.js` + the old `wcExplore.html`) was **RETIRED** once the explorer's Cape
+Town region became a full superset of it — both live in git history (comments still say "main.js" for the
+lineage). It **opens on the whole province** (150 stations, 6 districts); **click Cape Town → a conserved
+drill rebuilds into the detailed Cape Town view** carrying the live toolkit state. Full toolkit: `M` map ·
+`P` pie · `3` compare (click a pie → resolve) · `↑↓` crime · `←→`/space scrub · `C` raw⇄per-capita (real
+WorldPop) · hover · **`T` terrain — Cape Town only** (surfaced in the CT hint, no-op in the province).
+**Also builds as a single offline `.html`** via `npm run build:single` (SINGLE=1 → one bundle;
+build-single.mjs inlines BOTH datasets + the DEM; double-click, no server). See BUILD-PLAN Stage 4.
 
 **The explorer's architecture (the session's headline lesson — see principle candidates):** *region is just
 another LAYOUT the ONE conserved field morphs to,* exactly like map⇄pie⇄tri-pie. So the whole toolkit is
@@ -78,14 +75,14 @@ main.js's code UNCHANGED (a region swap is only a repoint of layout refs). Pools
 - **Generalise the drill to all 6 districts** — today only Cape Town has a detail view. Each district = one
   more layout the one field morphs to (per-district positions in the bake) → one generic drill for all. This
   is the "zoom into every subsection" the maker asked about; the region-as-layout foundation is built for it.
-- **Fold the explorer INTO main** (the deeper unification) — eventually main IS the multi-region engine, no
-  separate `wcExplore` page. Today they're two pages sharing the engine (Cape Town app untouched). Maker call.
+- **✅ Fold to one app — DONE (2026-07-03).** The explorer IS the app (retired `main.js` + `wcExplore.html`);
+  `index.html` loads `wcExplore.js`, single Vite entry, one clean bundle. No separate Cape Town page.
 - **GBV / sexual-violence view** — per-capita + an underreporting counterweight (maker was curious).
 - **Precise map/terrain hit-test** (point-in-polygon) · **VR object** (IDEAS-BACKLOG) · **flows archetype**.
 
 **Gotchas a cold session MUST know:**
-- Both `main.js` and `wcExplore.js` keep a `window.__viz` debug console. `wcExplore.js`'s
-  `__viz.region('ct'|'wc')` force-drills; `__viz.terrain()` toggles the Cape Town relief. Console-only, harmless.
+- `src/wcExplore.js` keeps a `window.__viz` debug console: `__viz.region('ct'|'wc')` force-drills;
+  `__viz.terrain()` toggles the Cape Town relief; plus year/t/drift/pie/stagger/… Console-only, harmless.
 - **A "black render" in a preview/headless tab is almost always a CAPTURE ARTIFACT, not a bug** — throttled
   rAF + WebGL's default `preserveDrawingBuffer:false` clears the buffer between the rare renders, so a
   screenshot taken when no render landed just-before-paint is black even when every frame is perfect (this
