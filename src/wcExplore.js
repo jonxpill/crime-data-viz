@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointField } from './engine/PointField.js';
-import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout } from './layouts/capeTown.js';
+import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor } from './layouts/capeTown.js';
 
 /*
  * Western Cape explorer — main.js's engine, generalised to more than one region.
@@ -142,6 +142,18 @@ let structDotSize = 1.6;
 // Structure swarm transition (one pool; map outline ⇄ pie frame ⇄ Cape Town outline).
 let structCurrent = null, strProg = 1, strStart = 0, strDur = 2400, strTo = null, strStagger = 0.6;
 
+// ---- terrain (Cape Town ONLY — the province has no DEM) --------------------------------------------
+// A SEPARATE relief pool, ported from main.js and gated to region==='ct'. structField (the conserved
+// drill pool) is never touched: on 'T' we swap the CT outline for this pool at its band pose — which
+// bandFor() strews along the SAME capetown.structure outline, so the swap is invisible — then morph
+// band → relief. Crime climbs via the data field's own per-dot heights (aZ, set for the city slice).
+let terrainField = null, ctData = null;
+let terrainMode = false, zScaleCur = 0, tiltCur = 0;
+const zPeak = 11.5, tiltAngle = -0.62; // true-1:1 relief height + view tilt (from main.js)
+const bandW = 0.4, terrainDotSize = 2.5, GX = 432, GY = 378; // fixed relief dot budget (163,296)
+let terrainTargetLayout = null, terrainCurrent = null;
+let trProg = 1, trStart = 0, trDur = 950, trTo = null;
+
 const yearEl = document.getElementById('year');
 const fpsEl = document.getElementById('fps');
 const crimeEl = document.getElementById('crime');
@@ -154,9 +166,10 @@ const hintEl = document.getElementById('hint');
 let _lastHint = null;
 function refreshHint() {
   if (!hintEl || drilling) return;
-  const txt = (pieMode || triPieMode) ? 'press M for the map'
-    : region === 'ct' ? 'click empty space (or M) to zoom back out'
-      : 'click Cape Town to zoom in';
+  const txt = terrainMode ? 'T or tap → flat map'
+    : (pieMode || triPieMode) ? 'press M for the map'
+      : region === 'ct' ? 'click empty space (or M) to zoom back out'
+        : 'click Cape Town to zoom in';
   if (txt !== _lastHint) { hintEl.textContent = txt; _lastHint = txt; }
 }
 
@@ -226,10 +239,14 @@ async function init() {
   RURAL_COUNT = COUNT - CT_COUNT;
   if (RURAL_COUNT <= 0) console.warn('[wc] conserved-slice sizing looks wrong', { COUNT, CT_COUNT, RURAL_COUNT });
 
-  // This explorer is FLAT (no terrain). buildCrimeLayouts still tags each map layout with a per-build
-  // `z` (Cape Town's is CT_COUNT-sized because capetown.json carries a DEM) — uploading that as aZ onto
-  // the COUNT-sized shared field would break its draw. Strip it: the field keeps its zeroed aZ, uZScale
-  // stays 0, everything renders flat. (Pies carry no z, so only the map layouts need it.)
+  // Cape Town's DEM height per crime dot (CT_COUNT-sized) — kept for the terrain view (crime climbs the
+  // relief inside Cape Town). Grab it BEFORE stripping z below.
+  const ctZ = providers.ct.raw.layouts[crimeType][0].z || new Float32Array(CT_COUNT);
+
+  // buildCrimeLayouts tags each map layout with a per-build `z` (Cape Town's is CT_COUNT-sized because
+  // capetown.json carries a DEM). Uploading that as aZ onto the COUNT-sized shared field would break its
+  // draw. Strip it; terrain height instead rides the field's aZ, which we set ONCE below (city slice =
+  // Cape Town heights, rural = 0). uZScale drives the lift — 0 in the province (flat), raised in Cape Town.
   for (const reg of ['wc', 'ct']) for (const mode of ['raw', 'percapita']) {
     const b = providers[reg][mode];
     for (const ty of Object.keys(b.layouts)) for (const L of b.layouts[ty]) delete L.z;
@@ -266,6 +283,28 @@ async function init() {
   structField.setDrift(0.0);
   structField.setMaxSize(7);
   fieldGroup.add(structField.points);
+
+  // Per-dot terrain height on the DATA field: the city slice climbs Cape Town's relief; rural stays flat.
+  // uZScale (0 in the province, raised in Cape Town's terrain view) drives the lift.
+  const aZ = new Float32Array(COUNT);
+  aZ.set(ctZ.subarray(0, CT_COUNT), 0);
+  field.points.geometry.setAttribute('aZ', new THREE.BufferAttribute(aZ, 1));
+
+  // Terrain relief pool — Cape Town only, hidden until 'T'. Its band pose strews along capetown.structure
+  // (coincident with the CT outline), so swapping the outline for it reads as no change; then band → relief.
+  ctData = ctRaw;
+  terrainField = new PointField(GX * GY, { glow: false, size: terrainDotSize, matte: '#6fe0a0' });
+  terrainField.setPixelRatio(renderer.getPixelRatio());
+  terrainField.setDrift(0.0);
+  terrainField.setMaxSize(7);
+  terrainTargetLayout = terrainRelief();
+  terrainCurrent = bandFor(ctData, terrainTargetLayout, { band: bandW });
+  terrainField.setSource(terrainCurrent);
+  terrainField.setTarget(terrainCurrent);
+  terrainField.setT(1);
+  terrainField.setZScale(0);
+  terrainField.points.visible = false;
+  fieldGroup.add(terrainField.points);
 
   region = 'wc';
   applyMode('raw');
@@ -315,6 +354,41 @@ function startStructTransition(toLayout, dur = strDur, stagger = strStagger) {
   structField.setTarget(toLayout);
   structField.setStagger(stagger);
   strTo = toLayout; strStart = performance.now(); strDur = dur; strProg = 0;
+}
+
+// ---- terrain (Cape Town only) -----------------------------------------------
+function terrainRelief() {
+  const { w: W, h: H } = ctData.meta.box;
+  return terrainViewLayout(ctData, { cx: 0, cy: 0, hw: W / 2, hh: H / 2 }, GX, GY);
+}
+function startTerrainTransition(toLayout) {
+  terrainField.setSource(terrainCurrent);
+  terrainField.setTarget(toLayout);
+  terrainField.setStagger(0.6);
+  trTo = toLayout; trStart = performance.now(); trProg = 0;
+}
+// 'T' inside Cape Town toggles the relief. Swap the CT outline (structField) for the terrain pool at its
+// coincident band, rise band → relief; on the way back, sink to band, then tick swaps the outline back.
+function toggleTerrain() {
+  if (region !== 'ct' || pieMode || triPieMode || drilling) return; // Cape Town MAP only (province has no DEM)
+  terrainMode = !terrainMode;
+  if (terrainMode) {
+    structField.points.visible = false;
+    terrainField.points.visible = true;
+    terrainTargetLayout = terrainRelief();
+    startTerrainTransition(terrainTargetLayout);                        // band → relief (rises via the zScale ease)
+  } else {
+    startTerrainTransition(bandFor(ctData, terrainTargetLayout, { band: bandW })); // relief → band
+  }
+  refreshHint();
+}
+function demHeightAt(x, y) { // normalised DEM height (0..1) at a Cape Town map-local point
+  const T = ctData && ctData.terrain; if (!T) return 0;
+  const { w: W, h: H } = ctData.meta.box;
+  const gi = Math.max(0, Math.min(T.cols - 1, Math.round(((x + W / 2) / W) * (T.cols - 1))));
+  const gj = Math.max(0, Math.min(T.rows - 1, Math.round(((H / 2 - y) / H) * (T.rows - 1))));
+  const e = T.elev[gj * T.cols + gi];
+  return e > 0 && T.peak ? e / T.peak : 0;
 }
 
 // ---- year-scrub control -----------------------------------------------------
@@ -517,6 +591,7 @@ function resolveTriToPie(ci) {
 
 // The `M` key: from a pie/3-pie → swarm home to the map. On the Cape Town map → drill back out.
 function goToMap() {
+  if (terrainMode) { toggleTerrain(); return; } // Cape Town terrain → flat map first (then M again drills out)
   if (triPieMode) { toggleTriPie(); return; }
   if (pieMode) {
     pieMode = false;
@@ -539,6 +614,12 @@ function goToMap() {
 // crime that genuinely has no detail to zoom into; the lens never moves.
 function startDrill(to) {
   if (drilling || to === region || pieMode || triPieMode) return;
+  if (terrainMode) { // never drill mid-relief — snap flat first (normal input exits terrain before this)
+    terrainMode = false; zScaleCur = 0; tiltCur = 0; fieldGroup.rotation.x = 0; trProg = 1;
+    if (terrainField) terrainField.points.visible = false;
+    if (structField) structField.points.visible = true;
+    if (field) field.setZScale(0);
+  }
   drilling = true; drillTo = to; drillStart = performance.now(); playing = false;
   if (hintEl) hintEl.textContent = to === 'ct' ? 'blooming into Cape Town…' : 'back to the Western Cape…';
   field.setSource(liveMap(region));
@@ -566,6 +647,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'ArrowLeft') { e.preventDefault(); stepYear(-1); }
   else if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
   else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
+  else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); } // Cape Town relief (no-op in the province)
 });
 
 // Debug hook (region-aware).
@@ -618,6 +700,7 @@ window.__viz = {
   matte: (hex) => { if (structField) structField.material.uniforms.uMatte.value.set(hex); },
   hideData: (hide = true) => { if (field) field.points.visible = !hide; },
   region: (r) => { if (r === 'wc' || r === 'ct') startDrill(r); return region; }, // debug: force a drill
+  terrain: () => { toggleTerrain(); return { terrainMode, region }; },            // debug: toggle Cape Town relief
 };
 
 // ---- hover readout — "Nyanga · 2,300 robbery · 2019/20" (works in map AND pie), region-aware ----
@@ -648,7 +731,11 @@ function precinctAnchors() {
       for (const rr of [0.32, 0.58, 0.86]) out.push({ si, x: Math.cos(a) * PIE_R * rr, y: Math.sin(a) * PIE_R * rr });
     }
   } else {
-    for (let si = 0; si < st.length; si++) out.push({ si, x: st[si].x, y: st[si].y });
+    const lift = (region === 'ct' && terrainMode) ? zScaleCur : 0; // ride the relief in Cape Town terrain
+    for (let si = 0; si < st.length; si++) {
+      const s = st[si];
+      out.push({ si, x: s.x, y: s.y, z: lift ? demHeightAt(s.x, s.y) * lift : 0 });
+    }
   }
   return out;
 }
@@ -659,7 +746,7 @@ function hoverPrecinct(clientX, clientY) {
   fieldGroup.updateWorldMatrix(true, false);
   let best = -1, bestD = Infinity, bestCrime = crimeType;
   for (const a of precinctAnchors()) {
-    _hv.set(a.x, a.y, 0);
+    _hv.set(a.x, a.y, a.z || 0);
     fieldGroup.localToWorld(_hv);
     _hv.project(camera);
     const sx = (_hv.x * 0.5 + 0.5) * rect.width, sy = (-_hv.y * 0.5 + 0.5) * rect.height;
@@ -710,6 +797,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
     return;
   }
   if (pieMode) return;                               // no drill from the pie
+  if (terrainMode) { toggleTerrain(); return; }      // tap in Cape Town terrain → back to the flat map
   if (region === 'wc') {
     const { s, d } = nearestStation(wcStations, e.clientX, e.clientY);
     if (s && d < 120 && norm(s.dc) === 'city of cape town') startDrill('ct');
@@ -823,6 +911,25 @@ function tick() {
     }
     structField.setTime(time);
   }
+  // Terrain (Cape Town only): ease the land up/down + the view tilt, advance the band⇄relief swarm, and
+  // lift the crime with it. In the province zScaleCur stays 0 (T is a no-op there), so it renders flat.
+  if (terrainField) {
+    zScaleCur += ((terrainMode ? zPeak : 0) - zScaleCur) * 0.06;
+    tiltCur += ((terrainMode ? tiltAngle : 0) - tiltCur) * 0.06;
+    if (trProg < 1) {
+      trProg = Math.min((now - trStart) / trDur, 1);
+      terrainField.setT(swarmEase(trProg));
+      if (trProg >= 1 && trTo) terrainCurrent = trTo;
+    }
+    terrainField.setZScale(zScaleCur);
+    terrainField.setTime(time);
+    field.setZScale(zScaleCur);                        // crime climbs the relief with the land beneath it
+    if (!terrainMode && terrainField.points.visible && trProg >= 1) {
+      terrainField.points.visible = false;             // sink done → swap the outline back in (coincident band)
+      structField.points.visible = true;
+    }
+  }
+  fieldGroup.rotation.x = tiltCur;
   controls.update();
   updateTooltip();
   updateTriLabels();
@@ -847,4 +954,5 @@ window.addEventListener('resize', () => {
   finalComposer.setSize(window.innerWidth, window.innerHeight);
   if (field) field.setPixelRatio(renderer.getPixelRatio());
   if (structField) structField.setPixelRatio(renderer.getPixelRatio());
+  if (terrainField) terrainField.setPixelRatio(renderer.getPixelRatio());
 });
