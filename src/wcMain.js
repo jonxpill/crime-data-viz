@@ -43,7 +43,7 @@ finalComposer.addPass(new RenderPass(scene, camera)); finalComposer.addPass(mixP
 function render() { scene.background = null; camera.layers.set(BLOOM_LAYER); bloomComposer.render(); scene.background = DARK; camera.layers.set(0); finalComposer.render(); }
 
 // ---- state ----
-let wcData, ctData, wcStruct, ctStruct, wcStations = [];
+let wcData, ctData, wcStations = [];
 let ctScale = 0.16; const ctPos = new THREE.Vector3();
 let view = 'wc', transitioning = false, pendingView = 'wc', tStart = 0;
 const DUR = 2200;
@@ -68,7 +68,10 @@ async function init() {
   const [wc, ct] = await Promise.all([loadCapeTown('data/westerncape.json'), loadCapeTown('data/capetown.json')]);
   wcStations = wc.stations;
   const yWC = wc.meta.years.length - 1, yCT = ct.meta.years.length - 1;
-  const bWC = buildCrimeLayouts(wc, { types: wc.meta.crimeTypes.map((c) => c.key), mode: 'raw' });
+  // Province data pool EXCLUDES Cape Town — its crime is carried (conserved) by the ctData field, so it
+  // blooms open instead of flying away. Only the rural towns (no detail to zoom into) honestly break away.
+  const ruralWc = { ...wc, stations: wc.stations.filter((s) => (s.dc || '').toLowerCase() !== 'city of cape town') };
+  const bWC = buildCrimeLayouts(ruralWc, { types: wc.meta.crimeTypes.map((c) => c.key), mode: 'raw' });
   const bCT = buildCrimeLayouts(ct, { types: ct.meta.crimeTypes.map((c) => c.key), mode: 'raw' });
 
   // ALIGN: uniform scale+offset mapping CT-detail coords → WC-map coords (both Mercator of the same
@@ -80,15 +83,23 @@ async function init() {
   let num = 0, den = 0; for (const p of pairs) { const cx = p.ct.x - cmx, cy = p.ct.y - cmy; num += cx * (p.wc.x - wmx) + cy * (p.wc.y - wmy); den += cx * cx + cy * cy; }
   ctScale = num / den; ctPos.set(wmx - ctScale * cmx, wmy - ctScale * cmy, 0);
 
-  // DATA (glow) + STRUCTURE (grey). Endpoints: WC → break-away; CT → bloom from its aligned mini.
+  // DATA (glow). Rural province crime breaks away (no detail to zoom into); Cape Town's crime CONSERVES —
+  // it's the aligned cluster you see in the overview (real density, not a hidden placeholder) and it blooms
+  // OPEN into the full detail. Same 1-dot-per-crime dots either way, so none are lost on the way in.
   wcData = mkField(bWC.count, true, 1.7); ctData = mkField(bCT.count, true, 1.9);
   const wcF = bWC.layouts.robbery[yWC], ctF = bCT.layouts.robbery[yCT];
   rest.set(wcData, { wc: wcF, ct: away(wcF) });
-  rest.set(ctData, { wc: xform(ctF, ctScale, ctPos.x, ctPos.y, true), ct: ctF });
-  const wcO = outline(wc.structure), ctO = outline(ct.structure);
-  wcStruct = mkField(wcO.density.length, false, 1.3); ctStruct = mkField(ctO.density.length, false, 1.7);
-  rest.set(wcStruct, { wc: wcO, ct: away(wcO) });
-  rest.set(ctStruct, { wc: xform(ctO, ctScale, ctPos.x, ctPos.y, true), ct: ctO });
+  rest.set(ctData, { wc: xform(ctF, ctScale, ctPos.x, ctPos.y, false), ct: ctF });
+  // STRUCTURE — ONE conserved pool (the pie-frame principle): the province outline RECONFIGURES into
+  // Cape Town's outline, so no grey dots are lost — the frame reforms, it never vanishes. Pool sized to
+  // the larger (province) outline; the CT endpoint cycles the pool over Cape Town's fewer outline points
+  // with a hair of jitter, so the detail frame is a dense line, not a sparse one.
+  const structN = wc.structure.length / 2, ctN = ct.structure.length / 2;
+  const structField = mkField(structN, false, 1.4);
+  const wcStructL = { positions: Float32Array.from(wc.structure), density: new Float32Array(structN).fill(0.4) };
+  const ctSP = new Float32Array(structN * 2);
+  for (let i = 0; i < structN; i++) { const j = (i % ctN) * 2; ctSP[i * 2] = ct.structure[j] + (Math.random() - 0.5) * 1.4; ctSP[i * 2 + 1] = ct.structure[j + 1] + (Math.random() - 0.5) * 1.4; }
+  rest.set(structField, { wc: wcStructL, ct: { positions: ctSP, density: new Float32Array(structN).fill(0.4) } });
 
   for (const [f, m] of rest) { f.setSource(m.wc); f.setTarget(m.wc); f.setStagger(0.62); f.setT(1); }
   camera.position.set(0, 0, distFor(Math.max(wc.meta.box.w, 760), Math.max(wc.meta.box.h, 820)));
