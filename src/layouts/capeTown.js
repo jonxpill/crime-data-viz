@@ -38,10 +38,12 @@ function mulberry32(a) {
 }
 
 export async function loadCapeTown(url = 'data/capetown.json') {
-  // Offline single-file build (pipeline/build-single.mjs) embeds the data on the page as globals so
-  // NOTHING is fetched — fetch is blocked from file://. The normal hosted build has no globals and
-  // fetches as before. This branch is the only difference between the two builds.
-  let data = globalThis.__CAPE_DATA__;
+  // Offline single-file build (pipeline/build-single.mjs) embeds EVERY dataset on the page as
+  // window.__CAPE_DATA__ keyed by url (+ the Cape Town DEM as window.__CAPE_DEM__), so NOTHING is fetched —
+  // fetch is blocked from file://. The normal hosted build has no globals and fetches as before; this
+  // branch is the only difference between the two builds.
+  const embedded = globalThis.__CAPE_DATA__;
+  let data = embedded && embedded[url];
   if (!data) {
     const res = await fetch(url);
     if (!res.ok) throw new Error('failed to load ' + url);

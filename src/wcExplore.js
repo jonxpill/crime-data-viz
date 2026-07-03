@@ -9,7 +9,9 @@ import { PointField } from './engine/PointField.js';
 import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor } from './layouts/capeTown.js';
 
 /*
- * Western Cape explorer — main.js's engine, generalised to more than one region.
+ * THE APP — a Western Cape crime field you drill into Cape Town from. (Was the single-region Cape Town app
+ * `src/main.js`, generalised so "region" is just another layout; once this became a full superset of that
+ * app, `main.js` + its `index.html` were retired — both live in git history, referenced below as "main.js".)
  *
  * FOUNDATION (why this file looks the way it does): a SINGLE conserved data pool + a SINGLE conserved
  * structure pool. "Western Cape" and "Cape Town" are NOT two scenes — they're two LAYOUTS the same dots
@@ -168,7 +170,7 @@ function refreshHint() {
   if (!hintEl || drilling) return;
   const txt = terrainMode ? 'T or tap → flat map'
     : (pieMode || triPieMode) ? 'press M for the map'
-      : region === 'ct' ? 'click empty space (or M) to zoom back out'
+      : region === 'ct' ? 'T terrain · click empty space (or M) to zoom out'
         : 'click Cape Town to zoom in';
   if (txt !== _lastHint) { hintEl.textContent = txt; _lastHint = txt; }
 }

@@ -21,8 +21,11 @@ if (!jsName) throw new Error('no built JS in dist/assets — run `vite build` fi
 let js = readFileSync(DIST + 'assets/' + jsName, 'utf8');
 js = js.replace(/<\/script>/gi, '<\\/script>'); // don't let a string literal close our inline tag
 
-// 2. the data
-const capeJson = readFileSync(ROOT + 'public/data/capetown.json', 'utf8').replace(/<\//g, '<\\/');
+// 2. the data — every dataset the app loads, keyed by the url loadCapeTown() asks for (+ the Cape Town DEM)
+const DATASETS = ['data/westerncape.json', 'data/capetown.json'];
+const dataLiteral = '{' + DATASETS.map((u) =>
+  JSON.stringify(u) + ':' + readFileSync(ROOT + 'public/' + u, 'utf8').replace(/<\//g, '<\\/'),
+).join(',') + '}';
 const demB64 = readFileSync(ROOT + 'public/data/capetown-dem.bin').toString('base64');
 
 // 3. the page shell (dist/index.html with its inline HUD + styles), minus the external script tag
@@ -31,7 +34,7 @@ let html = readFileSync(DIST + 'index.html', 'utf8').replace(/\s*<script type="m
 // 4. inject: data globals (classic script, runs first) then the inlined app (module script)
 const inject = `
     <script>
-      window.__CAPE_DATA__ = ${capeJson};
+      window.__CAPE_DATA__ = ${dataLiteral};
       window.__CAPE_DEM__ = (function () {
         var bin = atob("${demB64}"), u = new Uint8Array(bin.length);
         for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
