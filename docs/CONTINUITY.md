@@ -23,45 +23,79 @@ a new data shape = one new layout function. Honesty becomes a reusable toolkit (
 "measured-zero vs no-data"); the point-of-view lives per-instance. (Aside the maker clocked: this swarm-
 between-formations model **is** how drone light shows work — a physics-free, unlimited-drone version.)
 
-## Current state (2026-07-02) — where a cold session picks up
-**Live:** https://jonxpill.github.io/crime-data-viz/ · repo `jonxpill/crime-data-viz` (public) · trunk =
-`main` · deploy = `npm run deploy`. All real SAPS data. `main` and the live site are IN SYNC as of the
-hover-readout deploy (commit `3ff4b88`) — re-check `git log` vs when you last looked before assuming drift.
+**⬆ (2026-07-03) first proof the reframe is real:** the Western Cape explorer makes "region" *just another
+layout* — Cape Town is one region, the province another, the drill is a morph between them, and the whole
+toolkit runs unchanged across both. The engine generalised past a single instance without a rewrite — a new
+region is a layout, exactly as promised. (The path there also proved the negative: modelling region as a
+parallel COPY of the structure, not a value on an existing axis, made the core conserved-swarm invariant
+structurally impossible — see the principle candidate.)
 
-**Three views, one pool each — nav `M` map · `T` terrain · `P` pie** (HUD legend). Everything swarms
-between arrangements; nothing fades (conserved-swarm law). `field` = DATA (glowing crime), `terrainField` =
-TOOL/STRUCTURE (grey). Engine still pure. Layouts in `src/layouts/capeTown.js`.
-- **Map** — 60 precinct outlines as a grey-green dot **band** (`bandFor`, ocean dots parked at their relief
-  cell → no ocean-exodus); glowing crime by density. Year-scrub + 3-crime flip (↑↓) + honest roost/fly-back.
-- **Terrain (`T`)** — a **true-1:1-scale** static relief (`zPeak 11.5`; the old 61× "tractor-beam" was the
-  bug the maker caught). Every dot lands on the land (`terrainViewLayout` redirects would-be-ocean dots →
-  ~2× denser, crisp coast). Finer z10 DEM (`capetown-dem.bin`). Zoom just magnifies — the LOD "detail-on-
-  zoom" was tried and **reverted** (feel; see BUILD-PLAN 3.5, preserved on branch `wip/terrain-lod`).
-- **Pie (`P`)** — equal per-precinct wedges, **density = crime level**, volume-honest fly-away across years
-  (`←→`) and crimes (`↑↓` → murder empties out). First non-geographic instrument. See BUILD-PLAN 3.6.
-- **Hover readout** — roll over any mark in ANY of the three views → "Name · N crime · year", exact from the
-  baked counts, live with the year-scrub/crime-flip. One view-agnostic mechanism (project each precinct's
-  field-local anchor through the live transform, nearest-to-cursor wins) — see BUILD-PLAN 3.7.
+## Current state (2026-07-03) — where a cold session picks up
+**Live:** https://jonxpill.github.io/crime-data-viz/ · repo `jonxpill/crime-data-viz` (public) · trunk =
+`main` · deploy = `npm run deploy` (builds `dist/` → pushes the `gh-pages` branch; Pages serves that, NOT
+`main`). **⚠ `main` is AHEAD of the live site:** the whole Western Cape explorer + fold-in + Cape-Town
+terrain-in-explorer are pushed to `origin/main` but **NOT yet deployed** (gh-pages still serves the
+pre-explorer build). `npm run deploy` publishes; the Cape Town app is unchanged by any of it (source
+untouched — verified). Re-check `git log origin/main` vs the last gh-pages build before assuming state.
+
+**The app is now TWO pages (multi-page Vite build; see `vite.config.js`):**
+- **`index.html` → `src/main.js` — the Cape Town app** (the deployed root, unchanged this session). Views
+  `M` map · `T` terrain · `P` pie; `↑↓` flip crime; **`3` = 3-pie compare** (robbery·burglary·murder side by
+  side, click one → all resolve into it); **`C` = raw ⇄ per-capita** (REAL WorldPop 2020 join — shipped,
+  the old "TODO" is done); hover readout. `field` = DATA (glow), `terrainField` = STRUCTURE (grey), engine
+  pure. **Also builds as a single offline `.html`** via `npm run build:single` (inlines JS + base64 data;
+  double-click, no server).
+- **`wcExplore.html` → `src/wcExplore.js` — the Western Cape explorer** (NEW this session; not in the build
+  before). The reusable engine proven MULTI-REGION: the whole province (150 stations, 6 districts) as one
+  overview; **click Cape Town → a conserved drill rebuilds into the detailed Cape Town view** carrying the
+  live toolkit state (crime · year · per-capita). Same toolkit as main + **`T` terrain, gated to Cape Town**
+  (the province has no DEM). See BUILD-PLAN Stage 4.
+
+**The explorer's architecture (the session's headline lesson — see principle candidates):** *region is just
+another LAYOUT the ONE conserved field morphs to,* exactly like map⇄pie⇄tri-pie. So the whole toolkit is
+main.js's code UNCHANGED (a region swap is only a repoint of layout refs). Pools:
+- **ONE data field** (COUNT ≈ 140k), ordered `[ city 0..CT_COUNT , rural CT_COUNT..COUNT ]`. Cape Town's 60
+  stations are a **byte-identical subset** of the province's 150 (same crime counts — verified), so its dots
+  are a **contiguous conserved slice** [0,CT_COUNT) that maps 1:1 onto the Cape Town detail build — the SAME
+  dots in both views. On the drill they travel (province cluster ⇄ full detail); rural (no detail to zoom
+  into) breaks away + flies back; the CT toolkit writes only the city slice (partial `copyArray` write).
+- **ONE structure field** — province outline ⇄ Cape Town outline (conserved, one pool) + pie frames.
+- **ONE terrain field** (Cape Town only, GX×GY) — main's relief, swapped in at its coincident `bandFor`
+  band on `T` (so the swap reads as no change), then morphs band → relief; crime climbs via the data
+  field's per-dot `aZ`.
+- **Camera DEAD STILL** — framed to the union of both boxes once; the drill is entirely in the dots.
+- **History:** a first Sonnet-built explorer modelled region as a second BUNDLE (two independent pools → the
+  drill could only cross-fade → structure disappeared/reappeared). It was BINNED and rebuilt from main.js's
+  proven single-field toolkit + `wcMain.js`'s conserved drill. `wcMain.js` (standalone drill spike) + `wc.html`
+  remain as the minimal reference.
+
+**Data:** `public/data/capetown.json` (60 stations + `capetown-dem.bin`) · `public/data/westerncape.json`
+(150 stations, 6 districts, real per-capita via a WINDOWED WorldPop read, NO terrain). Re-bake:
+`node pipeline/bake.mjs` (Cape Town) · `node pipeline/bake-wc.mjs` (province).
 
 **Immediate next threads (none blocking; maker drives by curiosity):**
-- **VR presentation object** (raised 2026-07-02, parked, not started) — the field as a floating holographic
-  object in a VR meeting (Workrooms/Spatial-style), NOT a walk-through world: presenter picks it up, spins,
-  zooms, tilts. Gesture (pinch, snap-flavoured) triggers landscape↔pie↔map morphs with dots flying REAL 3D
-  arcs (not the current flat slide + one global z) — the arc is what sells "swarm" once there's stereo depth.
-  Full detail + honest scoping in IDEAS-BACKLOG.
-- **Per-capita toggle** — still the load-bearing honesty TODO (WorldPop→precinct join; clip on disk).
-- **Precise map/terrain hit-test** — hover currently uses nearest-centroid; point-in-polygon (bake the
-  boundary rings) would make it exact everywhere inside a precinct's true shape. Small, not urgent.
-- **Flows archetype** (truck routes) · **more instruments** as curiosity strikes.
+- **Deploy the explorer** — `npm run deploy` publishes it to `/wcExplore.html`. Held for the maker's call.
+- **Generalise the drill to all 6 districts** — today only Cape Town has a detail view. Each district = one
+  more layout the one field morphs to (per-district positions in the bake) → one generic drill for all. This
+  is the "zoom into every subsection" the maker asked about; the region-as-layout foundation is built for it.
+- **Fold the explorer INTO main** (the deeper unification) — eventually main IS the multi-region engine, no
+  separate `wcExplore` page. Today they're two pages sharing the engine (Cape Town app untouched). Maker call.
+- **GBV / sexual-violence view** — per-capita + an underreporting counterweight (maker was curious).
+- **Precise map/terrain hit-test** (point-in-polygon) · **VR object** (IDEAS-BACKLOG) · **flows archetype**.
 
 **Gotchas a cold session MUST know:**
-- `src/main.js` keeps a `window.__viz` debug/tuning console (speed · ease · swarm · pieR · pieFrame ·
-  terrainDots · band · shimmer · matte · zpeak · tilt · view · station · terrainNow · tdbg · hideData …).
-  Console-only, harmless in production. Strip only if a truly clean ship is wanted.
-- Re-bake: `node pipeline/bake.mjs` → `public/data/capetown.json` + **`capetown-dem.bin`** (Int16 DEM,
-  900×972, loaded separately by `loadCapeTown`). Needs `data/raw/terrain/` z10 tiles + `pipeline/sapacr-*`
-  (git-ignored / re-downloadable).
-- `.gitignore` inline `#` comments are NOT comments (once leaked the raw DEM tiles; fixed: comment on its own line).
+- Both `main.js` and `wcExplore.js` keep a `window.__viz` debug console. `wcExplore.js`'s
+  `__viz.region('ct'|'wc')` force-drills; `__viz.terrain()` toggles the Cape Town relief. Console-only, harmless.
+- **A "black render" in a preview/headless tab is almost always a CAPTURE ARTIFACT, not a bug** — throttled
+  rAF + WebGL's default `preserveDrawingBuffer:false` clears the buffer between the rare renders, so a
+  screenshot taken when no render landed just-before-paint is black even when every frame is perfect (this
+  cost hours once). To verify feel in a throttled tab, drive `tick` from a `setInterval` and screenshot;
+  prove the pipeline with a synchronous `render()`+`gl.readPixels` before theorising.
+- The explorer is FLAT except Cape Town terrain: `buildCrimeLayouts` tags each map layout with a per-build
+  `z` (Cape Town's is CT_COUNT-sized, because capetown.json carries a DEM). `wcExplore.js` STRIPS it and sets
+  the shared field's `aZ` ONCE (city slice = CT heights, rural 0) — else the COUNT-sized field's draw breaks.
+- Re-bake needs `data/raw/` inputs (git-ignored / re-downloadable): z10 terrain tiles + `pipeline/sapacr-*`
+  (crime) + WorldPop rasters. `.gitignore` inline `#` are NOT comments (once leaked the DEM tiles).
 
 ## The mental model (why this exists)
 The maker lives in South Africa, is genuinely curious about crime, and wants to **enjoy looking at the

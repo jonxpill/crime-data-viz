@@ -155,6 +155,47 @@ the year-scrub and crime-flip (reads straight off `capeData.stations[si].crimes`
 - Fits the generic-engine vision named this session: every mark can answer "what am I?" — a reusable pattern
   for any future dataset/layout, not a Cape-Town-only feature.
 
+## Stage 3.8 — per-capita · 3-pie compare · single-file share ✅ DONE (2026-07-02→03)
+Three Cape-Town-app milestones shipped after the hover readout (the stages above predate them):
+- **`C` = raw ⇄ per-capita** — the load-bearing honesty toggle, now REAL: WorldPop 2020 → precinct join
+  baked in (`pipeline/bake.mjs`); both modes share ONE pool (sized to the max of both), so `C` MORPHS the
+  field (dense townships shrink, low-population CBD/Camps-Bay swell) instead of resizing. Rollover value +
+  data-source flag switch with the mode. Was the #1 outstanding honesty TODO — done.
+- **`3` = 3-pie compare** — break the single pie into robbery · burglary · murder side by side (same year,
+  volume-honest so murder reads sparse); **click a pie → all three resolve into that crime** (`resolvePieLayout`).
+  One pool holds all three at once (sized to the busiest year's crime SUM).
+- **Single-file share** — `npm run build:single` → one self-contained offline `.html` (`pipeline/build-single.mjs`
+  inlines the JS + base64 data + Int16 DEM; `loadCapeTown` reads `globalThis.__CAPE_DATA__/__CAPE_DEM__` when
+  present). Double-click, no server, works from `file://`. Artifact git-ignored (~5 MB; regenerate).
+
+## Stage 4 — the Western Cape explorer (multi-region engine) ✅ DONE (2026-07-03)
+**Result: the reusable engine, proven MULTI-REGION.** A standalone page (`wcExplore.html` → `src/wcExplore.js`,
+added to the Vite build) shows the whole Western Cape (150 stations, 6 districts) as one overview; **click
+Cape Town and a conserved drill rebuilds into the detailed Cape Town view**, carrying the live toolkit state
+(crime · year · per-capita). The feel the maker wanted: the **pie-transition grammar** (break-away + bloom),
+**camera dead still**, everything rebuilt from dots — no camera zoom.
+- **Region is JUST ANOTHER LAYOUT** the ONE conserved field morphs to (like map⇄pie⇄tri-pie). So the whole
+  toolkit is main.js's code UNCHANGED; a region swap is only a repoint of layout refs. ONE data field + ONE
+  structure field (province outline ⇄ Cape Town outline, conserved) + ONE terrain field (Cape Town only).
+- **Conserved slice:** Cape Town's 60 stations are a byte-identical subset of the province's 150 (same crime
+  counts — verified), so ordering the province `[city, then rural]` makes Cape Town's dots a contiguous slice
+  that maps 1:1 onto the detail build — the SAME dots in both views. On the drill they travel (province
+  cluster ⇄ full detail); rural (no detail to zoom into) breaks away + flies back. Camera framed to the union
+  of both boxes ONCE, never moves — the drill is entirely in the dots.
+- **`T` terrain, context-sensitive** — main.js's relief, gated to the Cape Town region (the province has no
+  DEM). Swapped in at its coincident `bandFor` band (invisible swap), rises band → relief; crime climbs via
+  the data field's per-dot `aZ` (city slice = CT heights). `T` is a no-op in the province.
+- **Real per-capita across the WC** — `pipeline/bake-wc.mjs`: 150 stations (6 districts via `dc_mn`), real
+  per-capita via a WINDOWED read of the national WorldPop raster. WC total 7.21M; Stellenbosch ~1043/100k
+  rivals Nyanga ~1172/100k — the honest per-capita rebalance the maker was curious about.
+- **Folded into `main`** (multi-page build) — the Cape Town app (`index.html`) is byte-identical/untouched;
+  the explorer ships alongside as a second page. NOT yet deployed to gh-pages (maker's call).
+- **Rebuilt from scratch mid-session:** the first (Sonnet-built) explorer modelled region as a second BUNDLE
+  → two independent pools that could only cross-fade → the drill regressed to disappear/reappear. Binned and
+  rebuilt on main.js + `wcMain.js` (the standalone conserved-drill spike, kept as reference with `wc.html`).
+- Files: `src/wcExplore.js` (+ `wcExplore.html`), `pipeline/bake-wc.mjs`, `public/data/westerncape.json`,
+  the `wcExplore` entry in `vite.config.js`. Run: `npm run dev` → open `/wcExplore.html`.
+
 ## Stage 3+ — grow by curiosity (no spec; play)
 New layouts/instruments as curiosity strikes: the **history / apartheid Group-Areas overlay** (let the
 correlation sit, say nothing); the **discrepancy instrument** (SAPS reported vs VOCS experienced vs SAMRC

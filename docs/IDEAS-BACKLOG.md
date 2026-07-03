@@ -42,6 +42,18 @@
 - **Flows / routes archetype** (raised 2026-07-02) — the new data-SHAPE for e.g. truck routes in/out of the
   city: dots streaming along paths. A genuinely new archetype (not events-in-space); very drone-show. Would
   prove the engine generalises past point-clusters.
+- **Generalise the drill to all 6 districts (raised 2026-07-03).** Today the Western Cape explorer
+  (BUILD-PLAN Stage 4) only drills into Cape Town — the one region with a detail dataset. Each district =
+  another layout the ONE field morphs to (per-district positions in the bake) → one generic drill for all,
+  clickable anywhere. This is the "zoom into every subsection" the maker asked about; the region-as-layout
+  foundation is built for exactly it. Needs: per-district detail geometry/positions baked, and the drill
+  target generalised from a hardcoded 'ct' to any district. Lean: bake per-district `fitExtent` positions,
+  keep the single conserved-slice mechanic (each district's stations a contiguous slice).
+- **Fold the explorer INTO main — the deeper unification (raised 2026-07-03).** Today the Cape Town app
+  (`index.html`) and the WC explorer (`wcExplore.html`) are two pages sharing the engine; the Cape Town app
+  is untouched. The north-star end state is main ITSELF being the multi-region engine — no separate explorer
+  page, region is just a layout in the one app. Not done unprompted (it changes the deployed app). Decide
+  when the explorer's feel is fully settled.
 - **Specific instruments** — decided later, *by the data + what's worth showing* (the engine renders any
   layout; don't pre-spec the catalogue). Loose candidates seen so far: the particle-morph, the year
   time-lapse, the **discrepancy lens** (reported vs experienced vs died), a per-capita choropleth, the
@@ -60,8 +72,10 @@
   circular. Bake per-precinct interior sample offsets so the client stays cheap.
 - **More evocative structure** — the precinct mesh reads as a map but not unmistakably *Cape Town*; add the
   coastline + a Table Mountain void (the reference mocks) so the silhouette is instantly recognisable.
-- **Real per-capita** — area-weighted census-population → precinct join (the one fiddly GIS step), to
-  replace the population proxy. Then the Stage-2 raw↔per-capita toggle rearranges on *true* rates.
+- **✅ DONE (2026-07-02→03) — real per-capita** — WorldPop 2020 → precinct join baked for BOTH Cape Town
+  (`bake.mjs`) and the whole Western Cape (`bake-wc.mjs`, a windowed read of the national raster). `C` morphs
+  the field between raw counts and true rates (dense townships shrink, low-population CBD/Camps-Bay swell);
+  rollover + flag credit switch with the mode. The population proxy is gone.
 
 ## Flag (foundation-first hygiene)
 - **Honesty is a build-time discipline, not a final polish** — per-capita and the counterweights must be in
