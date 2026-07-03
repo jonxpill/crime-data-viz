@@ -42,22 +42,10 @@ const CRIMES = [
   { key: 'murder',   label: 'murder',   cols: ['murder'] },
 ];
 
-// ---- per-station POPULATION proxy (for the future per-capita view only) ------
-// Real WorldPop → precinct join is the next step; until then per-capita is off by
-// default. Keyed by normalised station name; anything absent falls back to default.
-const POP = {
-  NYANGA: 260000, KHAYELITSHA: 390000, HARARE: 220000, GUGULETHU: 160000,
-  PHILIPPI: 200000, DELFT: 210000, MFULENI: 120000, MITCHELLSPLAIN: 310000,
-  KRAAIFONTEIN: 200000, BISHOPLAVIS: 130000, MANENBERG: 95000, LWANDLE: 80000,
-  KLEINVLEI: 130000, CAPETOWNCENTRAL: 50000, ATHLONE: 110000, ELSIESRIVER: 90000,
-  RAVENSMEAD: 70000, BELLVILLE: 110000, KUILSRIVER: 130000, PAROW: 90000,
-  GOODWOOD: 80000, WYNBERG: 100000, GRASSYPARK: 90000, STRAND: 90000,
-  SOMERSETWEST: 90000, MUIZENBERG: 60000, TABLEVIEW: 110000, MILNERTON: 90000,
-  RONDEBOSCH: 60000, CLAREMONT: 70000, SEAPOINT: 40000, CAMPSBAY: 12000,
-  HOUTBAY: 40000, FISHHOEK: 35000, SIMONSTOWN: 15000, CONSTANTIA: 30000,
-  DIEPRIVIER: 45000, PINELANDS: 30000, DURBANVILLE: 90000, BRACKENFELL: 80000,
-};
-const DEFAULT_POP = 70000;
+// Per-station population is now the REAL WorldPop → precinct zonal join (computed below, after the
+// precincts are read). The old hand-guessed proxy dict is gone. Fallback only if a precinct somehow
+// gets no pixels (none do — the join covers all 60).
+const POP_FALLBACK = 70000;
 
 // ---- read the SAPACR CSV → per-crime counts per Cape Town station per year ---
 // Read as latin1: the file has a few non-UTF8 bytes in outside-metro names; every
@@ -118,7 +106,36 @@ for (const f of precincts) {
   radiusByName.set(norm(f.properties.COMPNT_NM || ''), Math.max(12, Math.min(r, 120)));
 }
 
-// ---- build station records (real xy + real per-crime counts + pop proxy) ----
+// ---- per-capita population: WorldPop 2020 → precinct ZONAL SUM (the real per-capita join) --------
+// For each precinct polygon, sum the population of the WorldPop pixels whose centre falls inside it
+// (bbox pre-filter → ray-cast point-in-polygon). Real people per precinct = per station (1:1), so
+// per-capita rates are honest. Replaces the old hand-guessed proxy. Clip on disk (clip-worldpop.mjs).
+const popByKey = new Map();
+{
+  const img = await (await fromFile(`${ROOT}data/raw/capetown_pop_2020.tif`)).getImage();
+  const PW = img.getWidth(), PH = img.getHeight();
+  const [pox, poy] = img.getOrigin();
+  const [prx, pry] = img.getResolution();
+  const [pband] = await img.readRasters();
+  const zones = precincts.map((f) => ({ key: norm(f.properties.COMPNT_NM || ''), geom: f.geometry, bbox: featBbox(f.geometry), pop: 0 }));
+  for (let j = 0; j < PH; j++) {
+    const lat = poy + (j + 0.5) * pry;
+    for (let i = 0; i < PW; i++) {
+      const v = pband[j * PW + i];
+      if (!(v > 0)) continue;
+      const lng = pox + (i + 0.5) * prx;
+      for (const z of zones) {
+        if (lng < z.bbox[0] || lng > z.bbox[2] || lat < z.bbox[1] || lat > z.bbox[3]) continue;
+        if (pointInFeature(lng, lat, z.geom)) { z.pop += v; break; }
+      }
+    }
+  }
+  for (const z of zones) popByKey.set(z.key, z.pop);
+  const totalPop = zones.reduce((s, z) => s + z.pop, 0);
+  console.log(`per-capita: WorldPop→precinct join — ${zones.length} precincts, ${Math.round(totalPop).toLocaleString()} people (Cape Town ~4.6M)`);
+}
+
+// ---- build station records (real xy + real per-crime counts + REAL WorldPop per-capita) ---------
 const stations = stationList.map((s) => {
   const [x, y] = project([s.lng, s.lat]);
   const crimes = {};
@@ -130,7 +147,7 @@ const stations = stationList.map((s) => {
     name: titleCase(s.name),
     x: +x.toFixed(1), y: +y.toFixed(1),
     r: +(radiusByName.get(s.key) ?? 22).toFixed(1),
-    pop: POP[s.key] ?? DEFAULT_POP,
+    pop: Math.round(popByKey.get(s.key) ?? POP_FALLBACK),
     crimes,
   };
 });
@@ -226,7 +243,7 @@ const asset = {
     title: 'Cape Town — crime',
     simulated: false,
     source: 'SAPS Annual Crime Records (robbery = aggravated + common; murder), 2008/09–2022/23, DataFirst cat. 1012. Geography: WC GIS precincts.',
-    note: 'Counts, coordinates and precinct boundaries are REAL. Per-station population is a proxy (per-capita view pending the WorldPop join).',
+    note: 'Counts, coordinates, precinct boundaries AND per-station population are REAL — population is a WorldPop 2020 → precinct zonal join, so per-capita rates are honest.',
     crimeTypes: CRIMES.map(({ key, label }) => ({ key, label })),
     years: YEARS,
     yearLabels: YEAR_LABELS,
@@ -269,4 +286,28 @@ function* allRings(geom) {
   if (!geom) return;
   if (geom.type === 'Polygon') { for (const r of geom.coordinates) yield r; }
   else if (geom.type === 'MultiPolygon') { for (const poly of geom.coordinates) for (const r of poly) yield r; }
+}
+// Polygon helpers for the WorldPop zonal sum (each poly = [outerRing, hole1, ...]).
+function ringsOfGeom(geom) { return geom.type === 'Polygon' ? [geom.coordinates] : geom.type === 'MultiPolygon' ? geom.coordinates : []; }
+function featBbox(geom) {
+  const a = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const poly of ringsOfGeom(geom)) for (const c of poly[0]) { if (c[0] < a[0]) a[0] = c[0]; if (c[1] < a[1]) a[1] = c[1]; if (c[0] > a[2]) a[2] = c[0]; if (c[1] > a[3]) a[3] = c[1]; }
+  return a;
+}
+function pipRing(x, y, ring) { // ray-cast even-odd test
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+function pointInFeature(x, y, geom) { // inside an outer ring AND not inside any of its holes
+  for (const poly of ringsOfGeom(geom)) {
+    if (!pipRing(x, y, poly[0])) continue;
+    let hole = false;
+    for (let h = 1; h < poly.length; h++) if (pipRing(x, y, poly[h])) { hole = true; break; }
+    if (!hole) return true;
+  }
+  return false;
 }

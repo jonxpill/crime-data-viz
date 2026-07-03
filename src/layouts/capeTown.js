@@ -21,7 +21,10 @@ const TAU = Math.PI * 2;
 const PER_POINT = 1.0;     // ONE glowing point per robbery — the most honest dial:
                            // a star IS a crime. Sparser + most legible; cores stack
                            // least. (Higher = sparser still; ratio always exact.)
-const PC_SCALE = 9000;     // per-capita: points per (rate) — tuned to a similar budget
+const PC_SCALE = 50000;    // per-capita: dots per unit rate (count/pop). ~0.5 dot per (crime/100k).
+                           // Tuned against REAL WorldPop pop so per-capita ≈ raw's dot budget without
+                           // low-pop precincts (CBD, harbour) ballooning past the raw max. It also sizes
+                           // the shared pool, so retune by editing this const + reloading (not live).
 const DENSITY_CELL = 11;   // neighbour-density grid cell, in projected px
 const ACTIVE_FLOOR = 0.06; // an active point never reads as fully parked
 
@@ -75,14 +78,22 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
     return mode === 'percapita' ? (c / s.pop) * PC_SCALE : c;
   };
 
-  // Shared slot allocation: K = the busiest YEAR's SUM across ALL crimes, per station.
-  // Sizing to the sum (not the max single crime) lets the ONE pool hold every crime at
-  // once — that's what the 3-pie compare needs. Single-crime views are unchanged: they
-  // fill only that crime's dots and leave the extra slots parked (invisible). A slot still
-  // keeps its identity through a flip and a scrub.
+  // Shared slot allocation: K = the busiest YEAR's SUM across ALL crimes, in EITHER mode
+  // (raw counts OR per-capita rate-dots). Sizing to the sum (not the max single crime) lets
+  // the ONE pool hold every crime at once (the 3-pie); sizing to the max of both modes lets
+  // raw and per-capita share the SAME buffer, so toggling morphs cleanly instead of resizing.
+  // Every view just fills the dots it needs and parks the rest (invisible).
   const slots = stations.map((s) => {
     let peak = 0;
-    for (const y of years) { let sum = 0; for (const type of types) sum += valueOf(s, type, y); peak = Math.max(peak, sum); }
+    for (const y of years) {
+      let rawSum = 0, pcSum = 0;
+      for (const type of types) {
+        const c = s.crimes[type][y] || 0;
+        rawSum += c;                        // raw dots (PER_POINT = 1 → one dot per crime)
+        pcSum += (c / s.pop) * PC_SCALE;     // per-capita rate-dots
+      }
+      peak = Math.max(peak, rawSum, pcSum);
+    }
     const K = Math.max(0, Math.round(peak / PER_POINT));
     const offs = new Float32Array(K * 2);
     for (let j = 0; j < K; j++) {

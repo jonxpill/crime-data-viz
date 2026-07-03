@@ -96,6 +96,9 @@ let trProg = 1, trStart = 0, trDur = 950, trTo = null; // terrain transition pro
 let swarmDur = 2400, swarmStagger = 0.6;                // structure swarm: duration (ms) + flock cascade
 let years = [], yearLabels = [], layouts = [];
 let crimeTypes = [], crimeLabels = {}, crimeType = '', layoutsByType = {}, totalsByType = {}, capeData = null;
+// Raw ⇄ per-capita ('C'). Both modes share ONE pool (buildCrimeLayouts sizes to the max of both), so
+// toggling is a morph, not a resize. Per-capita is built lazily on first toggle. builtByMode caches each.
+let dataMode = 'raw', builtByMode = {};
 let yi = 0;                // current year index (source of the morph)
 let t = 0;                 // 0 = years[yi], 1 = years[yi+1]
 let playing = true;
@@ -135,6 +138,21 @@ const fpsEl = document.getElementById('fps');
 const crimeEl = document.getElementById('crime');
 const countEl = document.getElementById('count');
 
+// Build (once, cached) the full layout set for a data mode. Both modes share one COUNT (the pool is
+// sized to cover both), so the DATA field can morph between them.
+function ensureMode(mode) {
+  if (!builtByMode[mode]) builtByMode[mode] = buildCrimeLayouts(capeData, { types: crimeTypes, mode });
+  return builtByMode[mode];
+}
+// Point every builder + layout reference at the given mode's build.
+function applyMode(mode) {
+  const b = ensureMode(mode);
+  dataMode = mode;
+  layoutsByType = b.layouts; totalsByType = b.totals;
+  pieBuilder = b.pieLayout; triPieBuilder = b.triPieLayout; resolvePieBuilder = b.resolvePieLayout;
+  layouts = layoutsByType[crimeType];
+}
+
 // ---- boot -------------------------------------------------------------------
 init();
 async function init() {
@@ -145,13 +163,8 @@ async function init() {
   crimeTypes = (data.meta.crimeTypes || [{ key: 'robbery', label: 'robbery' }]).map((c) => c.key);
   crimeLabels = Object.fromEntries((data.meta.crimeTypes || []).map((c) => [c.key, c.label]));
   crimeType = crimeTypes[0];
-  const built = buildCrimeLayouts(data, { types: crimeTypes, mode: 'raw' });
-  layoutsByType = built.layouts;
-  totalsByType = built.totals;
-  pieBuilder = built.pieLayout;
-  triPieBuilder = built.triPieLayout;
-  resolvePieBuilder = built.resolvePieLayout;
-  layouts = layoutsByType[crimeType];
+  const built = ensureMode('raw');    // per-capita is built on first toggle; both share one COUNT
+  applyMode('raw');
 
   // DATA — glowing crime field; one fixed buffer, morphed across years.
   field = new PointField(built.count, { glow: true, size: 1.9 });
@@ -303,14 +316,15 @@ function flipCrime(dir) {
 
 // HUD text for a crime + the current year (defaults to the live crime).
 function refreshHud(type = crimeType) {
+  const rate = dataMode === 'percapita';           // per-capita view → tag the encoding
   if (triPieMode) {                                // comparing all three at once
-    if (crimeEl) crimeEl.textContent = 'robbery · burglary · murder';
+    if (crimeEl) crimeEl.textContent = 'robbery · burglary · murder' + (rate ? ' · per capita' : '');
     if (yearEl) yearEl.textContent = yearLabels[yi];
     if (countEl) countEl.textContent = 'click a pie to focus it';
     return;
   }
   if (yearEl) yearEl.textContent = yearLabels[yi];
-  if (crimeEl) crimeEl.textContent = crimeLabels[type] || type;
+  if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + (rate ? ' · per 100k' : '');
   if (countEl) countEl.textContent = ((totalsByType[type] && totalsByType[type][yi]) || 0).toLocaleString();
 }
 // Spike: morph off the map into a robbery pie and back. Data dots swarm into the wedges, structure
@@ -365,6 +379,39 @@ function toggleTriPie() {
   refreshHud();
 }
 
+// Toggle raw ⇄ per-capita ('C'). The DATA field morphs from its current arrangement to the same view
+// in the new mode — the field visibly redistributing IS the honesty lesson: dense townships shrink,
+// low-population hotspots (the CBD, Camps Bay) swell, because rate ≠ count. Works in every view.
+function toggleMode() {
+  if (!field || !capeData) return;
+  const newMode = dataMode === 'raw' ? 'percapita' : 'raw';
+  const oldMapLayout = layoutsByType[crimeType][yi];   // old-mode source for the map/terrain case
+  applyMode(newMode);
+  playing = false;
+  if (pieMode) {
+    pieYears = years.map((_, i) => pieBuilder(crimeType, i, { cx: 0, cy: 0, R: PIE_R }));
+    const oldPie = lastPie, pie = pieYears[yi]; lastPie = pie;
+    field.setSource({ positions: oldPie.positions, density: oldPie.density });
+    field.setTarget({ positions: pie.positions, density: pie.density });
+    field.setStagger(0.6);
+    if (terrainField) startTransition(pieFrameLayout(GX * GY, { cx: 0, cy: 0, R: PIE_R, boundaries: pie.boundaries, frameDots: pieFrameDots, thin: pieThin }));
+  } else if (triPieMode) {
+    triPieYears = years.map((_, i) => triPieBuilder(i, { gap: TRI_GAP, R: TRI_R }));
+    const oldTp = lastTriPie, tp = triPieYears[yi]; lastTriPie = tp;
+    field.setSource({ positions: oldTp.positions, density: oldTp.density });
+    field.setTarget({ positions: tp.positions, density: tp.density });
+    field.setStagger(0.6);
+    if (terrainField) startTransition(triPieFrameLayout(GX * GY, { centers: tp.centers, R: TRI_R, boundaries: tp.boundaries, frameDots: pieFrameDots, thin: pieThin }));
+  } else {
+    // map or terrain: only the DATA redistributes; the geography frame is identical in both modes.
+    field.setSource(oldMapLayout);
+    field.setTarget(layoutsByType[crimeType][yi]);
+    field.setStagger(0.55);
+  }
+  t = 0; pieMorphStart = performance.now(); pieMorphing = true;
+  refreshHud();
+}
+
 // Click one of the three pies → they all resolve into THAT crime, centred. The clicked pie's own
 // dots consolidate + grow to the middle; the other two fly out. Lands in the normal single-pie mode.
 function resolveTriToPie(ci) {
@@ -401,6 +448,7 @@ function goToMap() {
 }
 
 window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyC') { e.preventDefault(); toggleMode(); return; }        // raw ⇄ per-capita (any view)
   if (e.code === 'Digit3') { e.preventDefault(); toggleTriPie(); return; }   // break into 3 crime-pies / back
   if (triPieMode) {                                                          // in the 3-pie only 3/M/←→ respond
     if (e.code === 'KeyM') { e.preventDefault(); goToMap(); }
