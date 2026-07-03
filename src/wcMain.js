@@ -9,24 +9,24 @@ import { PointField } from './engine/PointField.js';
 import { loadCapeTown, buildCrimeLayouts } from './layouts/capeTown.js';
 
 /**
- * SPIKE: Western Cape overview → drill into Cape Town. Two glowing DATA fields + two grey STRUCTURE
- * fields (WC + CT), each morphing formed⇄dispersed. Click the Cape Town cluster: the WC map swarms
- * OUT while the Cape Town detail (the exact capetown.json we already have) swarms IN. Press M / click
- * empty space to fly back out. The pattern generalises — any region could nest its own detail.
+ * SPIKE: Western Cape overview → drill into Cape Town, in the PIE-TRANSITION grammar (camera dead
+ * still, the whole feel comes from the dots): the province BREAKS AWAY (dots fly outward + fade) while
+ * Cape Town BLOOMS — its detail grows from the exact spot it occupies in the province map (via an
+ * affine alignment) out to full size, which reads as zooming toward you. M / click-empty reverses.
+ * Generalises: any region blooms from its own place.
  */
 const BLOOM_LAYER = 1;
 const app = document.getElementById('app');
 const DARK = new THREE.Color('#05060a');
 const scene = new THREE.Scene(); scene.background = DARK;
-const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 1, 6000);
-camera.position.set(0, 0, 1000);
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 1, 8000);
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(innerWidth, innerHeight);
 app.appendChild(renderer.domElement);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableRotate = false; controls.screenSpacePanning = true; controls.enableDamping = true; controls.dampingFactor = 0.08;
-controls.minDistance = 120; controls.maxDistance = 2200; controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
-controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN }; controls.update();
+controls.minDistance = 80; controls.maxDistance = 2600; controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
 const fieldGroup = new THREE.Group(); scene.add(fieldGroup);
 
 // selective bloom — only the glowing DATA layer blooms
@@ -43,69 +43,73 @@ finalComposer.addPass(new RenderPass(scene, camera)); finalComposer.addPass(mixP
 function render() { scene.background = null; camera.layers.set(BLOOM_LAYER); bloomComposer.render(); scene.background = DARK; camera.layers.set(0); finalComposer.render(); }
 
 // ---- state ----
-let wcData, ctData, wcStruct, ctStruct;
-let wcStations = [];                    // for click hit-testing (WC-map coords)
-let view = 'wc', pendingView = 'wc', transitioning = false, t = 1, tStart = 0;
-const DUR = 1900;
+let wcData, ctData, wcStruct, ctStruct, wcStations = [];
+let ctScale = 0.16; const ctPos = new THREE.Vector3();
+let view = 'wc', transitioning = false, pendingView = 'wc', tStart = 0;
+const DUR = 2200;
 const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 const rest = new Map();                 // field → { wc: layout, ct: layout }
 const hintEl = document.getElementById('hint');
+const _v = new THREE.Vector3();
 
-// deterministic radial dispersal (dots fly off-frame, density 0 → invisible at rest)
-function disperse(count, r0) {
-  const positions = new Float32Array(count * 2), density = new Float32Array(count);
-  for (let i = 0; i < count; i++) { const a = (i * 2.399963229) % (Math.PI * 2), r = r0 + (i % 137) * 3; positions[i * 2] = Math.cos(a) * r; positions[i * 2 + 1] = Math.sin(a) * r; }
+function distFor(w, h) { const vf = camera.fov * Math.PI / 180, dH = (h / 2) / Math.tan(vf / 2), dW = (w / 2) / (Math.tan(vf / 2) * camera.aspect); return Math.max(dH, dW) * 1.08; }
+function outline(structure) { const n = structure.length / 2; return { positions: Float32Array.from(structure), density: new Float32Array(n).fill(0.4) }; }
+// affine copy: pos*scale + (ox,oy); optionally kill density (→ invisible resting endpoint)
+function xform(base, scale, ox, oy, kill) {
+  const n = base.density.length, positions = new Float32Array(n * 2), density = new Float32Array(n);
+  for (let i = 0; i < n; i++) { positions[i * 2] = base.positions[i * 2] * scale + ox; positions[i * 2 + 1] = base.positions[i * 2 + 1] * scale + oy; density[i] = kill ? 0 : base.density[i]; }
   return { positions, density };
 }
-// a flat grey STRUCTURE layout straight from the baked outline points
-function outlineLayout(structure) {
-  const n = structure.length / 2, positions = Float32Array.from(structure), density = new Float32Array(n).fill(0.4);
-  return { positions, density, n };
-}
+// break away: push each dot radially outward from centre, fade to nothing (the pie "fly out" move)
+const away = (base) => xform(base, 2.5, 0, 0, true);
 
 init();
 async function init() {
   const [wc, ct] = await Promise.all([loadCapeTown('data/westerncape.json'), loadCapeTown('data/capetown.json')]);
   wcStations = wc.stations;
-  const yWC = wc.meta.years.length - 1, yCT = ct.meta.years.length - 1;   // show the most recent year
+  const yWC = wc.meta.years.length - 1, yCT = ct.meta.years.length - 1;
   const bWC = buildCrimeLayouts(wc, { types: wc.meta.crimeTypes.map((c) => c.key), mode: 'raw' });
   const bCT = buildCrimeLayouts(ct, { types: ct.meta.crimeTypes.map((c) => c.key), mode: 'raw' });
 
-  // DATA fields (glow) — formed = the map; dispersed = flown off-frame
+  // ALIGN: uniform scale+offset mapping CT-detail coords → WC-map coords (both Mercator of the same
+  // lng/lat → near-exact). So Cape Town's detail can bloom from EXACTLY where it sits in the province.
+  const wcByName = new Map(wc.stations.map((s) => [s.name, s]));
+  const pairs = ct.stations.map((s) => ({ ct: s, wc: wcByName.get(s.name) })).filter((p) => p.wc);
+  let cmx = 0, cmy = 0, wmx = 0, wmy = 0; for (const p of pairs) { cmx += p.ct.x; cmy += p.ct.y; wmx += p.wc.x; wmy += p.wc.y; }
+  const n = pairs.length; cmx /= n; cmy /= n; wmx /= n; wmy /= n;
+  let num = 0, den = 0; for (const p of pairs) { const cx = p.ct.x - cmx, cy = p.ct.y - cmy; num += cx * (p.wc.x - wmx) + cy * (p.wc.y - wmy); den += cx * cx + cy * cy; }
+  ctScale = num / den; ctPos.set(wmx - ctScale * cmx, wmy - ctScale * cmy, 0);
+
+  // DATA (glow) + STRUCTURE (grey). Endpoints: WC → break-away; CT → bloom from its aligned mini.
   wcData = mkField(bWC.count, true, 1.7); ctData = mkField(bCT.count, true, 1.9);
-  const wcDataFormed = bWC.layouts.robbery[yWC], ctDataFormed = bCT.layouts.robbery[yCT];
-  const wcDataDisp = disperse(bWC.count, 780), ctDataDisp = disperse(bCT.count, 680);
-  rest.set(wcData, { wc: wcDataFormed, ct: wcDataDisp });
-  rest.set(ctData, { wc: ctDataDisp, ct: ctDataFormed });
+  const wcF = bWC.layouts.robbery[yWC], ctF = bCT.layouts.robbery[yCT];
+  rest.set(wcData, { wc: wcF, ct: away(wcF) });
+  rest.set(ctData, { wc: xform(ctF, ctScale, ctPos.x, ctPos.y, true), ct: ctF });
+  const wcO = outline(wc.structure), ctO = outline(ct.structure);
+  wcStruct = mkField(wcO.density.length, false, 1.3); ctStruct = mkField(ctO.density.length, false, 1.7);
+  rest.set(wcStruct, { wc: wcO, ct: away(wcO) });
+  rest.set(ctStruct, { wc: xform(ctO, ctScale, ctPos.x, ctPos.y, true), ct: ctO });
 
-  // STRUCTURE fields (grey, no glow) — the precinct outlines
-  const wcOutline = outlineLayout(wc.structure), ctOutline = outlineLayout(ct.structure);
-  wcStruct = mkField(wcOutline.n, false, 1.3); ctStruct = mkField(ctOutline.n, false, 1.7);
-  rest.set(wcStruct, { wc: wcOutline, ct: disperse(wcOutline.n, 820) });
-  rest.set(ctStruct, { wc: disperse(ctOutline.n, 720), ct: ctOutline });
-
-  for (const [f, m] of rest) { f.setSource(m.wc); f.setTarget(m.wc); f.setT(1); }   // rest on the WC overview
-  frameBox(wc.meta.box);
+  for (const [f, m] of rest) { f.setSource(m.wc); f.setTarget(m.wc); f.setStagger(0.62); f.setT(1); }
+  camera.position.set(0, 0, distFor(Math.max(wc.meta.box.w, 760), Math.max(wc.meta.box.h, 820)));
+  controls.target.set(0, 0, 0); controls.update();
   requestAnimationFrame(tick);
 }
 
 function mkField(count, glow, size) {
   const f = new PointField(count, { glow, size, matte: '#6fe0a0' });
-  f.setPixelRatio(renderer.getPixelRatio()); f.setDrift(glow ? 0.5 : 0); f.setDriftSpeed(2); f.setStagger(0.6);
+  f.setPixelRatio(renderer.getPixelRatio()); f.setDrift(glow ? 0.5 : 0); f.setDriftSpeed(2); f.setMaxSize(7);
   if (glow) f.points.layers.enable(BLOOM_LAYER);
   fieldGroup.add(f.points); return f;
 }
-function frameBox(box) { camera.position.set(0, 0, Math.max(box.w / (2 * Math.tan((camera.fov * Math.PI / 180) / 2) * camera.aspect), box.h / (2 * Math.tan((camera.fov * Math.PI / 180) / 2))) * 1.08); controls.target.set(0, 0, 0); controls.update(); }
 
 function drill(toView) {
   if (transitioning || toView === view) return;
   for (const [f, m] of rest) { f.setSource(m[view]); f.setTarget(m[toView]); }
-  t = 0; transitioning = true; tStart = performance.now(); pendingView = toView;
-  if (hintEl) hintEl.textContent = toView === 'ct' ? 'diving into Cape Town…' : 'back to the Western Cape…';
+  transitioning = true; pendingView = toView; tStart = performance.now();
+  if (hintEl) hintEl.textContent = toView === 'ct' ? 'blooming into Cape Town…' : 'back to the Western Cape…';
 }
 
-// click the Cape Town cluster → drill in; click empty space (or M) → back out
-const _v = new THREE.Vector3();
 function nearestStation(cx, cy) {
   const rect = renderer.domElement.getBoundingClientRect(); const mx = cx - rect.left, my = cy - rect.top;
   fieldGroup.updateWorldMatrix(true, false); let best = null, bestD = Infinity;
@@ -116,7 +120,7 @@ let _downX = 0, _downY = 0;
 renderer.domElement.addEventListener('pointerdown', (e) => { _downX = e.clientX; _downY = e.clientY; });
 renderer.domElement.addEventListener('pointerup', (e) => {
   if (Math.hypot(e.clientX - _downX, e.clientY - _downY) > 6 || transitioning) return;
-  if (view === 'wc') { const { s, d } = nearestStation(e.clientX, e.clientY); if (s && d < 90 && (s.dc || '').toLowerCase() === 'city of cape town') drill('ct'); }
+  if (view === 'wc') { const { s, d } = nearestStation(e.clientX, e.clientY); if (s && d < 120 && (s.dc || '').toLowerCase() === 'city of cape town') drill('ct'); }
   else drill('wc');
 });
 addEventListener('keydown', (e) => { if (e.code === 'KeyM' || e.code === 'Escape') drill('wc'); });
@@ -124,8 +128,8 @@ addEventListener('keydown', (e) => { if (e.code === 'KeyM' || e.code === 'Escape
 const clock = new THREE.Clock();
 function tick() {
   const now = performance.now(), time = clock.getElapsedTime();
-  if (transitioning) { const p = Math.min((now - tStart) / DUR, 1); t = ease(p); if (p >= 1) { transitioning = false; view = pendingView; if (hintEl) hintEl.textContent = view === 'ct' ? 'Cape Town — click empty space or press M to zoom back out' : 'Western Cape — click the Cape Town cluster (bottom-left) to dive in'; } }
-  for (const f of rest.keys()) { f.setT(t); f.setTime(time); }
+  if (transitioning) { const p = Math.min((now - tStart) / DUR, 1); for (const f of rest.keys()) f.setT(ease(p)); if (p >= 1) { transitioning = false; view = pendingView; if (hintEl) hintEl.textContent = view === 'ct' ? 'Cape Town — click empty space or press M to break back out' : 'Western Cape — click the Cape Town cluster (bottom-left) to bloom in'; } }
+  for (const f of rest.keys()) f.setTime(time);
   controls.update(); render();
   requestAnimationFrame(tick);
 }
