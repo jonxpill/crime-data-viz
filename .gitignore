@@ -4,6 +4,8 @@ node_modules/
 # build output
 dist/
 dist-ssr/
+# shareable single-file build (a ~5MB artifact; regenerate with `npm run build:single`)
+crime-data-viz-standalone.html
 
 # vite / tooling caches
 .vite/

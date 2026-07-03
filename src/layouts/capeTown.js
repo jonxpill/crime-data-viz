@@ -38,12 +38,19 @@ function mulberry32(a) {
 }
 
 export async function loadCapeTown(url = 'data/capetown.json') {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('failed to load ' + url);
-  const data = await res.json();
+  // Offline single-file build (pipeline/build-single.mjs) embeds the data on the page as globals so
+  // NOTHING is fetched — fetch is blocked from file://. The normal hosted build has no globals and
+  // fetches as before. This branch is the only difference between the two builds.
+  let data = globalThis.__CAPE_DATA__;
+  if (!data) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('failed to load ' + url);
+    data = await res.json();
+  }
   // Elevation ships as a separate compact Int16 binary (see bake.mjs). Load it and attach as
   // terrain.elev so every downstream layout reads it exactly as before (just far finer).
   if (data.terrain && data.terrain.dem && !data.terrain.elev) {
+    if (globalThis.__CAPE_DEM__) { data.terrain.elev = globalThis.__CAPE_DEM__; return data; }
     const base = url.slice(0, url.lastIndexOf('/') + 1);
     const demRes = await fetch(base + data.terrain.dem);
     if (!demRes.ok) throw new Error('failed to load ' + data.terrain.dem);
