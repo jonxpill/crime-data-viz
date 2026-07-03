@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Western Cape · drill into Cape Town</title>
+    <style>
+      :root { color-scheme: dark; }
+      html, body { margin: 0; height: 100%; background: #05060a; overflow: hidden; }
+      #app { position: fixed; inset: 0; }
+      canvas { display: block; }
+      .hud {
+        position: fixed; left: 16px; bottom: 14px;
+        font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: #8792a6; letter-spacing: 0.02em;
+        pointer-events: none; user-select: none;
+        padding: 9px 13px; border-radius: 8px; background: rgba(6, 8, 13, 0.66);
+        border: 1px solid rgba(140, 170, 210, 0.10); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+      }
+      .hud b { color: #d4dcef; font-weight: 500; }
+      .hud .hint { color: #ffce86; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div class="hud">
+      <div><b>Western Cape</b> — SPIKE · robbery · 2022/23</div>
+      <div id="hint">Western Cape — click the Cape Town cluster (bottom-left) to dive in</div>
+    </div>
+    <script type="module" src="/src/wcMain.js"></script>
+  </body>
+</html>
