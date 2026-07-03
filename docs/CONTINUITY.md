@@ -169,6 +169,14 @@ specific instruments (deferred) · where it lives / distribution · a name.
   usually a patch for "the source view holds fewer dots than the target needs" — but fatten the source
   (here a line → a filled band) until it already holds the target's dot budget, and the morph becomes a
   pure reconfiguration of *visible* dots: no reservoir, no fades, the swarm launches from what you can see.
+- **A "black render" in a background/headless tab is a capture artifact until a synchronous readPixels says
+  otherwise — don't debug the code from a throttled screenshot.** A throttled rAF + WebGL's default
+  `preserveDrawingBuffer:false` clears the buffer between the rare renders, so a screenshot taken when no
+  render landed just-before-paint is black even when every frame is perfect. Distinguish real failure from
+  artifact by forcing `render()` + `gl.readPixels` in ONE synchronous eval (before the clear): lit pixels =
+  the pipeline is fine, look at the harness, not the shader. Hours of "the loop must be throwing" theory
+  dissolved the moment the raw render lit 6,650 cells. (Generalises: instrument the actual output before
+  theorising about the cause — a screenshot is a lossy, timing-dependent probe.) (?)
   Conserve by making both states use the same on-screen dots. (?)
 - **Bank the state the moment it's loved — an un-committed "good enough" can become unrecoverable.** We
   nearly couldn't return to a relief look the maker liked because it was only ever an intermediate in one
