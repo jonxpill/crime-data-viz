@@ -126,7 +126,7 @@ let PIE_R = 200;
 let pieFrameDots = 200000, pieThin = 0.22; // condense (almost) ALL structure dots into thin tight lines — no mass fly-away
 // Three-pie compare ('3'): robbery · burglary · murder side by side, same year. One pool holds all
 // three (sized to the busiest year's crime SUM); volume is honest across crimes, so murder reads sparse.
-let triPieBuilder = null, triPieMode = false, triPieYears = null, lastTriPie = null;
+let triPieBuilder = null, resolvePieBuilder = null, triPieMode = false, triPieYears = null, lastTriPie = null;
 let TRI_R = 128, TRI_GAP = 320;            // per-pie radius + centre-to-centre spacing (world units)
 let hoverCrimeType = '';                    // which crime the hovered mark belongs to (per-pie in the 3-pie)
 
@@ -150,6 +150,7 @@ async function init() {
   totalsByType = built.totals;
   pieBuilder = built.pieLayout;
   triPieBuilder = built.triPieLayout;
+  resolvePieBuilder = built.resolvePieLayout;
   layouts = layoutsByType[crimeType];
 
   // DATA — glowing crime field; one fixed buffer, morphed across years.
@@ -305,7 +306,7 @@ function refreshHud(type = crimeType) {
   if (triPieMode) {                                // comparing all three at once
     if (crimeEl) crimeEl.textContent = 'robbery · burglary · murder';
     if (yearEl) yearEl.textContent = yearLabels[yi];
-    if (countEl) countEl.textContent = '';
+    if (countEl) countEl.textContent = 'click a pie to focus it';
     return;
   }
   if (yearEl) yearEl.textContent = yearLabels[yi];
@@ -360,6 +361,24 @@ function toggleTriPie() {
     field.setStagger(0.55);
     if (terrainField) { terrainField.setSize(terrainDotSize); startTransition(bandFor(capeData, terrainTargetLayout, { band: bandW })); }
   }
+  t = 0; pieMorphStart = performance.now(); pieMorphing = true;
+  refreshHud();
+}
+
+// Click one of the three pies → they all resolve into THAT crime, centred. The clicked pie's own
+// dots consolidate + grow to the middle; the other two fly out. Lands in the normal single-pie mode.
+function resolveTriToPie(ci) {
+  if (!lastTriPie || !resolvePieBuilder) return;
+  crimeType = crimeTypes[ci];
+  layouts = layoutsByType[crimeType];
+  const resolved = resolvePieBuilder(ci, yi, { cx: 0, cy: 0, R: PIE_R });
+  pieYears = years.map((_, i) => pieBuilder(crimeType, i, { cx: 0, cy: 0, R: PIE_R })); // for the resulting single pie
+  lastPie = resolved;
+  field.setSource({ positions: lastTriPie.positions, density: lastTriPie.density });
+  field.setTarget({ positions: resolved.positions, density: resolved.density });
+  field.setStagger(0.6);
+  if (terrainField) { terrainField.setSize(PIE_LINE_SIZE); startTransition(pieFrameLayout(GX * GY, { cx: 0, cy: 0, R: PIE_R, boundaries: resolved.boundaries, frameDots: pieFrameDots, thin: pieThin })); }
+  triPieMode = false; pieMode = true; terrainMode = false;
   t = 0; pieMorphStart = performance.now(); pieMorphing = true;
   refreshHud();
 }
@@ -567,6 +586,26 @@ function updateTooltip() {
 }
 renderer.domElement.addEventListener('mousemove', (e) => { mouseX = e.clientX; mouseY = e.clientY; updateTooltip(); });
 renderer.domElement.addEventListener('mouseleave', () => { mouseX = mouseY = null; tip.style.opacity = '0'; });
+
+// Click-to-resolve in the 3-pie: a tap (not a drag/pan) on the nearest pie collapses all three into
+// that crime. We tell click from pan by how far the pointer moved between down and up.
+let _downX = 0, _downY = 0;
+renderer.domElement.addEventListener('pointerdown', (e) => { _downX = e.clientX; _downY = e.clientY; });
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!triPieMode || !lastTriPie) return;
+  if (Math.hypot(e.clientX - _downX, e.clientY - _downY) > 6) return; // it was a drag (pan), not a click
+  const rect = renderer.domElement.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  fieldGroup.updateWorldMatrix(true, false);
+  let best = -1, bestD = Infinity;                                    // nearest pie centre to the click wins
+  lastTriPie.centers.forEach((c, i) => {
+    _hv.set(c.cx, c.cy, 0); fieldGroup.localToWorld(_hv); _hv.project(camera);
+    const sx = (_hv.x * 0.5 + 0.5) * rect.width, sy = (-_hv.y * 0.5 + 0.5) * rect.height;
+    const d = Math.hypot(sx - mx, sy - my);
+    if (d < bestD) { bestD = d; best = i; }
+  });
+  if (best >= 0) resolveTriToPie(best);
+});
 
 // Grey labels under each pie in the 3-pie compare — projected from each pie's field-local centre
 // through the live camera, so they track zoom/pan. Hidden in every other view.

@@ -289,7 +289,54 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
     return { positions, density, centers, boundaries, R };
   }
 
-  return { years, count: COUNT, layouts, totals, pieLayout, triPieLayout };
+  /**
+   * Resolve the 3-pie into ONE centred pie for a chosen crime — click a pie in the compare view and
+   * they all collapse into it. Uses the SAME slot partition as triPieLayout, so the CLICKED crime's
+   * OWN dots consolidate to the centre and grow, while the other two pies' dots fly out. Identity is
+   * preserved (the pie you clicked is the pie that stays), so it reads as "focus on this one."
+   */
+  function resolvePieLayout(crimeIdx, yiArg, { cx = 0, cy = 0, R = 200 } = {}) {
+    const y = years[yiArg];
+    const positions = new Float32Array(COUNT * 2);
+    const density = new Float32Array(COUNT);
+    const rng = mulberry32(0x9e13a7);
+    const boundaries = [];
+    const activeXY = [], activeIdx = [];
+    const dtheta = TAU / slots.length;
+    for (let si = 0; si < slots.length; si++) {
+      const sl = slots[si];
+      const theta0 = -Math.PI / 2 + si * dtheta;
+      // walk to the clicked crime's slot range (the same partition triPieLayout builds)
+      let cursor = 0;
+      for (let ci = 0; ci < crimeIdx; ci++) cursor += Math.max(0, Math.min(sl.K - cursor, Math.round(valueOf(sl.s, types[ci], y) / PER_POINT)));
+      const n = Math.max(0, Math.min(sl.K - cursor, Math.round(valueOf(sl.s, types[crimeIdx], y) / PER_POINT)));
+      for (let j = 0; j < sl.K; j++) {
+        const idx = sl.base + j;
+        if (j >= cursor && j < cursor + n) {           // this crime's own dots → centred wedge (stay)
+          const a = theta0 + (0.08 + 0.84 * rng()) * dtheta;
+          const r = Math.sqrt(rng()) * R;
+          const px = cx + Math.cos(a) * r, py = cy + Math.sin(a) * r;
+          positions[idx * 2] = px; positions[idx * 2 + 1] = py;
+          activeXY.push(px, py); activeIdx.push(idx);
+        } else {                                        // the other two pies (+ surplus) fly out radially
+          const a = theta0 + (0.08 + 0.84 * rng()) * dtheta;
+          const rr = R * (1.9 + rng() * 0.9);
+          positions[idx * 2] = cx + Math.cos(a) * rr;
+          positions[idx * 2 + 1] = cy + Math.sin(a) * rr;
+        }
+      }
+      boundaries.push(theta0 + dtheta);
+    }
+    const raw = neighbourCounts(Float32Array.from(activeXY), DENSITY_CELL);
+    let gMax = 1; for (let k = 0; k < raw.length; k++) if (raw[k] > gMax) gMax = raw[k];
+    for (let k = 0; k < activeIdx.length; k++) {
+      const d = Math.pow(Math.min(raw[k] / gMax, 1), 0.55);
+      density[activeIdx[k]] = ACTIVE_FLOOR + (1 - ACTIVE_FLOOR) * d;
+    }
+    return { positions, density, boundaries, R, cx, cy };
+  }
+
+  return { years, count: COUNT, layouts, totals, pieLayout, triPieLayout, resolvePieLayout };
 }
 
 /**
