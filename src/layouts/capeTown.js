@@ -75,11 +75,14 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
     return mode === 'percapita' ? (c / s.pop) * PC_SCALE : c;
   };
 
-  // Shared slot allocation: K = busiest (crime, year) per station → constant buffer
-  // across every crime, so a slot keeps its identity through BOTH a flip and a scrub.
+  // Shared slot allocation: K = the busiest YEAR's SUM across ALL crimes, per station.
+  // Sizing to the sum (not the max single crime) lets the ONE pool hold every crime at
+  // once — that's what the 3-pie compare needs. Single-crime views are unchanged: they
+  // fill only that crime's dots and leave the extra slots parked (invisible). A slot still
+  // keeps its identity through a flip and a scrub.
   const slots = stations.map((s) => {
     let peak = 0;
-    for (const type of types) for (const y of years) peak = Math.max(peak, valueOf(s, type, y));
+    for (const y of years) { let sum = 0; for (const type of types) sum += valueOf(s, type, y); peak = Math.max(peak, sum); }
     const K = Math.max(0, Math.round(peak / PER_POINT));
     const offs = new Float32Array(K * 2);
     for (let j = 0; j < K; j++) {
@@ -230,7 +233,63 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
     return { positions, density, boundaries, R, cx, cy };
   }
 
-  return { years, count: COUNT, layouts, totals, pieLayout };
+  /**
+   * THREE pies in a row, ONE per crime (robbery · burglary · murder), for the same year — the
+   * comparison instrument. Reuses the SAME slots: each precinct's slots are split across the three
+   * crimes (robbery dots → left pie, burglary → middle, murder → right), the rest parked. Because
+   * the pool is now sized to the busiest year's SUM of crimes, all three fit at once.
+   *
+   * HONESTY: volume is real across crimes — the murder pie holds ~its true (small) dot count, so it
+   * reads much emptier than robbery/burglary. Density is normalised GLOBALLY across all three pies
+   * (one gMax), so murder's sparse dots stay cool/dim instead of being warmed up to look busy.
+   */
+  function triPieLayout(yiArg, { gap = 300, R = 120 } = {}) {
+    const y = years[yiArg];
+    const positions = new Float32Array(COUNT * 2);
+    const density = new Float32Array(COUNT);
+    const rng = mulberry32(0x3c1a5b);
+    const dtheta = TAU / slots.length;
+    const centers = types.map((type, ci) => ({ type, cx: (ci - (types.length - 1) / 2) * gap, cy: 0 }));
+    const activeXY = [], activeIdx = [];
+    for (let si = 0; si < slots.length; si++) {
+      const sl = slots[si];
+      const theta0 = -Math.PI / 2 + si * dtheta;        // this precinct's wedge, same angle in every pie
+      let cursor = 0;                                    // walk this station's slots across the 3 crimes
+      for (let ci = 0; ci < types.length; ci++) {
+        const { cx, cy } = centers[ci];
+        const want = Math.round(valueOf(sl.s, types[ci], y) / PER_POINT);
+        const n = Math.max(0, Math.min(sl.K - cursor, want));
+        for (let j = 0; j < n; j++) {
+          const idx = sl.base + cursor + j;
+          const a = theta0 + (0.08 + 0.84 * rng()) * dtheta;
+          const r = Math.sqrt(rng()) * R;                // even area-fill → areal density IS the count
+          const px = cx + Math.cos(a) * r, py = cy + Math.sin(a) * r;
+          positions[idx * 2] = px; positions[idx * 2 + 1] = py;
+          activeXY.push(px, py); activeIdx.push(idx);
+        }
+        cursor += n;
+      }
+      for (let j = cursor; j < sl.K; j++) {              // leftover slots park off past the row (invisible)
+        const idx = sl.base + j;
+        const a = rng() * TAU, rr = R + gap * 2.4 + rng() * 200;
+        positions[idx * 2] = Math.cos(a) * rr;
+        positions[idx * 2 + 1] = Math.sin(a) * rr;
+      }
+    }
+    // GLOBAL crowding normalisation across ALL three pies (pies are gap-separated, so a dot only
+    // has neighbours within its own pie). One gMax → murder reads cool + sparse, honestly.
+    const raw = neighbourCounts(Float32Array.from(activeXY), DENSITY_CELL);
+    let gMax = 1; for (let k = 0; k < raw.length; k++) if (raw[k] > gMax) gMax = raw[k];
+    for (let k = 0; k < activeIdx.length; k++) {
+      const d = Math.pow(Math.min(raw[k] / gMax, 1), 0.55);
+      density[activeIdx[k]] = ACTIVE_FLOOR + (1 - ACTIVE_FLOOR) * d;
+    }
+    const boundaries = [];
+    { let th = -Math.PI / 2; for (let i = 0; i < slots.length; i++) { th += dtheta; boundaries.push(th); } }
+    return { positions, density, centers, boundaries, R };
+  }
+
+  return { years, count: COUNT, layouts, totals, pieLayout, triPieLayout };
 }
 
 /**
@@ -264,6 +323,47 @@ export function pieFrameLayout(n, { cx = 0, cy = 0, R = 240, boundaries = [], fr
       positions[k * 2 + 1] = cy + Math.sin(a) * r;
       density[k] = 0;
     }
+  }
+  return { positions, density, z };
+}
+
+/**
+ * Structure frame for the THREE-pie compare: a thin ring + wedge spokes around EACH pie centre.
+ * The `frameDots` budget is split evenly across the pies; surplus parks off-screen (invisible).
+ * Same grey/matte structure pool that is the map band / relief / single-pie frame — it just
+ * reconfigures into three skeletons.
+ */
+export function triPieFrameLayout(n, { centers = [], R = 120, boundaries = [], frameDots = 120000, thin = 0.45 } = {}) {
+  const positions = new Float32Array(n * 2), density = new Float32Array(n), z = new Float32Array(n);
+  const rng = mulberry32(0x5eed1e);
+  const nb = boundaries.length || 1;
+  const nc = centers.length || 1;
+  const used = Math.min(n, frameDots);
+  const per = Math.floor(used / nc);                  // dots per pie frame
+  const RING = Math.floor(per * 0.32);
+  let k = 0;
+  for (let ci = 0; ci < nc; ci++) {
+    const cx = centers[ci].cx, cy = centers[ci].cy;
+    for (let m = 0; m < per && k < n; m++, k++) {
+      if (m < RING) {                                 // thin ring
+        const a = rng() * TAU, r = R + gauss(rng) * thin;
+        positions[k * 2] = cx + Math.cos(a) * r;
+        positions[k * 2 + 1] = cy + Math.sin(a) * r;
+        density[k] = 0.5;
+      } else {                                        // thin radial spokes at wedge boundaries
+        const a = boundaries[(m - RING) % nb];
+        const r = rng() * R, off = gauss(rng) * thin;
+        positions[k * 2] = cx + Math.cos(a) * r - Math.sin(a) * off;
+        positions[k * 2 + 1] = cy + Math.sin(a) * r + Math.cos(a) * off;
+        density[k] = 0.5;
+      }
+    }
+  }
+  for (; k < n; k++) {                                // surplus → off-screen roost, invisible
+    const a = rng() * TAU, r = 1100 * (0.8 + rng() * 0.5);
+    positions[k * 2] = Math.cos(a) * r;
+    positions[k * 2 + 1] = Math.sin(a) * r;
+    density[k] = 0;
   }
   return { positions, density, z };
 }

@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointField } from './engine/PointField.js';
-import { loadCapeTown, buildCrimeLayouts, terrainViewLayout, bandFor, pieFrameLayout } from './layouts/capeTown.js';
+import { loadCapeTown, buildCrimeLayouts, terrainViewLayout, bandFor, pieFrameLayout, triPieFrameLayout } from './layouts/capeTown.js';
 
 const BLOOM_LAYER = 1;
 
@@ -124,6 +124,11 @@ const PIE_LINE_SIZE = 1.3;                 // frame dots render thinner than the
 let PIE_MS = 2400;                          // map ⇄ pie morph duration (ms) — slower = more graceful
 let PIE_R = 200;
 let pieFrameDots = 200000, pieThin = 0.22; // condense (almost) ALL structure dots into thin tight lines — no mass fly-away
+// Three-pie compare ('3'): robbery · burglary · murder side by side, same year. One pool holds all
+// three (sized to the busiest year's crime SUM); volume is honest across crimes, so murder reads sparse.
+let triPieBuilder = null, triPieMode = false, triPieYears = null, lastTriPie = null;
+let TRI_R = 128, TRI_GAP = 320;            // per-pie radius + centre-to-centre spacing (world units)
+let hoverCrimeType = '';                    // which crime the hovered mark belongs to (per-pie in the 3-pie)
 
 const yearEl = document.getElementById('year');
 const fpsEl = document.getElementById('fps');
@@ -144,6 +149,7 @@ async function init() {
   layoutsByType = built.layouts;
   totalsByType = built.totals;
   pieBuilder = built.pieLayout;
+  triPieBuilder = built.triPieLayout;
   layouts = layoutsByType[crimeType];
 
   // DATA — glowing crime field; one fixed buffer, morphed across years.
@@ -238,6 +244,16 @@ function setYearPair(i) {
 }
 function stepYear(dir) {
   playing = false;
+  if (triPieMode && triPieYears) {                 // step the 3-PIE year — all three re-fill at once
+    yi = (yi + dir + years.length) % years.length; // (the burglary→robbery crossover animates)
+    field.setSource({ positions: lastTriPie.positions, density: lastTriPie.density });
+    lastTriPie = triPieYears[yi];
+    field.setTarget({ positions: lastTriPie.positions, density: lastTriPie.density });
+    field.setStagger(0.6);
+    t = 0; pieMorphStart = performance.now(); pieMorphing = true;
+    refreshHud();
+    return;
+  }
   if (pieMode && pieYears) {                       // step the PIE year with an ANIMATED morph — dots
     yi = (yi + dir + years.length) % years.length; // fly out / re-enter as that year's count changes
     field.setSource({ positions: lastPie.positions, density: lastPie.density });
@@ -286,6 +302,12 @@ function flipCrime(dir) {
 
 // HUD text for a crime + the current year (defaults to the live crime).
 function refreshHud(type = crimeType) {
+  if (triPieMode) {                                // comparing all three at once
+    if (crimeEl) crimeEl.textContent = 'robbery · burglary · murder';
+    if (yearEl) yearEl.textContent = yearLabels[yi];
+    if (countEl) countEl.textContent = '';
+    return;
+  }
   if (yearEl) yearEl.textContent = yearLabels[yi];
   if (crimeEl) crimeEl.textContent = crimeLabels[type] || type;
   if (countEl) countEl.textContent = ((totalsByType[type] && totalsByType[type][yi]) || 0).toLocaleString();
@@ -315,9 +337,37 @@ function togglePie() {
   refreshHud();
 }
 
+// Break the single pie into THREE — robbery · burglary · murder, same year, side by side. Data
+// splits across the three pies (volume honest → murder sparse); structure draws three frames. The
+// pool now holds all three at once, so it's a conserved swarm like every other view.
+function toggleTriPie() {
+  if (!triPieBuilder || !field) return;
+  const wasPie = pieMode;
+  triPieMode = !triPieMode;
+  playing = false;
+  if (triPieMode) {
+    pieMode = false; terrainMode = false;
+    triPieYears = years.map((_, i) => triPieBuilder(i, { gap: TRI_GAP, R: TRI_R }));
+    const tp = triPieYears[yi]; lastTriPie = tp;
+    const dataSrc = wasPie && lastPie ? { positions: lastPie.positions, density: lastPie.density } : layoutsByType[crimeType][yi];
+    field.setSource(dataSrc);
+    field.setTarget({ positions: tp.positions, density: tp.density });
+    field.setStagger(0.6);
+    if (terrainField) { terrainField.setSize(PIE_LINE_SIZE); startTransition(triPieFrameLayout(GX * GY, { centers: tp.centers, R: TRI_R, boundaries: tp.boundaries, frameDots: pieFrameDots, thin: pieThin })); }
+  } else {
+    field.setSource({ positions: lastTriPie.positions, density: lastTriPie.density });
+    field.setTarget(layoutsByType[crimeType][yi]);
+    field.setStagger(0.55);
+    if (terrainField) { terrainField.setSize(terrainDotSize); startTransition(bandFor(capeData, terrainTargetLayout, { band: bandW })); }
+  }
+  t = 0; pieMorphStart = performance.now(); pieMorphing = true;
+  refreshHud();
+}
+
 // Jump straight to the 2D map from anywhere — data + structure swarm home (the `M` key).
 function goToMap() {
-  if (!pieMode && !terrainMode) return;            // already on the map
+  if (!pieMode && !terrainMode && !triPieMode) return; // already on the map
+  if (triPieMode) { toggleTriPie(); return; }      // three-pie → map (its exit swarms data + frame home)
   if (pieMode) {                                   // pie → map: data swarms back
     pieMode = false;
     field.setSource({ positions: lastPie.positions, density: lastPie.density });
@@ -332,6 +382,13 @@ function goToMap() {
 }
 
 window.addEventListener('keydown', (e) => {
+  if (e.code === 'Digit3') { e.preventDefault(); toggleTriPie(); return; }   // break into 3 crime-pies / back
+  if (triPieMode) {                                                          // in the 3-pie only 3/M/←→ respond
+    if (e.code === 'KeyM') { e.preventDefault(); goToMap(); }
+    else if (e.code === 'ArrowRight') { e.preventDefault(); stepYear(1); }
+    else if (e.code === 'ArrowLeft') { e.preventDefault(); stepYear(-1); }
+    return;
+  }
   if (e.code === 'Space') { e.preventDefault(); playing = !playing; if (playing) { holdUntil = performance.now(); if (pieMode) setYearPair(yi); } }
   else if (e.code === 'KeyP') { e.preventDefault(); togglePie(); }
   else if (e.code === 'KeyM') { e.preventDefault(); goToMap(); }
@@ -371,6 +428,17 @@ window.__viz = {
     return PIE_R;
   },
   pieFrame: (dots, thin) => { if (dots != null) pieFrameDots = dots; if (thin != null) pieThin = thin; if (window.__viz) window.__viz.pieR(); return { frameDots: pieFrameDots, thin: pieThin }; }, // thin/tight frame
+  triPie: (r, gap) => {                                                       // live-tune the 3-pie radius + spacing
+    if (r != null) TRI_R = r; if (gap != null) TRI_GAP = gap;
+    if (triPieMode && triPieBuilder) {
+      triPieYears = years.map((_, i) => triPieBuilder(i, { gap: TRI_GAP, R: TRI_R }));
+      lastTriPie = triPieYears[yi];
+      field.setSource({ positions: lastTriPie.positions, density: lastTriPie.density });
+      field.setTarget({ positions: lastTriPie.positions, density: lastTriPie.density }); field.setT(1);
+      if (terrainField) { const f = triPieFrameLayout(GX * GY, { centers: lastTriPie.centers, R: TRI_R, boundaries: lastTriPie.boundaries, frameDots: pieFrameDots, thin: pieThin }); terrainField.setSource(f); terrainField.setTarget(f); terrainField.setT(1); trProg = 1; }
+    }
+    return { R: TRI_R, gap: TRI_GAP };
+  },
   view: (x = 0, y = 0, dist = 200) => {                                       // debug: fly to a map-local point + zoom
     const world = fieldGroup.localToWorld(new THREE.Vector3(x, y, 0));
     const dir = camera.position.clone().sub(controls.target).normalize();
@@ -437,8 +505,18 @@ function demHeightAt(x, y) {                                  // normalised DEM 
   const e = T.elev[gj * T.cols + gi];
   return e > 0 && T.peak ? e / T.peak : 0;
 }
-function precinctAnchors() {                                  // [{si, x, y, z}] in field-local space, per view
+function precinctAnchors() {                                  // [{si, x, y, z, crime?}] in field-local space
   const out = [], st = capeData.stations;
+  if (triPieMode && lastTriPie) {                            // one set of anchors per pie, each tagged its crime
+    const dth = (Math.PI * 2) / st.length;
+    for (const c of lastTriPie.centers) {
+      for (let si = 0; si < st.length; si++) {
+        const a = -Math.PI / 2 + (si + 0.5) * dth;
+        for (const rr of [0.45, 0.8]) out.push({ si, x: c.cx + Math.cos(a) * TRI_R * rr, y: c.cy + Math.sin(a) * TRI_R * rr, z: 0, crime: c.type });
+      }
+    }
+    return out;
+  }
   if (pieMode) {
     const dth = (Math.PI * 2) / st.length;
     for (let si = 0; si < st.length; si++) {
@@ -458,16 +536,17 @@ function hoverPrecinct(clientX, clientY) {
   const rect = renderer.domElement.getBoundingClientRect();
   const mx = clientX - rect.left, my = clientY - rect.top;
   fieldGroup.updateWorldMatrix(true, false);
-  let best = -1, bestD = Infinity;
+  let best = -1, bestD = Infinity, bestCrime = crimeType;
   for (const a of precinctAnchors()) {
     _hv.set(a.x, a.y, a.z);
     fieldGroup.localToWorld(_hv);
     _hv.project(camera);
     const sx = (_hv.x * 0.5 + 0.5) * rect.width, sy = (-_hv.y * 0.5 + 0.5) * rect.height;
     const d = Math.hypot(sx - mx, sy - my);
-    if (d < bestD) { bestD = d; best = a.si; }
+    if (d < bestD) { bestD = d; best = a.si; bestCrime = a.crime || crimeType; }
   }
-  return bestD <= (pieMode ? 30 : 48) ? best : -1;            // beyond the threshold → empty space
+  hoverCrimeType = bestCrime;                                 // which pie's crime we landed in (3-pie)
+  return bestD <= (pieMode || triPieMode ? 30 : 48) ? best : -1; // beyond the threshold → empty space
 }
 // Last-known cursor position (null = not over the canvas). Re-resolved every FRAME (not just on
 // mousemove, from tick() below) so the label keeps reading the live year/crime while the cursor
@@ -479,14 +558,40 @@ function updateTooltip() {
   const si = hoverPrecinct(mouseX, mouseY);
   if (si < 0) { tip.style.opacity = '0'; return; }
   const s = capeData.stations[si];
-  const n = (s.crimes[crimeType] && s.crimes[crimeType][years[yi]]) || 0;
-  tip.textContent = `${s.name} · ${n.toLocaleString()} ${crimeLabels[crimeType] || crimeType} · ${yearLabels[yi]}`;
+  const ct = hoverCrimeType || crimeType;                    // in the 3-pie, the pie under the cursor
+  const n = (s.crimes[ct] && s.crimes[ct][years[yi]]) || 0;
+  tip.textContent = `${s.name} · ${n.toLocaleString()} ${crimeLabels[ct] || ct} · ${yearLabels[yi]}`;
   tip.style.left = mouseX + 'px';
   tip.style.top = mouseY + 'px';
   tip.style.opacity = '1';
 }
 renderer.domElement.addEventListener('mousemove', (e) => { mouseX = e.clientX; mouseY = e.clientY; updateTooltip(); });
 renderer.domElement.addEventListener('mouseleave', () => { mouseX = mouseY = null; tip.style.opacity = '0'; });
+
+// Grey labels under each pie in the 3-pie compare — projected from each pie's field-local centre
+// through the live camera, so they track zoom/pan. Hidden in every other view.
+const triLabels = [0, 1, 2].map(() => {
+  const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;pointer-events:none;z-index:19;color:#8b98ac;' +
+    'font:12px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em;' +
+    'opacity:0;transition:opacity .2s;transform:translate(-50%,0)';
+  app.appendChild(d);
+  return d;
+});
+function updateTriLabels() {
+  if (!triPieMode || !lastTriPie) { for (const d of triLabels) d.style.opacity = '0'; return; }
+  const rect = renderer.domElement.getBoundingClientRect();
+  fieldGroup.updateWorldMatrix(true, false);
+  lastTriPie.centers.forEach((c, i) => {
+    const d = triLabels[i]; if (!d) return;
+    _hv.set(c.cx, c.cy - TRI_R - 24, 0);                     // just under the pie
+    fieldGroup.localToWorld(_hv); _hv.project(camera);
+    d.style.left = ((_hv.x * 0.5 + 0.5) * rect.width) + 'px';
+    d.style.top = ((-_hv.y * 0.5 + 0.5) * rect.height) + 'px';
+    d.textContent = crimeLabels[c.type] || c.type;
+    d.style.opacity = '1';
+  });
+}
 
 // ---- loop -------------------------------------------------------------------
 const clock = new THREE.Clock();
@@ -497,10 +602,15 @@ function tick() {
   const time = clock.getElapsedTime();
 
   if (pieMorphing) {
-    // Morphing the field between the map and the pie (both fields swarm; nothing fades).
+    // Morphing the field between arrangements (map⇄pie⇄3-pie; both fields swarm, nothing fades).
     const p = Math.min((now - pieMorphStart) / PIE_MS, 1);
     t = swarmEase(p);
-    if (p >= 1) pieMorphing = false;
+    if (p >= 1) {
+      pieMorphing = false;
+      // Landed back on the flat map (not a pie view) → re-anchor the scrub pair seamlessly so a
+      // later play/scrub is clean (the field is already at layouts[yi], so this doesn't jump).
+      if (!pieMode && !triPieMode) setYearPair(yi);
+    }
   } else if (flipping) {
     // Crossing between crimes at the current year; year-advance is suspended.
     const p = Math.min((now - flipStart) / FLIP_MS, 1);
@@ -544,6 +654,7 @@ function tick() {
   fieldGroup.rotation.z = Math.sin(time * 0.03) * 0.02 * (1 - Math.min(1, Math.abs(tiltCur))); // calm the wobble when tilted
   controls.update();
   updateTooltip(); // re-resolve every frame — keeps the label live even when the cursor doesn't move
+  updateTriLabels(); // keep the 3-pie crime labels pinned under their pies (self-hides otherwise)
 
   render();
 
