@@ -76,7 +76,7 @@ export class PointField {
         uStagger: { value: 0.55 },
         // Structure shimmer — each grey/matte dot fades slightly in/out on its own phase so the
         // frame breathes like faint stars. Data has its own twinkle; these are ignored there.
-        uShimmer: { value: 0.45 },     // amplitude (0 = still; ~0.3 gentle, ~0.45 more present)
+        uShimmer: { value: 0.9 },      // amplitude (0 = still; ~0.3 gentle, ~0.45 present, ~0.9 dramatic)
         uShimmerSpeed: { value: 0.8 }, // how fast the breath cycles (slow = calm)
         uZScale: { value: 0 }, // terrain vertical scale (0 = flat map; raised = relief)
         uOpacity: { value: 1 }, // global fade — cross-fades map structure ↔ terrain relief

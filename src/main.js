@@ -469,17 +469,24 @@ function hoverPrecinct(clientX, clientY) {
   }
   return bestD <= (pieMode ? 30 : 48) ? best : -1;            // beyond the threshold → empty space
 }
-renderer.domElement.addEventListener('mousemove', (e) => {
-  const si = hoverPrecinct(e.clientX, e.clientY);
+// Last-known cursor position (null = not over the canvas). Re-resolved every FRAME (not just on
+// mousemove, from tick() below) so the label keeps reading the live year/crime while the cursor
+// sits still through autoplay, a crime-flip, or a pie year-step — a static cursor shouldn't mean
+// a stale readout.
+let mouseX = null, mouseY = null;
+function updateTooltip() {
+  if (mouseX == null) return;
+  const si = hoverPrecinct(mouseX, mouseY);
   if (si < 0) { tip.style.opacity = '0'; return; }
   const s = capeData.stations[si];
   const n = (s.crimes[crimeType] && s.crimes[crimeType][years[yi]]) || 0;
   tip.textContent = `${s.name} · ${n.toLocaleString()} ${crimeLabels[crimeType] || crimeType} · ${yearLabels[yi]}`;
-  tip.style.left = e.clientX + 'px';
-  tip.style.top = e.clientY + 'px';
+  tip.style.left = mouseX + 'px';
+  tip.style.top = mouseY + 'px';
   tip.style.opacity = '1';
-});
-renderer.domElement.addEventListener('mouseleave', () => { tip.style.opacity = '0'; });
+}
+renderer.domElement.addEventListener('mousemove', (e) => { mouseX = e.clientX; mouseY = e.clientY; updateTooltip(); });
+renderer.domElement.addEventListener('mouseleave', () => { mouseX = mouseY = null; tip.style.opacity = '0'; });
 
 // ---- loop -------------------------------------------------------------------
 const clock = new THREE.Clock();
@@ -536,6 +543,7 @@ function tick() {
   fieldGroup.rotation.x = tiltCur;
   fieldGroup.rotation.z = Math.sin(time * 0.03) * 0.02 * (1 - Math.min(1, Math.abs(tiltCur))); // calm the wobble when tilted
   controls.update();
+  updateTooltip(); // re-resolve every frame — keeps the label live even when the cursor doesn't move
 
   render();
 
