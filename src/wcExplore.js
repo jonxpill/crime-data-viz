@@ -149,6 +149,17 @@ const countEl = document.getElementById('count');
 const regionEl = document.getElementById('region');
 const hintEl = document.getElementById('hint');
 
+// Context-aware affordance line: what a click does depends on where you are (only writes on change, so
+// it's cheap to call every frame via refreshHud). Mid-drill text is set by startDrill; this defers then.
+let _lastHint = null;
+function refreshHint() {
+  if (!hintEl || drilling) return;
+  const txt = (pieMode || triPieMode) ? 'press M for the map'
+    : region === 'ct' ? 'click empty space (or M) to zoom back out'
+      : 'click Cape Town to zoom in';
+  if (txt !== _lastHint) { hintEl.textContent = txt; _lastHint = txt; }
+}
+
 // Point every builder + layout reference at the active region's build for the current mode. Called on
 // a mode swap (C) AND on a region change (a drill lands) — region is just another axis of the same
 // repointing that main.js already does for raw ⇄ per-capita.
@@ -379,6 +390,7 @@ function flipCrime(dir) {
 function refreshHud(type = crimeType) {
   const rate = dataMode === 'percapita';
   if (regionEl) regionEl.textContent = region === 'ct' ? 'Cape Town' : 'Western Cape';
+  refreshHint();
   if (triPieMode) {
     if (crimeEl) crimeEl.textContent = 'robbery · burglary · murder' + (rate ? ' · per capita' : '');
     if (yearEl) yearEl.textContent = yearLabels[yi];
@@ -761,8 +773,8 @@ function tick() {
       region = drillTo;
       repoint();
       landRegion();                                  // re-seed cleanly at the landed region's map, at rest
-      if (hintEl) hintEl.textContent = region === 'ct' ? 'click empty space (or M) to zoom back out' : 'click Cape Town to zoom in';
-      refreshHud();
+      refreshHud();                                  // refreshes the region label + context-aware hint
+
     }
     controls.update();
     render();
