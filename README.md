@@ -28,8 +28,13 @@ already-public station-level counts are used (the record notes outputs follow th
 data-checking policy).
 
 **Geography** — police station coordinates + precinct boundaries: Western Cape Government GIS (open).
-**Population** (for the pending per-capita view) — WorldPop 2020, 100 m, constrained (CC-BY); and
-Stats SA Census 2011 Small Area Layer.
+
+**Population** (drives the per-capita view — press `C`) — **WorldPop 2020**, 100 m, UN-adjusted,
+constrained, people-per-pixel (CC-BY). Real population per precinct is a zonal sum of the WorldPop
+raster over each precinct polygon (`bake.mjs`), so per-capita rates are honest — not a proxy.
+
+> WorldPop (2020). *The spatial distribution of population in 2020, South Africa.* University of
+> Southampton. DOI: https://dx.doi.org/10.5258/SOTON/WP00660 — licensed CC BY 4.0.
 
 ## How it works
 

@@ -182,8 +182,7 @@ async function init() {
   makeTerrainField();
 
   refreshHud();
-  const flagEl = document.getElementById('flag');
-  if (flagEl) flagEl.textContent = `◆ SAPS crime records via DataFirst (CC-BY) · ${yearLabels[0]}–${yearLabels.at(-1)}`;
+  updateFlag();
   holdUntil = performance.now() + 900;
   requestAnimationFrame(tick);
 }
@@ -327,6 +326,15 @@ function refreshHud(type = crimeType) {
   if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + (rate ? ' · per 100k' : '');
   if (countEl) countEl.textContent = ((totalsByType[type] && totalsByType[type][yi]) || 0).toLocaleString();
 }
+// Data-source credit line — names the population source too once per-capita is in play.
+function updateFlag() {
+  const flagEl = document.getElementById('flag');
+  if (!flagEl || !yearLabels.length) return;
+  const span = `${yearLabels[0]}–${yearLabels.at(-1)}`;
+  flagEl.textContent = dataMode === 'percapita'
+    ? `◆ crime: SAPS via DataFirst · population: WorldPop 2020 · CC-BY · ${span}`
+    : `◆ SAPS crime records via DataFirst (CC-BY) · ${span}`;
+}
 // Spike: morph off the map into a robbery pie and back. Data dots swarm into the wedges, structure
 // dots swarm into the ring + spokes — conserved, staggered, no fades.
 function togglePie() {
@@ -410,6 +418,7 @@ function toggleMode() {
   }
   t = 0; pieMorphStart = performance.now(); pieMorphing = true;
   refreshHud();
+  updateFlag();   // credit WorldPop when per-capita is active
 }
 
 // Click one of the three pies → they all resolve into THAT crime, centred. The clicked pie's own
@@ -627,7 +636,10 @@ function updateTooltip() {
   const s = capeData.stations[si];
   const ct = hoverCrimeType || crimeType;                    // in the 3-pie, the pie under the cursor
   const n = (s.crimes[ct] && s.crimes[ct][years[yi]]) || 0;
-  tip.textContent = `${s.name} · ${n.toLocaleString()} ${crimeLabels[ct] || ct} · ${yearLabels[yi]}`;
+  const rate = s.pop ? Math.round((n / s.pop) * 100000) : 0; // per-capita rate per 100k residents
+  // Always show BOTH the reported count and the per-capita rate, whichever mode you're in.
+  tip.innerHTML = `${s.name} · ${crimeLabels[ct] || ct} · ${yearLabels[yi]}` +
+    `<br><span style="color:#9fb0c8">${n.toLocaleString()} reported · ${rate.toLocaleString()} per 100k</span>`;
   tip.style.left = mouseX + 'px';
   tip.style.top = mouseY + 'px';
   tip.style.opacity = '1';
