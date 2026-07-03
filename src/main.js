@@ -637,9 +637,10 @@ function updateTooltip() {
   const ct = hoverCrimeType || crimeType;                    // in the 3-pie, the pie under the cursor
   const n = (s.crimes[ct] && s.crimes[ct][years[yi]]) || 0;
   const rate = s.pop ? Math.round((n / s.pop) * 100000) : 0; // per-capita rate per 100k residents
-  // Always show BOTH the reported count and the per-capita rate, whichever mode you're in.
+  // Match the view: per-capita view → the rate; counts view → the reported number of crimes.
+  const val = dataMode === 'percapita' ? `${rate.toLocaleString()} per 100k` : `${n.toLocaleString()} reported`;
   tip.innerHTML = `${s.name} · ${crimeLabels[ct] || ct} · ${yearLabels[yi]}` +
-    `<br><span style="color:#9fb0c8">${n.toLocaleString()} reported · ${rate.toLocaleString()} per 100k</span>`;
+    `<br><span style="color:#9fb0c8">${val}</span>`;
   tip.style.left = mouseX + 'px';
   tip.style.top = mouseY + 'px';
   tip.style.opacity = '1';
