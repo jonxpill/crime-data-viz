@@ -196,6 +196,15 @@ specific instruments (deferred) · where it lives / distribution · a name.
 - **Prove the FEEL before building the machinery — a calm static thing can beat a clever dynamic one.** A
   full discrete-level LOD (zoom → swarm-in more detail) was built and rejected on feel; a static relief you
   simply zoom into won. Elaborate motion is a cost, not a default; the eye decides, and often prefers still. (?)
+- **A new dimension is another VALUE on an existing axis, not a parallel copy of the structure.** Modelling
+  "region" (province vs Cape Town) as a second self-contained bundle — its own data + structure pools —
+  instead of another layout the ONE conserved field morphs to made the core invariant (conservation: only
+  the delta flies) *structurally* impossible: two separate pools can only cross-fade, never swarm, so the
+  drill regressed to disappear/reappear. The single shared pool enforced conservation for free; the mirrored
+  copy silently dropped it. When adding a second X (region, tenant, mode, view), make it a value in the one
+  structure, not a mirrored subsystem — or you forfeit every invariant that structure guaranteed. Corollary:
+  when a fast re-derivation regresses a proven capability, rebuild on the proven exemplar, don't untangle the
+  copy. (?)
 - *(tooling traps, kept local — not universal):* d3-geo `fitExtent` to ArcGIS polygons fails (clockwise
   winding → global bounds → microscopic scale); fit to vertices-as-points. `import.meta.url` URL-encodes
   spaces in paths. Calling both `THREE.Clock.getElapsedTime()` and `getDelta()` per frame zeroes the delta
