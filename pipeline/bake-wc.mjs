@@ -151,6 +151,47 @@ for (const f of precincts) for (const ring of allRings(f.geometry)) {
   }
 }
 
+// ---- terrain DEM: one z9 AWS-Terrain mosaic over the WC → a per-region elevation grid --------------
+// Same recipe as bake.mjs's Cape Town z10 DEM, but z9 (~250 m/sample) over the WHOLE province, reused
+// for the province overview AND each district detail — each baked in ITS OWN projection so the client's
+// demHeightAt lines up node-for-node. Cape Town keeps its crisper z10 bin. Tiles: pipeline/fetch-terrain.
+const TILE = 512, TZ = 9, TX0 = 281, TY0 = 301, TNX = 10, TNY = 9;
+const MOS_W = TNX * TILE, MOS_H = TNY * TILE;
+const mosaic = new Float32Array(MOS_W * MOS_H);
+for (let tx = 0; tx < TNX; tx++) for (let ty = 0; ty < TNY; ty++) {
+  const img = await (await fromFile(`${ROOT}data/raw/terrain/${TZ}_${TX0 + tx}_${TY0 + ty}.tif`)).getImage();
+  const [band] = await img.readRasters();
+  for (let py = 0; py < TILE; py++) for (let px = 0; px < TILE; px++)
+    mosaic[(ty * TILE + py) * MOS_W + (tx * TILE + px)] = band[py * TILE + px];
+}
+const MERC = 20037508.342789244, WORLD_PX = TILE * (1 << TZ), oxpx = TX0 * TILE, oypx = TY0 * TILE;
+function elevAt(lng, lat) {
+  const X = (lng * Math.PI / 180) * 6378137;
+  const Y = Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI / 180) / 2)) * 6378137;
+  const gx = (X + MERC) / (2 * MERC) * WORLD_PX - oxpx;
+  const gy = (MERC - Y) / (2 * MERC) * WORLD_PX - oypx;
+  if (gx < 0 || gy < 0 || gx >= MOS_W - 1 || gy >= MOS_H - 1) return -9999; // outside the mosaic → ocean sentinel
+  const x0 = Math.floor(gx), y0 = Math.floor(gy), fx = gx - x0, fy = gy - y0;
+  const a = mosaic[y0 * MOS_W + x0], b = mosaic[y0 * MOS_W + x0 + 1];
+  const c = mosaic[(y0 + 1) * MOS_W + x0], d = mosaic[(y0 + 1) * MOS_W + x0 + 1];
+  return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+}
+// A region's DEM: invert each grid node (screen px over its W×H box) through the region's OWN projection
+// to lng/lat, sample the mosaic. The client's demHeightAt uses the identical node↔px mapping. Int16 bin.
+const DEM_COLS = 600, DEM_ROWS = Math.round((DEM_COLS * H) / W); // 600×459 over the 940×720 box
+function bakeDEM(rawProj, name) {
+  const elev = new Int16Array(DEM_COLS * DEM_ROWS); let peak = 0;
+  for (let j = 0; j < DEM_ROWS; j++) for (let i = 0; i < DEM_COLS; i++) {
+    const [lng, lat] = rawProj.invert([(i / (DEM_COLS - 1)) * W, (j / (DEM_ROWS - 1)) * H]);
+    const e = Math.round(elevAt(lng, lat));
+    elev[j * DEM_COLS + i] = Math.max(-32768, Math.min(32767, e));
+    if (e > peak) peak = e;
+  }
+  writeFileSync(`${ROOT}public/data/${name}-dem.bin`, Buffer.from(elev.buffer));
+  console.log(`  DEM ${name}: ${DEM_COLS}×${DEM_ROWS}, peak ${peak} m → ${name}-dem.bin`);
+  return { cols: DEM_COLS, rows: DEM_ROWS, peak, dem: `${name}-dem.bin` };
+}
+
 // district roster (for the drill-down: which stations belong to which region)
 const districts = [...new Set(stations.map((s) => s.dc))].sort();
 
@@ -161,6 +202,7 @@ const asset = {
     crimeTypes: CRIMES.map(({ key, label }) => ({ key, label })), years: YEARS, yearLabels: YEAR_LABELS,
     box: { w: W, h: H }, districts },
   stations, structure,
+  terrain: bakeDEM(proj, 'wc'), // province-wide z9 relief (the whole WC in one DEM)
 };
 writeFileSync(ROOT + 'public/data/westerncape.json', JSON.stringify(asset));
 console.log(`baked westerncape.json — ${stations.length} stations across ${districts.length} districts, ${YEARS.length} years, ${structure.length / 2} structure pts`);
@@ -195,7 +237,7 @@ function detailView(dPrecincts, dStations) {
     const pts = ring.map(pr); let acc = 0;
     for (let i = 1; i < pts.length; i++) { const ax = pts[i - 1][0], ay = pts[i - 1][1]; const dx = pts[i][0] - ax, dy = pts[i][1] - ay; const seg = Math.hypot(dx, dy); if (seg === 0) continue; for (let d = STEP - acc; d <= seg; d += STEP) { const tt = d / seg; struct.push(+(ax + dx * tt).toFixed(1), +(ay + dy * tt).toFixed(1)); } acc = (acc + seg) % STEP; }
   }
-  return { stations: sts, structure: struct, box: { w: W, h: H } };
+  return { stations: sts, structure: struct, box: { w: W, h: H }, proj: pp }; // proj → DEM bake, not serialized
 }
 const DISTRICT_KEYS = { 'west coast': 'westcoast', 'cape winelands': 'winelands', 'garden route': 'gardenroute', 'overberg': 'overberg', 'central karoo': 'karoo' };
 const districtDetails = {};
@@ -203,8 +245,8 @@ for (const [dcName, key] of Object.entries(DISTRICT_KEYS)) {
   const dStations = stationList.filter((s) => s.dc.toLowerCase() === dcName);
   const dKeys = new Set(dStations.map((s) => s.key));
   const dPrecincts = precincts.filter((f) => dKeys.has(norm(f.properties.COMPNT_NM || '')));
-  const v = detailView(dPrecincts, dStations);
-  districtDetails[key] = { name: titleCase(dcName), dc: dcName, ...v };
+  const { proj: dproj, ...v } = detailView(dPrecincts, dStations);
+  districtDetails[key] = { name: titleCase(dcName), dc: dcName, ...v, terrain: bakeDEM(dproj, key) };
   console.log(`  district ${key}: ${v.stations.length} stations, ${v.structure.length / 2} structure pts`);
 }
 writeFileSync(ROOT + 'public/data/wc-districts.json', JSON.stringify({
