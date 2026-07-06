@@ -168,6 +168,51 @@ console.log('districts:', districts.join(', '));
 const cpt = stations.filter((s) => s.dc.toLowerCase() === 'city of cape town').length;
 console.log(`City of Cape Town stations (drill-down target): ${cpt}`);
 
+// ---- per-district DETAIL views (drill into EVERY area) ----------------------------------------------
+// Cape Town keeps its own richer capetown.json (60 precincts + a DEM). The OTHER FIVE districts get a
+// uniform detail here: each district's precincts + stations re-projected (fitExtent) to fill a detail
+// box, so drilling into it zooms its precincts up. Same stations/crimes/pop as the province — the drill
+// CONSERVES those dots — just detail positions + the district's own outline. → wc-districts.json.
+function detailView(dPrecincts, dStations) {
+  const fitPts = [];
+  for (const f of dPrecincts) for (const ring of allRings(f.geometry)) for (const c of ring) fitPts.push(c);
+  for (const s of dStations) fitPts.push([s.lng, s.lat]);
+  const pp = geoMercator().fitExtent([[PAD, PAD], [W - PAD, H - PAD]], { type: 'MultiPoint', coordinates: fitPts });
+  const pr = ([lng, lat]) => { const [px, py] = pp([lng, lat]); return [px - W / 2, H / 2 - py]; };
+  const radByName = new Map();
+  for (const f of dPrecincts) {
+    const ring = firstRing(f.geometry); let mnx = Infinity, mny = Infinity, mxx = -Infinity, mxy = -Infinity;
+    for (const c of ring) { const [x, y] = pr(c); mnx = Math.min(mnx, x); mxx = Math.max(mxx, x); mny = Math.min(mny, y); mxy = Math.max(mxy, y); }
+    radByName.set(norm(f.properties.COMPNT_NM || ''), Math.max(6, Math.min(0.52 * (((mxx - mnx) + (mxy - mny)) / 2), 90)));
+  }
+  const sts = dStations.map((s) => {
+    const [x, y] = pr([s.lng, s.lat]); const crimes = {};
+    for (const cr of CRIMES) { crimes[cr.key] = {}; YEARS.forEach((yr) => { crimes[cr.key][yr] = Math.round(s.crimes[cr.key][yr] || 0); }); }
+    return { name: titleCase(s.name), x: +x.toFixed(1), y: +y.toFixed(1), r: +(radByName.get(s.key) ?? 8).toFixed(1), dc: s.dc, pop: Math.round(popByKey.get(s.key) ?? 5000), crimes };
+  });
+  const struct = []; const STEP = 0.55;
+  for (const f of dPrecincts) for (const ring of allRings(f.geometry)) {
+    const pts = ring.map(pr); let acc = 0;
+    for (let i = 1; i < pts.length; i++) { const ax = pts[i - 1][0], ay = pts[i - 1][1]; const dx = pts[i][0] - ax, dy = pts[i][1] - ay; const seg = Math.hypot(dx, dy); if (seg === 0) continue; for (let d = STEP - acc; d <= seg; d += STEP) { const tt = d / seg; struct.push(+(ax + dx * tt).toFixed(1), +(ay + dy * tt).toFixed(1)); } acc = (acc + seg) % STEP; }
+  }
+  return { stations: sts, structure: struct, box: { w: W, h: H } };
+}
+const DISTRICT_KEYS = { 'west coast': 'westcoast', 'cape winelands': 'winelands', 'garden route': 'gardenroute', 'overberg': 'overberg', 'central karoo': 'karoo' };
+const districtDetails = {};
+for (const [dcName, key] of Object.entries(DISTRICT_KEYS)) {
+  const dStations = stationList.filter((s) => s.dc.toLowerCase() === dcName);
+  const dKeys = new Set(dStations.map((s) => s.key));
+  const dPrecincts = precincts.filter((f) => dKeys.has(norm(f.properties.COMPNT_NM || '')));
+  const v = detailView(dPrecincts, dStations);
+  districtDetails[key] = { name: titleCase(dcName), dc: dcName, ...v };
+  console.log(`  district ${key}: ${v.stations.length} stations, ${v.structure.length / 2} structure pts`);
+}
+writeFileSync(ROOT + 'public/data/wc-districts.json', JSON.stringify({
+  meta: { crimeTypes: CRIMES.map(({ key, label }) => ({ key, label })), years: YEARS, yearLabels: YEAR_LABELS },
+  districts: districtDetails,
+}));
+console.log(`baked wc-districts.json — ${Object.keys(districtDetails).length} district detail views`);
+
 // ---- helpers ----
 function parseCSVLine(line) {
   const out = []; let cur = '', q = false;
