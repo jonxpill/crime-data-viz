@@ -251,3 +251,11 @@ specific instruments (deferred) · where it lives / distribution · a name.
   misses) becomes a one-line sync stack in seconds; a K-loop over `undefined` years read as a hang until the
   Node repro named it. Stage markers (`window.__stage = …`) localise WHERE a silent init died before you
   theorise WHY. (?)
+- **A split data contract (inline metadata + a side-loaded heavy payload) must be guarded on the PAYLOAD,
+  not the metadata.** Each region's DEM ships as `terrain{cols,rows,peak,dem}` in JSON but the elevation
+  bin loads separately (later, or never offline); a consumer that keyed off `if (terrain)` read `T.elev[…]`
+  on `undefined` and crashed deep in a hot loop. Guard on the part that's actually load-bearing (`T.elev`),
+  and a per-item (province vs district) load order can leave one satisfied and the next not. (?)
+- **A shared GPU attribute wants ONE writer.** The engine auto-uploads `aZ` from any layout carrying `z`;
+  with N regions each sizing `z` differently, that fights a correct value. Strip `z` at the source so the
+  engine never touches `aZ`, and let a single `fillAZ()` own it — one writer, no size races. (?)
