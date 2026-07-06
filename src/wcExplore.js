@@ -45,6 +45,14 @@ camera.position.set(0, 0, 900); // set precisely once both boxes are known (fram
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
+// Tone mapping = graceful highlight roll-off. The data field is ADDITIVE, so dense cores (Cape Town) sum
+// far past 1.0; without this they hard-clip to a featureless white splat that swallows the blue→gold ramp.
+// The composers render in half-float (HDR), so the OutputPass tone-maps the true summed values — the core
+// resolves to a soft graduated glow instead of a hard splat. NEUTRAL (Khronos PBR) preserves hue into the
+// highlights better than ACES's white-shift, so the gradient (the read) survives. Exposure is the master
+// brightness — Neutral crushes the low end, so we expose UP from there (tune live via __viz.expo).
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = 3.5;
 app.appendChild(renderer.domElement);
 
 // Zoom + pan (no 3D tumble — it's a flat map, no terrain to tilt into). Scroll/pinch zooms, drag pans.
@@ -66,7 +74,7 @@ const fieldGroup = new THREE.Group();
 scene.add(fieldGroup);
 
 // ---- selective bloom: ONLY the data field glows -----------------------------
-const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.58, 0.72, 0.0);
+const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.45, 0.72, 0.0);
 const bloomComposer = new EffectComposer(renderer);
 bloomComposer.renderToScreen = false;
 bloomComposer.addPass(new RenderPass(scene, camera));
@@ -725,6 +733,10 @@ window.addEventListener('keydown', (e) => {
 
 // Debug hook (region-aware).
 window.__viz = {
+  // --- colour/exposure tuning (live) ---
+  expo: (v) => { if (v != null) renderer.toneMappingExposure = v; return renderer.toneMappingExposure; }, // master brightness
+  bloom: (strength, threshold, radius) => { if (strength != null) bloom.strength = strength; if (threshold != null) bloom.threshold = threshold; if (radius != null) bloom.radius = radius; return { strength: bloom.strength, threshold: bloom.threshold, radius: bloom.radius }; },
+  tonemap: (name) => { const m = { none: THREE.NoToneMapping, aces: THREE.ACESFilmicToneMapping, neutral: THREE.NeutralToneMapping, agx: THREE.AgXToneMapping, reinhard: THREE.ReinhardToneMapping, cineon: THREE.CineonToneMapping }; if (name && m[name] !== undefined) { renderer.toneMapping = m[name]; scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; }); } return renderer.toneMapping; },
   year: (n) => { const i = years.indexOf(n); if (i >= 0) { playing = false; setYearPair(i); t = 0; } },
   t: (v) => { playing = false; t = v; },
   flip: () => flipCrime(1),
