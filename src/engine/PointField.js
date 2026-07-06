@@ -33,9 +33,10 @@ export class PointField {
     this.glow = opts.glow ?? true;
     const size = opts.size ?? (this.glow ? 1.9 : 1.5);
     const ramp = opts.ramp ?? [
-      new THREE.Color('#7c9ce0'), // sparse / cool / dim (a touch more saturated to read blue)
-      new THREE.Color('#cdd6ee'), // mid
-      new THREE.Color('#ffce86'), // dense / warm / bright
+      new THREE.Color('#7c9ce0'), // sparse / cool / dim — blue ember
+      new THREE.Color('#e8b892'), // mid — warm sand (bridges blue→molten so the transition isn't via white)
+      new THREE.Color('#ff8a3a'), // dense / hot — MOLTEN amber. Low blue, so a dense additive stack saturates
+      //                             to orange, not white: the core stays coloured instead of burning out.
     ];
     const matte = new THREE.Color(opts.matte ?? '#3e4a60'); // grey-blue, recessive
 
@@ -63,6 +64,11 @@ export class PointField {
         uPixelRatio: { value: 1 },
         uMaxSize: { value: 7.0 }, // cap on-screen size (px) — stops dots ballooning into discs when you zoom in
         uGlow: { value: this.glow ? 1 : 0 },
+        // DATA per-dot brightness = uDataFloor + uDataGain * density. The GAIN is the density dependence;
+        // keeping it modest stops dense cores double-counting density (many dots × each-bright) into a
+        // white burn-out — the areal STACKING already carries "denser = brighter". Floor lifts lone embers.
+        uDataFloor: { value: 0.30 },
+        uDataGain: { value: 0.34 },
         // Idle drift — the at-rest "living swarm" shimmer, on two independent levers:
         //   uDrift      = AMPLITUDE (how far a point strays from home). Keep small so
         //                 dots feel alive without "wandering away".
@@ -132,6 +138,17 @@ export class PointField {
   setDriftSpeed(mult) { this.material.uniforms.uDriftSpeed.value = mult; }
   /** Per-dot transition stagger (0 = all move together; ~0.6 = a cascading swarm). */
   setStagger(w) { this.material.uniforms.uStagger.value = w; }
+  /** DATA per-dot brightness curve: floor (lone-ember glow) + gain (density dependence; low = tamer cores). */
+  setDataFloor(v) { this.material.uniforms.uDataFloor.value = v; }
+  setDataGain(v) { this.material.uniforms.uDataGain.value = v; }
+  /** Density colour ramp — any of cool/mid/warm (hex strings or THREE.Color); a hotter warm keeps dense
+   *  cores COLOURED (molten) instead of white, because a low-blue warm saturates to white far later. */
+  setRamp(cool, mid, warm) {
+    const u = this.material.uniforms;
+    if (cool) u.uRampCool.value.set(cool);
+    if (mid) u.uRampMid.value.set(mid);
+    if (warm) u.uRampWarm.value.set(warm);
+  }
   /** Terrain vertical scale — 0 = flat map, higher lifts each point's aZ into relief. */
   setZScale(s) { this.material.uniforms.uZScale.value = s; }
   /** Global opacity 0..1 — for cross-fading fields (map mesh ↔ terrain). */
@@ -207,6 +224,8 @@ const FRAG = /* glsl */ `
 
   uniform float uGlow;
   uniform float uOpacity;
+  uniform float uDataFloor;
+  uniform float uDataGain;
   uniform vec3 uRampCool;
   uniform vec3 uRampMid;
   uniform vec3 uRampWarm;
@@ -239,7 +258,7 @@ const FRAG = /* glsl */ `
       // additively, not from any one blown out.
       float glow = core * core;
       vec3 col = ramp(vDensity);
-      float brightness = (0.14 + 0.70 * vDensity) * vTwinkle;
+      float brightness = (uDataFloor + uDataGain * vDensity) * vTwinkle;
       gl_FragColor = vec4(col, glow * brightness);
     } else {
       // STRUCTURE — grey, matte, recessive. Brightness rides vDensity so the terrain

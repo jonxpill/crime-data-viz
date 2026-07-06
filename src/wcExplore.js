@@ -52,7 +52,7 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 // highlights better than ACES's white-shift, so the gradient (the read) survives. Exposure is the master
 // brightness — Neutral crushes the low end, so we expose UP from there (tune live via __viz.expo).
 renderer.toneMapping = THREE.NeutralToneMapping;
-renderer.toneMappingExposure = 3.5;
+renderer.toneMappingExposure = 2.6;
 app.appendChild(renderer.domElement);
 
 // Zoom + pan (no 3D tumble — it's a flat map, no terrain to tilt into). Scroll/pinch zooms, drag pans.
@@ -74,7 +74,7 @@ const fieldGroup = new THREE.Group();
 scene.add(fieldGroup);
 
 // ---- selective bloom: ONLY the data field glows -----------------------------
-const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.45, 0.72, 0.0);
+const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.32, 0.65, 0.0);
 const bloomComposer = new EffectComposer(renderer);
 bloomComposer.renderToScreen = false;
 bloomComposer.addPass(new RenderPass(scene, camera));
@@ -735,6 +735,8 @@ window.addEventListener('keydown', (e) => {
 window.__viz = {
   // --- colour/exposure tuning (live) ---
   expo: (v) => { if (v != null) renderer.toneMappingExposure = v; return renderer.toneMappingExposure; }, // master brightness
+  dataCurve: (floor, gain) => { if (field) { if (floor != null) field.setDataFloor(floor); if (gain != null) field.setDataGain(gain); } return { floor: field && field.material.uniforms.uDataFloor.value, gain: field && field.material.uniforms.uDataGain.value }; }, // per-dot brightness floor+gain
+  ramp: (cool, mid, warm) => { if (field) field.setRamp(cool, mid, warm); return 'ramp updated'; }, // density colour ramp (hex strings)
   bloom: (strength, threshold, radius) => { if (strength != null) bloom.strength = strength; if (threshold != null) bloom.threshold = threshold; if (radius != null) bloom.radius = radius; return { strength: bloom.strength, threshold: bloom.threshold, radius: bloom.radius }; },
   tonemap: (name) => { const m = { none: THREE.NoToneMapping, aces: THREE.ACESFilmicToneMapping, neutral: THREE.NeutralToneMapping, agx: THREE.AgXToneMapping, reinhard: THREE.ReinhardToneMapping, cineon: THREE.CineonToneMapping }; if (name && m[name] !== undefined) { renderer.toneMapping = m[name]; scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; }); } return renderer.toneMapping; },
   year: (n) => { const i = years.indexOf(n); if (i >= 0) { playing = false; setYearPair(i); t = 0; } },
