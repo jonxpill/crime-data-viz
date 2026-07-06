@@ -52,7 +52,8 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 // highlights better than ACES's white-shift, so the gradient (the read) survives. Exposure is the master
 // brightness — Neutral crushes the low end, so we expose UP from there (tune live via __viz.expo).
 renderer.toneMapping = THREE.NeutralToneMapping;
-renderer.toneMappingExposure = 2.6;
+renderer.toneMappingExposure = 5.5; // bright enough to READ on a normal monitor; the molten ramp + Neutral
+//                                     roll-off keep Cape Town's core amber (not a white splat) at this level.
 app.appendChild(renderer.domElement);
 
 // Zoom + pan (no 3D tumble — it's a flat map, no terrain to tilt into). Scroll/pinch zooms, drag pans.
