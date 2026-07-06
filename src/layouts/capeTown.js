@@ -140,7 +140,7 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
   // the crime "climbs" the relief — high-ground crime rides the mountains, the flats stay low.
   const T = data.terrain;
   const crimeZ = new Float32Array(COUNT);
-  if (T) {
+  if (T && T.elev) { // only when the DEM bin is actually loaded (districts load theirs after the build)
     const BW = data.meta.box.w, BH = data.meta.box.h;
     for (const sl of slots) {
       for (let j = 0; j < sl.K; j++) {

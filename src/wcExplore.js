@@ -20,13 +20,13 @@ import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, ter
  * drives the one `field`; a region swap is only another repointing of the layout references (like a
  * mode swap). The drill is one more morph of that conserved field.
  *
- * The conserved slice: Cape Town's 60 stations are a byte-identical subset of the province's 150 (same
- * crime counts, verified), so ordering the province [city, then rural] makes Cape Town's crime dots a
- * contiguous slice [0, CT_COUNT) that maps 1:1 onto the Cape Town detail build — the SAME dots in both
- * views. On the drill they simply travel (province cluster ⇄ full detail). Rural crime has no detail to
+ * The conserved slices: each district's stations are a byte-identical subset of the province's 150 (same
+ * crime counts, verified), so ordering the province BY DISTRICT makes each district's crime dots a
+ * contiguous slice that maps 1:1 onto that district's detail build — the SAME dots in both views. On a
+ * drill they simply travel (province cluster ⇄ full detail); every OTHER district's crime has no detail to
  * zoom into, so it honestly breaks away (flies out + fades) and flies back on the way out. Structure is
- * one pool whose province outline reconfigures into Cape Town's outline. Camera is DEAD STILL — framed
- * to the union of both boxes once; the drill is entirely in the dots, never the lens (wcMain.js's
+ * one pool whose province outline reconfigures into the district's outline. Camera is DEAD STILL — framed
+ * to the union of the boxes once; the drill is entirely in the dots, never the lens (wcMain.js's
  * grammar, here carrying the full toolkit).
  */
 
@@ -162,7 +162,8 @@ let structCurrent = null, strProg = 1, strStart = 0, strDur = 2400, strTo = null
 // drill pool) is never touched: on 'T' we swap the CT outline for this pool at its band pose — which
 // bandFor() strews along the SAME capetown.structure outline, so the swap is invisible — then morph
 // band → relief. Crime climbs via the data field's own per-dot heights (aZ, set for the city slice).
-let terrainField = null, ctData = null;
+let terrainField = null;
+const regionData = {}; // the DATA object (with terrain DEM + box) per region — terrain reads the current region's here
 let terrainMode = false, zScaleCur = 0, tiltCur = 0;
 const zPeak = 11.5, tiltAngle = -0.62; // true-1:1 relief height + view tilt (from main.js)
 const bandW = 0.4, terrainDotSize = 2.5, GX = 432, GY = 378; // fixed relief dot budget (163,296)
@@ -183,9 +184,8 @@ function refreshHint() {
   if (!hintEl || drilling) return;
   const txt = terrainMode ? 'T or tap → flat map'
     : (pieMode || triPieMode) ? 'press M for the map'
-      : region === 'ct' ? 'T terrain · click empty space (or M) to zoom out'
-        : region !== 'wc' ? 'click empty space (or M) to zoom out'
-          : 'click any area to zoom in';
+      : region !== 'wc' ? 'T terrain · click empty space (or M) to zoom out'
+        : 'T terrain · click any area to zoom in';
   if (txt !== _lastHint) { hintEl.textContent = txt; _lastHint = txt; }
 }
 
@@ -283,16 +283,10 @@ async function init() {
   let cur = 0;
   for (const rk of DETAIL_REGIONS) { const c = providers[rk].raw.count; slices[rk] = [cur, c]; cur += c; }
   if (cur !== COUNT) console.warn('[wc] district slices don\'t sum to COUNT', { cur, COUNT });
-  const CT_COUNT = providers.ct.raw.count; // Cape Town's slice = [0, CT_COUNT) (it's first)
-
-  // Cape Town's DEM height per crime dot — kept for the terrain view (crime climbs the relief). Grab it
-  // BEFORE stripping z below.
-  const ctZ = providers.ct.raw.layouts[crimeType][0].z || new Float32Array(CT_COUNT);
-
-  // buildCrimeLayouts tags each map layout with a per-build `z` (Cape Town's, because capetown.json carries
-  // a DEM). Uploading that as aZ onto the COUNT-sized shared field would break its draw. Strip it; terrain
-  // height instead rides the field's aZ, set ONCE below (CT slice = Cape Town heights, everything else = 0).
-  // uZScale drives the lift — 0 everywhere flat, raised only in Cape Town.
+  // buildCrimeLayouts tags each map layout with a per-build `z` (each region samples its own DEM). A
+  // district's z is district-sized — uploading it as aZ onto the COUNT-sized shared field would break the
+  // draw — and we manage the lift ourselves anyway, so strip z here. fillAZ() writes the CURRENT region's
+  // relief into the field's aZ on demand; uZScale drives the lift (0 = flat map, eased up in a terrain view).
   for (const rk of ['wc', ...DETAIL_REGIONS]) for (const mode of ['raw', 'percapita']) {
     const b = providers[rk][mode];
     for (const ty of Object.keys(b.layouts)) for (const L of b.layouts[ty]) delete L.z;
@@ -325,29 +319,26 @@ async function init() {
   structField.setMaxSize(7);
   fieldGroup.add(structField.points);
 
-  // Per-dot terrain height on the DATA field: the city slice climbs Cape Town's relief; rural stays flat.
-  // uZScale (0 in the province, raised in Cape Town's terrain view) drives the lift.
-  const aZ = new Float32Array(COUNT);
-  aZ.set(ctZ.subarray(0, CT_COUNT), 0);
-  field.points.geometry.setAttribute('aZ', new THREE.BufferAttribute(aZ, 1));
+  // Per-dot relief height on the DATA field, filled per region by fillAZ() when terrain is on (0 at rest).
+  field.points.geometry.setAttribute('aZ', new THREE.BufferAttribute(new Float32Array(COUNT), 1));
 
-  // Terrain relief pool — Cape Town only, hidden until 'T'. Its band pose strews along capetown.structure
-  // (coincident with the CT outline), so swapping the outline for it reads as no change; then band → relief.
-  ctData = ctRaw;
+  // regionData: the DATA object (with terrain DEM + box) per drillable region — the terrain code reads the
+  // CURRENT region's relief here. Province + Cape Town got their elev via loadCapeTown; the five districts
+  // keep terrain nested in wc-districts.json, so load each district's DEM bin now (tolerant when offline).
+  Object.assign(regionData, detailData, { wc: wcRaw });
+  await Promise.all(DETAIL_REGIONS.filter((rk) => rk !== 'ct').map((rk) => loadRegionDEM(regionData[rk])));
+  region = 'wc';
+
+  // Terrain relief pool — ONE GX×GY grey field that reconfigures to the active region's relief (hidden
+  // until 'T'); reseedTerrain() rebuilds its band + relief target for each region. Seed the province now.
   terrainField = new PointField(GX * GY, { glow: false, size: terrainDotSize, matte: '#6fe0a0' });
   terrainField.setPixelRatio(renderer.getPixelRatio());
   terrainField.setDrift(0.0);
   terrainField.setMaxSize(7);
-  terrainTargetLayout = terrainRelief();
-  terrainCurrent = bandFor(ctData, terrainTargetLayout, { band: bandW });
-  terrainField.setSource(terrainCurrent);
-  terrainField.setTarget(terrainCurrent);
-  terrainField.setT(1);
-  terrainField.setZScale(0);
   terrainField.points.visible = false;
   fieldGroup.add(terrainField.points);
+  reseedTerrain();
 
-  region = 'wc';
   applyMode('raw');
   frameUnion(wcRaw.meta.box, ctRaw.meta.box);
   landRegion(); // seed the province at rest
@@ -399,8 +390,9 @@ function startStructTransition(toLayout, dur = strDur, stagger = strStagger) {
 
 // ---- terrain (Cape Town only) -----------------------------------------------
 function terrainRelief() {
-  const { w: W, h: H } = ctData.meta.box;
-  return terrainViewLayout(ctData, { cx: 0, cy: 0, hw: W / 2, hh: H / 2 }, GX, GY);
+  const d = regionData[region];
+  const { w: W, h: H } = d.meta.box;
+  return terrainViewLayout(d, { cx: 0, cy: 0, hw: W / 2, hh: H / 2 }, GX, GY);
 }
 function startTerrainTransition(toLayout) {
   terrainField.setSource(terrainCurrent);
@@ -411,25 +403,65 @@ function startTerrainTransition(toLayout) {
 // 'T' inside Cape Town toggles the relief. Swap the CT outline (structField) for the terrain pool at its
 // coincident band, rise band → relief; on the way back, sink to band, then tick swaps the outline back.
 function toggleTerrain() {
-  if (region !== 'ct' || pieMode || triPieMode || drilling) return; // Cape Town MAP only (province has no DEM)
+  const d = regionData[region];
+  if (!d || !d.terrain || !d.terrain.elev || pieMode || triPieMode || drilling) return; // any region WITH a DEM
   terrainMode = !terrainMode;
   if (terrainMode) {
     structField.points.visible = false;
     terrainField.points.visible = true;
     terrainTargetLayout = terrainRelief();
+    fillAZ();                                                          // crime climbs THIS region's relief
     startTerrainTransition(terrainTargetLayout);                        // band → relief (rises via the zScale ease)
   } else {
-    startTerrainTransition(bandFor(ctData, terrainTargetLayout, { band: bandW })); // relief → band
+    startTerrainTransition(bandFor(d, terrainTargetLayout, { band: bandW })); // relief → band
   }
   refreshHint();
 }
-function demHeightAt(x, y) { // normalised DEM height (0..1) at a Cape Town map-local point
-  const T = ctData && ctData.terrain; if (!T) return 0;
-  const { w: W, h: H } = ctData.meta.box;
+function demHeightAt(x, y) { // normalised DEM height (0..1) at a map-local point in the CURRENT region
+  const d = regionData[region], T = d && d.terrain; if (!T || !T.elev) return 0;
+  const { w: W, h: H } = d.meta.box;
   const gi = Math.max(0, Math.min(T.cols - 1, Math.round(((x + W / 2) / W) * (T.cols - 1))));
   const gj = Math.max(0, Math.min(T.rows - 1, Math.round(((H / 2 - y) / H) * (T.rows - 1))));
   const e = T.elev[gj * T.cols + gi];
   return e > 0 && T.peak ? e / T.peak : 0;
+}
+// Load a region's DEM bin (Int16 elevation) into data.terrain.elev — the province + Cape Town get theirs
+// via loadCapeTown, but the districts' terrain is nested in wc-districts.json. Tolerant: in the offline
+// single-file build fetch is blocked, so terrain just stays unavailable for those regions.
+async function loadRegionDEM(data, baseDir = 'data/') {
+  const T = data && data.terrain;
+  if (!T || !T.dem || T.elev) return;
+  try { const res = await fetch(baseDir + T.dem); if (res.ok) T.elev = new Int16Array(await res.arrayBuffer()); }
+  catch { /* offline: no terrain for this region */ }
+}
+// Write the CURRENT region's relief height (0..1) into each shown dot's aZ, so the crime climbs the
+// mountains in register. Province = all COUNT dots; a district = just its conserved slice (rest stays 0).
+function fillAZ() {
+  if (!field) return;
+  const attr = field.points.geometry.getAttribute('aZ'), arr = attr.array;
+  arr.fill(0);
+  const pos = layouts[yi].positions;
+  if (region === 'wc') { for (let i = 0; i < COUNT; i++) arr[i] = demHeightAt(pos[i * 2], pos[i * 2 + 1]); }
+  else { const [start, k] = slices[region]; for (let m = 0; m < k; m++) arr[start + m] = demHeightAt(pos[m * 2], pos[m * 2 + 1]); }
+  attr.needsUpdate = true;
+}
+// On landing in a region, rebuild the relief pool for THAT region (band + relief target) so 'T' shows its
+// mountains. Always lands flat (terrain off); the rise + fillAZ happen when the user toggles T.
+function reseedTerrain() {
+  if (!terrainField) return;
+  terrainMode = false; zScaleCur = 0; tiltCur = 0; trProg = 1; fieldGroup.rotation.x = 0;
+  terrainField.points.visible = false;
+  if (structField) structField.points.visible = true;
+  if (field) field.setZScale(0);
+  const d = regionData[region];
+  if (d && d.terrain && d.terrain.elev) {
+    terrainTargetLayout = terrainRelief();
+    terrainCurrent = bandFor(d, terrainTargetLayout, { band: bandW });
+    terrainField.setSource(terrainCurrent);
+    terrainField.setTarget(terrainCurrent);
+    terrainField.setT(1);
+    terrainField.setZScale(0);
+  }
 }
 
 // ---- year-scrub control -----------------------------------------------------
@@ -741,7 +773,7 @@ window.__viz = {
   matte: (hex) => { if (structField) structField.material.uniforms.uMatte.value.set(hex); },
   hideData: (hide = true) => { if (field) field.points.visible = !hide; },
   region: (r) => { if (REGION_META[r]) startDrill(r); return region; }, // debug: force a drill into any region
-  terrain: () => { toggleTerrain(); return { terrainMode, region }; },            // debug: toggle Cape Town relief
+  terrain: () => { toggleTerrain(); return { terrainMode, region }; },            // debug: toggle the current region's relief
 };
 
 // ---- hover readout — "Nyanga · 2,300 robbery · 2019/20" (works in map AND pie), region-aware ----
@@ -772,7 +804,7 @@ function precinctAnchors() {
       for (const rr of [0.32, 0.58, 0.86]) out.push({ si, x: Math.cos(a) * PIE_R * rr, y: Math.sin(a) * PIE_R * rr });
     }
   } else {
-    const zLift = (region === 'ct' && terrainMode) ? zScaleCur : 0; // ride the relief in Cape Town terrain
+    const zLift = terrainMode ? zScaleCur : 0; // ride the current region's relief when terrain is on
     for (let si = 0; si < st.length; si++) {
       const s = st[si];
       out.push({ si, x: s.x, y: s.y, z: zLift ? demHeightAt(s.x, s.y) * zLift : 0 });
@@ -902,6 +934,7 @@ function tick() {
       region = drillTo;
       repoint();
       landRegion();                                  // re-seed cleanly at the landed region's map, at rest
+      reseedTerrain();                               // rebuild the relief pool for the landed region ('T' shows ITS mountains)
       refreshHud();                                  // refreshes the region label + context-aware hint
 
     }
