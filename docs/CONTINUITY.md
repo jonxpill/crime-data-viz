@@ -239,4 +239,15 @@ specific instruments (deferred) · where it lives / distribution · a name.
 - *(tooling traps, kept local — not universal):* d3-geo `fitExtent` to ArcGIS polygons fails (clockwise
   winding → global bounds → microscopic scale); fit to vertices-as-points. `import.meta.url` URL-encodes
   spaces in paths. Calling both `THREE.Clock.getElapsedTime()` and `getDelta()` per frame zeroes the delta
-  (each resets `oldTime`) → an fps meter silently never ticks; measure off one time source.
+  (each resets `oldTime`) → an fps meter silently never ticks; measure off one time source. Plus:
+  wc-districts.json keeps `meta` top-level, but a per-district *detail object* handed to `buildCrimeLayouts`
+  needs its own `meta.years` — graft the province meta on, or the builder throws mid-init.
+- **The AGGREGATE passing proves nothing about each SLICE.** The province build (which carried `meta`)
+  succeeded and masked that every per-district object lacked it — the throw only fired on the district code
+  path, as a black screen. When a shared builder needs a field, exercise each item's path, not just the
+  whole. (?)
+- **Reproduce a suspected browser HANG by importing the pure module into Node and calling the suspect
+  function directly.** An async throw that never reaches `window.onerror` (and that a late-attached listener
+  misses) becomes a one-line sync stack in seconds; a K-loop over `undefined` years read as a hang until the
+  Node repro named it. Stage markers (`window.__stage = …`) localise WHERE a silent init died before you
+  theorise WHY. (?)
