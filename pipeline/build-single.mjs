@@ -22,7 +22,7 @@ let js = readFileSync(DIST + 'assets/' + jsName, 'utf8');
 js = js.replace(/<\/script>/gi, '<\\/script>'); // don't let a string literal close our inline tag
 
 // 2. the data — every dataset the app loads, keyed by the url loadCapeTown() asks for (+ the Cape Town DEM)
-const DATASETS = ['data/westerncape.json', 'data/capetown.json'];
+const DATASETS = ['data/westerncape.json', 'data/capetown.json', 'data/wc-districts.json'];
 const dataLiteral = '{' + DATASETS.map((u) =>
   JSON.stringify(u) + ':' + readFileSync(ROOT + 'public/' + u, 'utf8').replace(/<\//g, '<\\/'),
 ).join(',') + '}';

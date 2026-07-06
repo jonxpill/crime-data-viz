@@ -99,20 +99,33 @@ function render() {
 }
 
 // ---- the ONE data pool + ONE structure pool ---------------------------------
-let field = null;          // DATA (glow). Province = all 150; Cape Town view = its city slice [0, CT_COUNT).
-let structField = null;    // STRUCTURE (grey matte). Province outline ⇄ Cape Town outline. One conserved pool.
-let COUNT = 0;             // total data slots. Field order is [ city 0..CT_COUNT , rural CT_COUNT..COUNT ].
-let CT_COUNT = 0;          // Cape Town's dot count — the conserved slice that survives the drill.
-let RURAL_COUNT = 0;       // rural dot count (= COUNT - CT_COUNT).
-let ruralAway = null;      // rural dots' broken-away rest (pushed out ×2.5, density 0) — the Cape-Town-view rural rest.
+let field = null;          // DATA (glow). Province = all 150; a district view = its own contiguous SLICE of the field.
+let structField = null;    // STRUCTURE (grey matte). Province outline ⇄ the active district's outline. One conserved pool.
+let COUNT = 0;             // total data slots. Field is ordered BY DISTRICT (Cape Town first); each district a slice.
+let awayAll = null;        // ALL province dots pushed out ×2.5 (density 0) — the base a district's lift() overwrites.
 let structN = 0;           // structure dot budget (the province outline's) — the shared pool's size.
-let provinceOutline = null, ctOutline = null; // the two structure rest poses (Cape Town cycled to structN → dense).
-let wcStations = [], ctStations = [];         // per-region station lists (for hover + drill hit-testing).
+const outlines = {};       // structN-sized structure poses: outlines.wc (province) + one per district (detail outline, cycled dense).
+const slices = {};         // each district's dot range in the province field: { ct:[start,count], winelands:[...], ... }.
+const stationsByRegion = {}; // { wc, ct, winelands, ... } — station lists for hover + click hit-testing.
 
-// A "provider" is a region's { raw, percapita } layout builds. Province builds are COUNT-sized (all 150);
-// Cape Town builds are their own CT_COUNT size and get written into the field's city slice by partial
-// writes (only lifted to COUNT at the drill boundary, where both endpoints must be full-size).
-const providers = { wc: null, ct: null };
+// The regions you can drill into: Cape Town (its own richer capetown.json + a DEM) + the five districts
+// from wc-districts.json. Cape Town is FIRST so its slice stays [0, ctCount) — where the DEM's aZ lives.
+const DETAIL_REGIONS = ['ct', 'winelands', 'westcoast', 'gardenroute', 'overberg', 'karoo'];
+const REGION_META = {
+  wc: { name: 'Western Cape' },
+  ct: { name: 'Cape Town', dc: 'city of cape town' },
+  winelands: { name: 'Cape Winelands', dc: 'cape winelands' },
+  westcoast: { name: 'West Coast', dc: 'west coast' },
+  gardenroute: { name: 'Garden Route', dc: 'garden route' },
+  overberg: { name: 'Overberg', dc: 'overberg' },
+  karoo: { name: 'Central Karoo', dc: 'central karoo' },
+};
+const dcToRegion = (dc) => DETAIL_REGIONS.find((k) => REGION_META[k].dc === norm(dc)) || null;
+
+// A "provider" is a region's { raw, percapita } layout builds. The province build is COUNT-sized (all 150);
+// each district build is its own smaller size, written into that district's slice by partial writes (only
+// lift()ed to COUNT at the drill boundary + the landing seed, where both endpoints must be full-size).
+const providers = {}; // { wc, ct, winelands, westcoast, gardenroute, overberg, karoo }
 let region = 'wc';         // 'wc' | 'ct' — the active layout set
 let drilling = false, drillTo = 'wc', drillStart = 0;
 const DRILL_MS = 2200;
@@ -171,7 +184,8 @@ function refreshHint() {
   const txt = terrainMode ? 'T or tap → flat map'
     : (pieMode || triPieMode) ? 'press M for the map'
       : region === 'ct' ? 'T terrain · click empty space (or M) to zoom out'
-        : 'click Cape Town to zoom in';
+        : region !== 'wc' ? 'click empty space (or M) to zoom out'
+          : 'click any area to zoom in';
   if (txt !== _lastHint) { hintEl.textContent = txt; _lastHint = txt; }
 }
 
@@ -186,18 +200,19 @@ function repoint() {
 }
 function applyMode(mode) { dataMode = mode; repoint(); }
 
-// Lift a Cape Town layout (CT_COUNT-sized) into a full COUNT-sized pose: its dots fill the city slice
-// [0, CT_COUNT), rural slots [CT_COUNT, COUNT) sit parked-away (density 0). Only needed at the drill
-// boundary + the landing seed (both endpoints must be full-size); the resting toolkit uses partial writes.
-function liftCt(l) {
+// Lift a district's detail layout into a full COUNT-sized pose: its dots fill THAT district's slice, every
+// other slot sits parked-away (density 0). Only needed at the drill boundary + the landing seed (both
+// endpoints must be full-size); the resting toolkit writes only the district's slice (partial write).
+function lift(regionKey, l) {
   const positions = new Float32Array(COUNT * 2), density = new Float32Array(COUNT);
-  positions.set(l.positions, 0);                 // city dots [0, CT_COUNT)
-  density.set(l.density, 0);
-  positions.set(ruralAway.positions, CT_COUNT * 2); // rural dots [CT_COUNT, COUNT) → broken-away (density stays 0)
+  positions.set(awayAll.positions, 0);           // start with EVERYTHING broken-away (density 0)
+  const start = slices[regionKey][0];
+  positions.set(l.positions, start * 2);         // the district's slice = its detail
+  density.set(l.density, start);
   return { ...l, positions, density };
 }
 // A region's CURRENT map pose (year yi→yi+1 at the live t), COUNT-sized — the drill's break-away/bloom
-// endpoint. Province is already COUNT-sized; Cape Town is lifted (rural parked-away).
+// endpoint. The province is already COUNT-sized; a district is lifted (the rest of the field parked-away).
 function liveMap(reg) {
   const b = providers[reg][dataMode];
   const arr = b.layouts[crimeType];
@@ -209,68 +224,92 @@ function liveMap(reg) {
     density[i] = a.density[i] + (c.density[i] - a.density[i]) * t;
   }
   const live = { positions, density };
-  return reg === 'ct' ? liftCt(live) : live;
+  return reg === 'wc' ? live : lift(reg, live);
 }
-const structRest = () => (region === 'ct' ? ctOutline : provinceOutline);
+const structRest = () => outlines[region] || outlines.wc;
+// Cycle a detail outline (its own point count) up to structN dots so the frame is a DENSE line, not sparse.
+function cycleOutline(structure, n) {
+  const cN = structure.length / 2, pos = new Float32Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    const j = (i % cN) * 2;
+    pos[i * 2] = structure[j] + (Math.random() - 0.5) * 1.4;
+    pos[i * 2 + 1] = structure[j + 1] + (Math.random() - 0.5) * 1.4;
+  }
+  return { positions: pos, density: new Float32Array(n).fill(0.4) };
+}
 
 // ---- boot -------------------------------------------------------------------
 init();
 async function init() {
-  const [wcRaw, ctRaw] = await Promise.all([loadCapeTown('data/westerncape.json'), loadCapeTown('data/capetown.json')]);
+  const [wcRaw, ctRaw, wcDist] = await Promise.all([
+    loadCapeTown('data/westerncape.json'), loadCapeTown('data/capetown.json'), loadCapeTown('data/wc-districts.json'),
+  ]);
   years = wcRaw.meta.years;
   yearLabels = wcRaw.meta.yearLabels || years;
   crimeTypes = (wcRaw.meta.crimeTypes || [{ key: 'robbery', label: 'robbery' }]).map((c) => c.key);
   crimeLabels = Object.fromEntries((wcRaw.meta.crimeTypes || []).map((c) => [c.key, c.label]));
   crimeType = crimeTypes[0];
-
-  // Reorder the province [ city (in Cape Town's own station order), then rural ] so Cape Town's crime
-  // dots form the contiguous conserved slice [0, CT_COUNT) that lines up dot-for-dot with the detail build.
-  const ctOrder = new Map(ctRaw.stations.map((s, i) => [norm(s.name), i]));
-  const rural = wcRaw.stations.filter((s) => norm(s.dc) !== 'city of cape town');
-  const city = wcRaw.stations.filter((s) => norm(s.dc) === 'city of cape town')
-    .sort((a, b) => ctOrder.get(norm(a.name)) - ctOrder.get(norm(b.name)));
-  const provinceData = { ...wcRaw, stations: [...city, ...rural] };
-  wcStations = provinceData.stations;
-  ctStations = ctRaw.stations;
-
   const T = crimeTypes;
-  providers.wc = { raw: buildCrimeLayouts(provinceData, { types: T, mode: 'raw' }), percapita: buildCrimeLayouts(provinceData, { types: T, mode: 'percapita' }) };
-  providers.ct = { raw: buildCrimeLayouts(ctRaw, { types: T, mode: 'raw' }), percapita: buildCrimeLayouts(ctRaw, { types: T, mode: 'percapita' }) };
-  COUNT = providers.wc.raw.count;
-  CT_COUNT = providers.ct.raw.count;
-  RURAL_COUNT = COUNT - CT_COUNT;
-  if (RURAL_COUNT <= 0) console.warn('[wc] conserved-slice sizing looks wrong', { COUNT, CT_COUNT, RURAL_COUNT });
 
-  // Cape Town's DEM height per crime dot (CT_COUNT-sized) — kept for the terrain view (crime climbs the
-  // relief inside Cape Town). Grab it BEFORE stripping z below.
+  // Detail data per drillable region — Cape Town from its own capetown.json (rich + DEM), the five
+  // other districts from wc-districts.json.
+  const detailData = { ct: ctRaw };
+  // The five district detail objects carry stations + structure but no `meta` (it lives top-level in
+  // wc-districts.json). buildCrimeLayouts needs data.meta.years, so graft the province meta on — it has
+  // identical years + crimeTypes (verified). Cape Town brings its own richer meta.
+  for (const rk of DETAIL_REGIONS) if (rk !== 'ct') detailData[rk] = { ...wcDist.districts[rk], meta: wcRaw.meta };
+
+  // Order the province stations BY DISTRICT (Cape Town first), each district in its own detail's station
+  // order, so every district's crime dots form a contiguous conserved SLICE that lines up dot-for-dot with
+  // that district's detail build. stationsByRegion holds each region's own station list (hover + click).
+  const orderedStations = [];
+  for (const rk of DETAIL_REGIONS) {
+    const order = new Map(detailData[rk].stations.map((s, i) => [norm(s.name), i]));
+    const provStations = wcRaw.stations.filter((s) => norm(s.dc) === REGION_META[rk].dc)
+      .sort((a, b) => order.get(norm(a.name)) - order.get(norm(b.name)));
+    orderedStations.push(...provStations);
+    stationsByRegion[rk] = detailData[rk].stations;
+  }
+  const provinceData = { ...wcRaw, stations: orderedStations };
+  stationsByRegion.wc = orderedStations;
+
+  // Builds: the province (all 150, district-ordered) + each district's own detail.
+  providers.wc = { raw: buildCrimeLayouts(provinceData, { types: T, mode: 'raw' }), percapita: buildCrimeLayouts(provinceData, { types: T, mode: 'percapita' }) };
+  for (const rk of DETAIL_REGIONS) providers[rk] = { raw: buildCrimeLayouts(detailData[rk], { types: T, mode: 'raw' }), percapita: buildCrimeLayouts(detailData[rk], { types: T, mode: 'percapita' }) };
+  COUNT = providers.wc.raw.count;
+
+  // Each district's dot SLICE in the province field (cumulative; a district's dot count = its own build's
+  // count, which matches the province slice — same stations, same crime data → same K).
+  let cur = 0;
+  for (const rk of DETAIL_REGIONS) { const c = providers[rk].raw.count; slices[rk] = [cur, c]; cur += c; }
+  if (cur !== COUNT) console.warn('[wc] district slices don\'t sum to COUNT', { cur, COUNT });
+  const CT_COUNT = providers.ct.raw.count; // Cape Town's slice = [0, CT_COUNT) (it's first)
+
+  // Cape Town's DEM height per crime dot — kept for the terrain view (crime climbs the relief). Grab it
+  // BEFORE stripping z below.
   const ctZ = providers.ct.raw.layouts[crimeType][0].z || new Float32Array(CT_COUNT);
 
-  // buildCrimeLayouts tags each map layout with a per-build `z` (Cape Town's is CT_COUNT-sized because
-  // capetown.json carries a DEM). Uploading that as aZ onto the COUNT-sized shared field would break its
-  // draw. Strip it; terrain height instead rides the field's aZ, which we set ONCE below (city slice =
-  // Cape Town heights, rural = 0). uZScale drives the lift — 0 in the province (flat), raised in Cape Town.
-  for (const reg of ['wc', 'ct']) for (const mode of ['raw', 'percapita']) {
-    const b = providers[reg][mode];
+  // buildCrimeLayouts tags each map layout with a per-build `z` (Cape Town's, because capetown.json carries
+  // a DEM). Uploading that as aZ onto the COUNT-sized shared field would break its draw. Strip it; terrain
+  // height instead rides the field's aZ, set ONCE below (CT slice = Cape Town heights, everything else = 0).
+  // uZScale drives the lift — 0 everywhere flat, raised only in Cape Town.
+  for (const rk of ['wc', ...DETAIL_REGIONS]) for (const mode of ['raw', 'percapita']) {
+    const b = providers[rk][mode];
     for (const ty of Object.keys(b.layouts)) for (const L of b.layouts[ty]) delete L.z;
   }
 
-  // Rural break-away rest — the province's rural dots pushed out ×2.5 (off-frame), density 0. Where rural
-  // crime waits while you're inside Cape Town; the drill flies them out to here (and back on the way out).
-  ruralAway = { positions: new Float32Array(RURAL_COUNT * 2), density: new Float32Array(RURAL_COUNT) };
+  // Break-away rest — ALL province dots pushed out ×2.5 (off-frame), density 0. Drilling into a district
+  // flies every OTHER district's dots out to here (and back on the way out); lift() overwrites the active
+  // district's slice with its detail.
+  awayAll = { positions: new Float32Array(COUNT * 2), density: new Float32Array(COUNT) };
   const ref = providers.wc.raw.layouts[crimeType][0].positions;
-  for (let i = 0; i < RURAL_COUNT * 2; i++) ruralAway.positions[i] = ref[CT_COUNT * 2 + i] * 2.5;
+  for (let i = 0; i < COUNT * 2; i++) awayAll.positions[i] = ref[i] * 2.5;
 
-  // Structure poses — province outline ⇄ Cape Town outline, cycled to the province's dot budget so the
-  // detail frame is a DENSE line (not sparse). One conserved pool reconfigures between them.
+  // Structure poses — the province outline + one per district (its own detail outline, cycled up to the
+  // province's dot budget so every frame is a DENSE line). One conserved pool reconfigures between them.
   structN = wcRaw.structure.length / 2;
-  provinceOutline = { positions: Float32Array.from(wcRaw.structure), density: new Float32Array(structN).fill(0.4) };
-  const ctN = ctRaw.structure.length / 2, ctPos = new Float32Array(structN * 2);
-  for (let i = 0; i < structN; i++) {
-    const j = (i % ctN) * 2;
-    ctPos[i * 2] = ctRaw.structure[j] + (Math.random() - 0.5) * 1.4;
-    ctPos[i * 2 + 1] = ctRaw.structure[j + 1] + (Math.random() - 0.5) * 1.4;
-  }
-  ctOutline = { positions: ctPos, density: new Float32Array(structN).fill(0.4) };
+  outlines.wc = { positions: Float32Array.from(wcRaw.structure), density: new Float32Array(structN).fill(0.4) };
+  for (const rk of DETAIL_REGIONS) outlines[rk] = cycleOutline(detailData[rk].structure, structN);
 
   field = new PointField(COUNT, { glow: true, size: 1.9 });
   field.setPixelRatio(renderer.getPixelRatio());
@@ -336,12 +375,12 @@ function frameUnion(a, b) {
 function landRegion() {
   layouts = layoutsByType[crimeType];
   const next = (yi + 1) % years.length;
-  if (region === 'ct') {
-    field.setSource(liftCt(layouts[yi]));
-    field.setTarget(liftCt(layouts[next]));
-  } else {
+  if (region === 'wc') {
     field.setSource(layouts[yi]);
     field.setTarget(layouts[next]);
+  } else {
+    field.setSource(lift(region, layouts[yi]));
+    field.setTarget(lift(region, layouts[next]));
   }
   field.setT(0); t = 0; morphStart = -1;
   const outline = structRest();
@@ -465,7 +504,7 @@ function flipCrime(dir) {
 // HUD text for a crime + the current year (defaults to the live crime).
 function refreshHud(type = crimeType) {
   const rate = dataMode === 'percapita';
-  if (regionEl) regionEl.textContent = region === 'ct' ? 'Cape Town' : 'Western Cape';
+  if (regionEl) regionEl.textContent = (REGION_META[region] || REGION_META.wc).name;
   refreshHint();
   if (triPieMode) {
     if (crimeEl) crimeEl.textContent = 'robbery · burglary · murder' + (rate ? ' · per capita' : '');
@@ -606,7 +645,7 @@ function goToMap() {
     refreshHud();
     return;
   }
-  if (region === 'ct') startDrill('wc'); // already on the Cape Town map → M drills back out
+  if (region !== 'wc') startDrill('wc'); // already in a district → M drills back out to the province
 }
 
 // ---- THE DRILL — one conserved swarm each, camera dead still (wcMain.js's grammar) ------------------
@@ -623,12 +662,12 @@ function startDrill(to) {
     if (field) field.setZScale(0);
   }
   drilling = true; drillTo = to; drillStart = performance.now(); playing = false;
-  if (hintEl) hintEl.textContent = to === 'ct' ? 'blooming into Cape Town…' : 'back to the Western Cape…';
+  if (hintEl) hintEl.textContent = to === 'wc' ? 'back to the Western Cape…' : `blooming into ${REGION_META[to].name}…`;
   field.setSource(liveMap(region));
   field.setTarget(liveMap(to));
   field.setStagger(0.62);
   structField.setSource(structCurrent);
-  structField.setTarget(to === 'ct' ? ctOutline : provinceOutline);
+  structField.setTarget(outlines[to]);
   structField.setStagger(0.62);
 }
 
@@ -696,12 +735,12 @@ window.__viz = {
   },
   speed: (ms) => { if (ms != null) { PIE_MS = ms; strDur = ms; } return { pie: PIE_MS, struct: strDur }; },
   station: (name) => {
-    const s = (region === 'ct' ? ctStations : wcStations).find((s) => s.name.toLowerCase().includes(name.toLowerCase()));
+    const s = (stationsByRegion[region] || stationsByRegion.wc).find((s) => s.name.toLowerCase().includes(name.toLowerCase()));
     return s ? { name: s.name, x: s.x, y: s.y, dc: s.dc, pop: s.pop } : 'not found';
   },
   matte: (hex) => { if (structField) structField.material.uniforms.uMatte.value.set(hex); },
   hideData: (hide = true) => { if (field) field.points.visible = !hide; },
-  region: (r) => { if (r === 'wc' || r === 'ct') startDrill(r); return region; }, // debug: force a drill
+  region: (r) => { if (REGION_META[r]) startDrill(r); return region; }, // debug: force a drill into any region
   terrain: () => { toggleTerrain(); return { terrainMode, region }; },            // debug: toggle Cape Town relief
 };
 
@@ -713,7 +752,7 @@ tip.style.cssText = 'position:fixed;pointer-events:none;z-index:20;padding:4px 9
   'transition:opacity .12s;transform:translate(-50%,calc(-100% - 14px))';
 app.appendChild(tip);
 const _hv = new THREE.Vector3();
-const activeStations = () => (region === 'ct' ? ctStations : wcStations);
+const activeStations = () => stationsByRegion[region] || stationsByRegion.wc;
 function precinctAnchors() {
   const out = [], st = activeStations();
   if (triPieMode && lastTriPie) {
@@ -733,10 +772,10 @@ function precinctAnchors() {
       for (const rr of [0.32, 0.58, 0.86]) out.push({ si, x: Math.cos(a) * PIE_R * rr, y: Math.sin(a) * PIE_R * rr });
     }
   } else {
-    const lift = (region === 'ct' && terrainMode) ? zScaleCur : 0; // ride the relief in Cape Town terrain
+    const zLift = (region === 'ct' && terrainMode) ? zScaleCur : 0; // ride the relief in Cape Town terrain
     for (let si = 0; si < st.length; si++) {
       const s = st[si];
-      out.push({ si, x: s.x, y: s.y, z: lift ? demHeightAt(s.x, s.y) * lift : 0 });
+      out.push({ si, x: s.x, y: s.y, z: zLift ? demHeightAt(s.x, s.y) * zLift : 0 });
     }
   }
   return out;
@@ -801,10 +840,10 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   if (pieMode) return;                               // no drill from the pie
   if (terrainMode) { toggleTerrain(); return; }      // tap in Cape Town terrain → back to the flat map
   if (region === 'wc') {
-    const { s, d } = nearestStation(wcStations, e.clientX, e.clientY);
-    if (s && d < 120 && norm(s.dc) === 'city of cape town') startDrill('ct');
+    const { s, d } = nearestStation(stationsByRegion.wc, e.clientX, e.clientY);
+    if (s && d < 120) { const rk = dcToRegion(s.dc); if (rk) startDrill(rk); } // click near a station → drill its district
   } else {
-    startDrill('wc');                                // tap anywhere on the Cape Town map → back out
+    startDrill('wc');                                // tap anywhere in a district → back out to the province
   }
 });
 function nearestStation(sts, cx, cy) {
