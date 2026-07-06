@@ -12,6 +12,8 @@ import { defineConfig } from 'vite';
 const single = process.env.SINGLE === '1';
 export default defineConfig(({ command }) => ({
   base: command === 'build' ? '/crime-data-viz/' : '/',
+  server: { port: Number(process.env.PORT) || 5173 }, // honour a harness-assigned port (PORT env) when set
+
   build: single
     ? { rollupOptions: { output: { inlineDynamicImports: true, manualChunks: undefined } } }
     : {},
