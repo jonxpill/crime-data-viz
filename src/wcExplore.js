@@ -703,6 +703,7 @@ function startDrill(to) {
     if (field) field.setZScale(0);
   }
   drilling = true; drillTo = to; drillStart = performance.now(); playing = false;
+  labelLayer.style.opacity = '0'; // labels leave with the outline (tick's drill branch skips updateLabels)
   if (hintEl) hintEl.textContent = to === 'wc' ? 'back to the Western Cape…' : `blooming into ${REGION_META[to].name}…`;
   field.setSource(liveMap(region));
   field.setTarget(liveMap(to));
@@ -731,6 +732,28 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
   else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); } // Cape Town relief (no-op in the province)
 });
+
+// HUD chips → the SAME actions as the keys (touch parity: on a phone the keyboard toolkit doesn't
+// exist). Guards mirror the keydown handler exactly: input is quiet mid-drill, and the 3-pie only
+// listens to map/year/compare/per-capita. Blur after click so a focused chip can't re-fire on Space.
+const CHIP_ACTIONS = {
+  play: () => { if (triPieMode) return; playing = !playing; if (playing) { holdUntil = performance.now(); if (pieMode) setYearPair(yi); } },
+  yearPrev: () => stepYear(-1),
+  yearNext: () => stepYear(1),
+  crimeUp: () => { if (triPieMode) return; flipCrime(1); },
+  crimeDown: () => { if (triPieMode) return; flipCrime(-1); },
+  map: () => goToMap(),
+  pie: () => { if (triPieMode) return; togglePie(); },
+  compare: () => toggleTriPie(),
+  percapita: () => toggleMode(),
+  terrain: () => toggleTerrain(), // guards itself (needs a loaded DEM, no pies, no drill)
+};
+for (const el of document.querySelectorAll('.hud [data-act]')) {
+  el.addEventListener('click', () => {
+    if (!drilling) { const f = CHIP_ACTIONS[el.dataset.act]; if (f) f(); }
+    el.blur();
+  });
+}
 
 // Debug hook (region-aware).
 window.__viz = {
@@ -862,6 +885,64 @@ function updateTooltip() {
 }
 renderer.domElement.addEventListener('mousemove', (e) => { mouseX = e.clientX; mouseY = e.clientY; updateTooltip(); });
 renderer.domElement.addEventListener('mouseleave', () => { mouseX = mouseY = null; tip.style.opacity = '0'; });
+
+// ---- place labels — a whisper of typography (structure-role: grey, matte, recessive) ----------------
+// Sense of place: the province names its six districts; a district names its towns (ranked by all-years
+// crime so the story-carrying hotspots win, greedy collision-pruned so dense views stay calm). Labels
+// exist only AT REST on a flat map — they fade during drills/pies/terrain — and are pointer-transparent
+// so they can never block a tap. They must whisper: small, grey, no glow — frame, never data.
+const labelLayer = document.createElement('div');
+labelLayer.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:5;opacity:0;transition:opacity .5s ease';
+document.body.appendChild(labelLayer);
+const labelEls = [], LABEL_MAX = 22;
+let labelSpecs = [], labelsRegion = null;
+function buildLabelSpecs() {
+  labelsRegion = region;
+  const total = (s) => { let n = 0; for (const ty of crimeTypes) for (const y of years) n += (s.crimes[ty] && s.crimes[ty][y]) || 0; return n; };
+  if (region === 'wc') {
+    labelSpecs = DETAIL_REGIONS.map((rk) => {   // six district names, each at the mean of its stations
+      const sts = stationsByRegion.wc.filter((s) => norm(s.dc) === REGION_META[rk].dc);
+      const x = sts.reduce((a, s) => a + s.x, 0) / sts.length, y = sts.reduce((a, s) => a + s.y, 0) / sts.length;
+      return { name: REGION_META[rk].name, x, y, rank: sts.reduce((a, s) => a + total(s), 0), big: true };
+    });
+  } else {
+    labelSpecs = (stationsByRegion[region] || []).map((s) => ({ name: s.name, x: s.x, y: s.y, rank: total(s) }));
+  }
+  labelSpecs.sort((a, b) => b.rank - a.rank);
+  labelSpecs = labelSpecs.slice(0, LABEL_MAX);
+  while (labelEls.length < labelSpecs.length) {
+    const el = document.createElement('div');
+    el.style.cssText = 'position:absolute;transform:translate(-50%,-150%);white-space:nowrap;' +
+      'font:500 11px ui-monospace,"SF Mono",Menlo,monospace;letter-spacing:.14em;text-transform:uppercase;' +
+      'color:#9aa7bd;opacity:.78;text-shadow:0 1px 3px rgba(0,0,0,.95),0 0 9px rgba(0,0,0,.85)';
+    labelLayer.appendChild(el); labelEls.push(el);
+  }
+}
+const _lv = new THREE.Vector3();
+function updateLabels() {
+  const show = !drilling && !pieMode && !triPieMode && !terrainMode && strProg >= 1 && trProg >= 1;
+  labelLayer.style.opacity = show ? '1' : '0';
+  if (!show) return;
+  if (labelsRegion !== region) buildLabelSpecs();
+  fieldGroup.updateWorldMatrix(true, false);
+  const W = window.innerWidth, H = window.innerHeight, placed = [];
+  for (let i = 0; i < labelEls.length; i++) {
+    const el = labelEls[i], sp = labelSpecs[i];
+    if (!sp) { el.style.display = 'none'; continue; }
+    _lv.set(sp.x, sp.y, 0);
+    fieldGroup.localToWorld(_lv); _lv.project(camera);
+    const sx = (_lv.x * 0.5 + 0.5) * W, sy = (-_lv.y * 0.5 + 0.5) * H;
+    // greedy collision by rank: an approx text box; later (lower-rank) labels yield to placed ones
+    const w = sp.name.length * 8.2 + 16, h = 19;
+    let hit = sx < 8 || sx > W - 8 || sy < 16 || sy > H - 8;
+    if (!hit) for (const p of placed) { if (Math.abs(sx - p.x) < (w + p.w) / 2 && Math.abs(sy - p.y) < h) { hit = true; break; } }
+    if (hit) { el.style.display = 'none'; continue; }
+    placed.push({ x: sx, y: sy, w });
+    if (el.textContent !== sp.name) el.textContent = sp.name;
+    if (el.__big !== sp.big) { el.__big = sp.big; el.style.fontSize = sp.big ? '12px' : '11px'; el.style.opacity = sp.big ? '.85' : '.78'; }
+    el.style.left = sx + 'px'; el.style.top = sy + 'px'; el.style.display = 'block';
+  }
+}
 
 // Click: (1) in the 3-pie, resolve to the clicked pie; (2) on the province MAP, clicking Cape Town's
 // cluster drills in; (3) on the Cape Town MAP, a tap drills back out. A tap is told from a pan by move distance.
@@ -1021,6 +1102,7 @@ function tick() {
   fieldGroup.rotation.x = tiltCur;
   controls.update();
   updateTooltip();
+  updateLabels();
   updateTriLabels();
 
   render();
