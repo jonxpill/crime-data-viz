@@ -26,6 +26,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { geoMercator } from 'd3-geo';
 import { fromFile } from 'geotiff';
+import { mergeSupplement } from './saps-supplement.mjs';
 
 const ROOT = decodeURIComponent(new URL('..', import.meta.url).pathname);
 const read = (p) => JSON.parse(readFileSync(ROOT + p, 'utf8'));
@@ -75,7 +76,9 @@ for (let i = 1; i < csvLines.length; i++) {
     st.crimes[cr.key][yr] = (st.crimes[cr.key][yr] || 0) + v;
   }
 }
-const YEARS = [...yearSet].sort((a, b) => a - b);                        // 2008 .. 2022
+// Extend past DataFirst's 2022/23 with the SAPS releases — same shared merge door as bake-wc.mjs.
+mergeSupplement(stationMap, yearSet, ROOT);
+const YEARS = [...yearSet].sort((a, b) => a - b);                        // 2008 .. 2025
 const YEAR_LABELS = YEARS.map((y) => `${y}/${String((y + 1) % 100).padStart(2, '0')}`); // "2008/09"
 const stationList = [...stationMap.values()];
 
@@ -242,8 +245,8 @@ const asset = {
   meta: {
     title: 'Cape Town — crime',
     simulated: false,
-    source: 'SAPS Annual Crime Records (robbery = aggravated + common; murder), 2008/09–2022/23, DataFirst cat. 1012. Geography: WC GIS precincts.',
-    note: 'Counts, coordinates, precinct boundaries AND per-station population are REAL — population is a WorldPop 2020 → precinct zonal join, so per-capita rates are honest.',
+    source: 'SAPS Annual Crime Records 2008/09–2022/23 (DataFirst cat. 1012) + SAPS annual 2024/25 and quarterly 2025/26 releases (saps.gov.za; 2025/26 = summed quarterlies, unaudited). Geography: WC GIS precincts.',
+    note: 'Counts, coordinates, precinct boundaries AND per-station population are REAL — population is a WorldPop 2020 → precinct zonal join, so per-capita rates are honest. Post-2023 stations (Samora Machel, Makhaza) are folded into the old-boundary precinct that contains them (Philippi, Harare); Samora Machel recorded separately from 2018/19, backfilled onto Philippi so that polygon’s history is continuous.',
     crimeTypes: CRIMES.map(({ key, label }) => ({ key, label })),
     years: YEARS,
     yearLabels: YEAR_LABELS,

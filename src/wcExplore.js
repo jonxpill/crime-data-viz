@@ -563,8 +563,8 @@ function updateFlag() {
   if (!flagEl || !yearLabels.length) return;
   const span = `${yearLabels[0]}–${yearLabels.at(-1)}`;
   flagEl.textContent = dataMode === 'percapita'
-    ? `◆ crime: SAPS via DataFirst · population: WorldPop 2020 · CC-BY · ${span}`
-    : `◆ SAPS crime records via DataFirst (CC-BY) · ${span}`;
+    ? `◆ crime: SAPS (DataFirst + saps.gov.za) · population: WorldPop 2020 · ${span}`
+    : `◆ SAPS crime records · DataFirst + saps.gov.za · ${span} (25/26 unaudited)`;
 }
 
 // Morph off the map into a robbery pie and back. Data swarms into the wedges, structure into the ring

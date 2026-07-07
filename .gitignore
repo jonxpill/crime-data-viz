@@ -42,3 +42,6 @@ data/raw/*.tif
 data/raw/sal-pop.csv
 # AWS Terrain Tiles (z10) — re-downloadable elevation DEM (an inline # is NOT a gitignore comment)
 data/raw/terrain/
+# SAPS workbooks (2024/25 annual + 2025/26 quarterlies) + the parsed supplement — re-downloadable &
+# re-derivable: node pipeline/fetch-saps.mjs && node pipeline/parse-saps.mjs
+data/raw/saps/

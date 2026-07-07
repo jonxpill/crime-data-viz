@@ -259,3 +259,13 @@ specific instruments (deferred) · where it lives / distribution · a name.
 - **A shared GPU attribute wants ONE writer.** The engine auto-uploads `aZ` from any layout carrying `z`;
   with N regions each sizing `z` differently, that fights a correct value. Strip `z` at the source so the
   engine never touches `aZ`, and let a single `fillAZ()` own it — one writer, no size races. (?)
+- **Before merging two sources, decompose their delta until every part has a NAME.** The aggregate
+  cross-check said "+165 murders, close enough (~1%)"; per-station instrumentation split it into "+129 = a
+  station DataFirst never carried" (a structural hole needing backfill) "+36 = SAPS revisions" (documented,
+  ignorable). Merging on the aggregate would have baked a fake 2023 cliff into Philippi. An unexplained
+  delta is not an error bar — it's an unread story. (?)
+- **When an admin unit splits but your geometry predates the split, fold the child INTO the parent —
+  parent+child is the true count for the polygon you actually draw.** Dropping the new unit fakes a decline
+  in the parent; showing it separately needs geometry you don't have. And check whether the child recorded
+  separately BEFORE your snapshot's end (Samora Machel since 2018/19) — if so, backfill its history too, or
+  the series has a hole exactly where the fold begins. (?)

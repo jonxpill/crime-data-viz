@@ -12,7 +12,8 @@
     "deploy": "npm run build && npx --yes gh-pages -d dist -t -m deploy"
   },
   "devDependencies": {
-    "vite": "^6.0.7"
+    "vite": "^6.0.7",
+    "xlsx": "^0.18.5"
   },
   "dependencies": {
     "@turf/turf": "^7.3.5",

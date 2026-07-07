@@ -16,6 +16,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { geoMercator } from 'd3-geo';
 import { fromFile } from 'geotiff';
+import { mergeSupplement } from './saps-supplement.mjs';
 
 const ROOT = decodeURIComponent(new URL('..', import.meta.url).pathname);
 const read = (p) => JSON.parse(readFileSync(ROOT + p, 'utf8'));
@@ -46,6 +47,9 @@ for (let i = 1; i < csvLines.length; i++) {
   if (!st) { st = { name: c[idx.station], key, lng: +c[idx.longitude], lat: +c[idx.latitude], dc: (c[idx.dc_mn] || '').trim(), crimes: {} }; for (const cr of crimeIdx) st.crimes[cr.key] = {}; stationMap.set(key, st); }
   for (const cr of crimeIdx) { const v = cr.ii.reduce((a, j) => a + (Number(c[j]) || 0), 0); st.crimes[cr.key][yr] = (st.crimes[cr.key][yr] || 0) + v; }
 }
+// Extend past DataFirst's 2022/23 with the SAPS releases (2023/24 + 2024/25 audited, 2025/26 = summed
+// quarterlies, unaudited) — parsed + trust-checked by parse-saps.mjs, merged through ONE shared door.
+mergeSupplement(stationMap, yearSet, ROOT);
 const YEARS = [...yearSet].sort((a, b) => a - b);
 const YEAR_LABELS = YEARS.map((y) => `${y}/${String((y + 1) % 100).padStart(2, '0')}`);
 const stationList = [...stationMap.values()].filter((s) => s.lng && s.lat && !Number.isNaN(s.lng) && !Number.isNaN(s.lat));
@@ -197,8 +201,8 @@ const districts = [...new Set(stations.map((s) => s.dc))].sort();
 
 const asset = {
   meta: { title: 'Western Cape — crime', simulated: false,
-    source: 'SAPS Annual Crime Records 2008/09–2022/23 (DataFirst). Geography: WC GIS precincts.',
-    note: 'Counts, coordinates, precinct boundaries AND per-station population are REAL — population is a WorldPop 2020 → precinct zonal join (national raster), so per-capita rates are honest.',
+    source: 'SAPS Annual Crime Records 2008/09–2022/23 (DataFirst cat. 1012) + SAPS annual 2024/25 and quarterly 2025/26 releases (saps.gov.za; 2025/26 = summed quarterlies, unaudited). Geography: WC GIS precincts.',
+    note: 'Counts, coordinates, precinct boundaries AND per-station population are REAL — population is a WorldPop 2020 → precinct zonal join (national raster), so per-capita rates are honest. Post-2023 stations (Samora Machel, Makhaza) are folded into the old-boundary precinct that contains them (Philippi, Harare); Samora Machel recorded separately from 2018/19, backfilled onto Philippi so that polygon’s history is continuous. SAPS back-year revisions (~1–2%) are NOT applied to the DataFirst years.',
     crimeTypes: CRIMES.map(({ key, label }) => ({ key, label })), years: YEARS, yearLabels: YEAR_LABELS,
     box: { w: W, h: H }, districts },
   stations, structure,

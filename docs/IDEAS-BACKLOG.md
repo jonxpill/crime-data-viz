@@ -76,6 +76,11 @@
   the field between raw counts and true rates (dense townships shrink, low-population CBD/Camps-Bay swell);
   rollover + flag credit switch with the mode. The population proxy is gone.
 
+- **Monthly granularity, 2022→2026 (raised 2026-07-07, not agreed)** — the SAPS quarterly workbooks
+  (data/raw/saps/) carry per-station MONTHLY columns for every month since Jan 2022: a much finer clock
+  than the annual scrub (seasonality, festive-season spikes, a month-by-month swarm). Parser sums
+  differently; the engine needs nothing new.
+
 ## Flag (foundation-first hygiene)
 - **Honesty is a build-time discipline, not a final polish** — per-capita and the counterweights must be in
   from the first real-data stage, or the default fear-map reading creeps in. Don't defer them.
