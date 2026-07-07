@@ -322,7 +322,7 @@ async function init() {
   field.points.layers.enable(BLOOM_LAYER);
   fieldGroup.add(field.points);
 
-  structField = new PointField(structN, { glow: false, size: structDotSize, matte: '#6fe0a0' });
+  structField = new PointField(structN, { glow: false, size: structDotSize, matte: '#566d78' }); // desaturated slate — structure must RECEDE (the old green competed with the data)
   structField.setPixelRatio(renderer.getPixelRatio());
   structField.setDrift(0.0);
   structField.setMaxSize(7);
@@ -340,7 +340,7 @@ async function init() {
 
   // Terrain relief pool — ONE GX×GY grey field that reconfigures to the active region's relief (hidden
   // until 'T'); reseedTerrain() rebuilds its band + relief target for each region. Seed the province now.
-  terrainField = new PointField(GX * GY, { glow: false, size: terrainDotSize, matte: '#6fe0a0' });
+  terrainField = new PointField(GX * GY, { glow: false, size: terrainDotSize, matte: '#566d78' });
   terrainField.setPixelRatio(renderer.getPixelRatio());
   terrainField.setDrift(0.0);
   terrainField.setMaxSize(7);
@@ -808,7 +808,7 @@ window.__viz = {
     const s = (stationsByRegion[region] || stationsByRegion.wc).find((s) => s.name.toLowerCase().includes(name.toLowerCase()));
     return s ? { name: s.name, x: s.x, y: s.y, dc: s.dc, pop: s.pop } : 'not found';
   },
-  matte: (hex) => { if (structField) structField.material.uniforms.uMatte.value.set(hex); },
+  matte: (hex) => { for (const f of [structField, terrainField]) if (f) f.material.uniforms.uMatte.value.set(hex); },
   hideData: (hide = true) => { if (field) field.points.visible = !hide; },
   region: (r) => { if (REGION_META[r]) startDrill(r); return region; }, // debug: force a drill into any region
   terrain: () => { toggleTerrain(); return { terrainMode, region }; },            // debug: toggle the current region's relief
