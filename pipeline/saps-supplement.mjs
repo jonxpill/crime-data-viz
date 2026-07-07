@@ -18,15 +18,15 @@ export function mergeSupplement(stationMap, yearSet, root) {
   catch { throw new Error(`missing ${path} — run: node pipeline/fetch-saps.mjs && node pipeline/parse-saps.mjs`); }
 
   const NEW_YEARS = [2023, 2024, 2025];
-  const CRIMES = ['robbery', 'burglary', 'murder'];
+  const CRIMES = Object.keys(supp.meta.composites); // whatever parse-saps.mjs baked (6 as of 2026-07)
   let merged = 0; const missing = [];
   for (const [key, st] of stationMap) {  // map key = norm(station name) in both bakes
     const s = supp.stations[key];
     if (!s) { missing.push(st.name); continue; }
     merged++;
-    for (const cr of CRIMES) for (const y of NEW_YEARS) st.crimes[cr][y] = (s[cr] && s[cr][y]) || 0;
+    for (const cr of CRIMES) { if (!st.crimes[cr]) continue; for (const y of NEW_YEARS) st.crimes[cr][y] = (s[cr] && s[cr][y]) || 0; } // skip crimes this bake doesn't carry
     const bf = supp.backfill[key];
-    if (bf) for (const cr of Object.keys(bf)) for (const [y, v] of Object.entries(bf[cr])) st.crimes[cr][y] = (st.crimes[cr][y] || 0) + v;
+    if (bf) for (const cr of Object.keys(bf)) { if (!st.crimes[cr]) continue; for (const [y, v] of Object.entries(bf[cr])) st.crimes[cr][y] = (st.crimes[cr][y] || 0) + v; }
   }
   for (const y of NEW_YEARS) yearSet.add(y);
   if (missing.length) console.warn(`  supplement MISSING for ${missing.length} station(s): ${missing.join(', ')} — their 2023–2025 stay 0`);

@@ -41,6 +41,9 @@ const CRIMES = [
   { key: 'robbery',  label: 'robbery',  cols: ['aggr_robbery', 'common_robbery'] },
   { key: 'burglary', label: 'burglary', cols: ['burglary_res'] },
   { key: 'murder',   label: 'murder',   cols: ['murder'] },
+  { key: 'sexoff',     label: 'sexual offences', cols: ['sexual_offences'] },  // the source's own aggregate (overlap-verified)
+  { key: 'commercial', label: 'commercial crime', cols: ['commercial_crime'] },
+  { key: 'carjacking', label: 'carjacking', cols: ['carjacking'] },            // also a subcategory of aggravated robbery (inside the robbery lens)
 ];
 
 // Per-station population is now the REAL WorldPop → precinct zonal join (computed below, after the

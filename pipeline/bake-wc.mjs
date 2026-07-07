@@ -28,6 +28,9 @@ const CRIMES = [
   { key: 'robbery',  label: 'robbery',  cols: ['aggr_robbery', 'common_robbery'] },
   { key: 'burglary', label: 'burglary', cols: ['burglary_res'] },
   { key: 'murder',   label: 'murder',   cols: ['murder'] },
+  { key: 'sexoff',     label: 'sexual offences', cols: ['sexual_offences'] },  // the source's own aggregate (overlap-verified)
+  { key: 'commercial', label: 'commercial crime', cols: ['commercial_crime'] },
+  { key: 'carjacking', label: 'carjacking', cols: ['carjacking'] },            // also a subcategory of aggravated robbery (inside the robbery lens)
 ];
 // The six Western Cape district municipalities (dc_mn), incl. the City of Cape Town metro.
 const WC_DISTRICTS = new Set(['city of cape town', 'west coast', 'cape winelands', 'garden route', 'overberg', 'central karoo']);

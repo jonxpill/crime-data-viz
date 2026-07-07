@@ -269,7 +269,15 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
     const density = new Float32Array(COUNT);
     const rng = mulberry32(0x3c1a5b);
     const dtheta = TAU / slots.length;
-    const centers = types.map((type, ci) => ({ type, cx: (ci - (types.length - 1) / 2) * gap, cy: 0 }));
+    // Up to 3 crimes sit in a row (the classic 3-compare); more wrap into a grid (6 → 2×3) so the
+    // compare view still FITS the framed lens instead of stretching into an off-screen strip.
+    const cols = types.length <= 3 ? types.length : Math.ceil(types.length / 2);
+    const rows = Math.ceil(types.length / cols);
+    const centers = types.map((type, ci) => ({
+      type,
+      cx: ((ci % cols) - (cols - 1) / 2) * gap,
+      cy: ((rows - 1) / 2 - Math.floor(ci / cols)) * gap, // first row on top, reading order
+    }));
     const activeXY = [], activeIdx = [];
     for (let si = 0; si < slots.length; si++) {
       const sl = slots[si];

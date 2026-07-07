@@ -548,7 +548,7 @@ function refreshHud(type = crimeType) {
   if (regionEl) regionEl.textContent = (REGION_META[region] || REGION_META.wc).name;
   refreshHint();
   if (triPieMode) {
-    if (crimeEl) crimeEl.textContent = 'robbery · burglary · murder' + (rate ? ' · per capita' : '');
+    if (crimeEl) crimeEl.textContent = `all ${crimeTypes.length} crimes` + (rate ? ' · per capita' : '');
     if (yearEl) yearEl.textContent = yearLabels[yi];
     if (countEl) countEl.textContent = 'click a pie to focus it';
     return;
@@ -989,16 +989,20 @@ function nearestStation(sts, cx, cy) {
 }
 
 // Grey labels under each pie in the 3-pie compare.
-const triLabels = [0, 1, 2].map(() => {
-  const d = document.createElement('div');
-  d.style.cssText = 'position:fixed;pointer-events:none;z-index:19;color:#8b98ac;' +
-    'font:12px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em;' +
-    'opacity:0;transition:opacity .2s;transform:translate(-50%,0)';
-  app.appendChild(d);
-  return d;
-});
+const triLabels = []; // one label per compare-pie, pool grows to however many crimes are baked
+function ensureTriLabels(n) {
+  while (triLabels.length < n) {
+    const d = document.createElement('div');
+    d.style.cssText = 'position:fixed;pointer-events:none;z-index:19;color:#8b98ac;' +
+      'font:12px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em;' +
+      'opacity:0;transition:opacity .2s;transform:translate(-50%,0)';
+    app.appendChild(d);
+    triLabels.push(d);
+  }
+}
 function updateTriLabels() {
   if (!triPieMode || !lastTriPie) { for (const d of triLabels) d.style.opacity = '0'; return; }
+  ensureTriLabels(lastTriPie.centers.length);
   const rect = renderer.domElement.getBoundingClientRect();
   fieldGroup.updateWorldMatrix(true, false);
   lastTriPie.centers.forEach((c, i) => {

@@ -31,9 +31,14 @@ const COMPOSITES = {
   robbery: ['Robbery with aggravating circumstances', 'Common robbery'],
   burglary: ['Burglary at residential premises'],
   murder: ['Murder'],
+  sexoff: ['Sexual offences'],        // the source's own aggregate — overlap-verified vs DataFirst below
+  commercial: ['Commercial crime'],
+  carjacking: ['Carjacking'],         // NB: also a subcategory of aggravated robbery (inside 'robbery')
 };
 const catToComposite = new Map();
 for (const [k, cats] of Object.entries(COMPOSITES)) for (const c of cats) catToComposite.set(c, k);
+const zeroComps = () => Object.fromEntries(Object.keys(COMPOSITES).map((k) => [k, 0]));
+const mkStation = (name) => ({ name, ...Object.fromEntries(Object.keys(COMPOSITES).map((k) => [k, {}])) });
 
 // Stations absent from the DataFirst/GIS snapshot get folded back into the precinct whose polygon
 // contains them: our map draws the OLD boundaries, so parent+child is the correct count for the shape we
@@ -53,7 +58,10 @@ const WC_DISTRICTS = new Set(['city of cape town', 'west coast', 'cape winelands
 const csvLines = readFileSync(ROOT + 'pipeline/sapacr-2008-2023-v1.1/sapacr-2008-2023-v1.1.csv', 'latin1').trim().split(/\r?\n/);
 const head = parseCSVLine(csvLines[0]);
 const idx = Object.fromEntries(head.map((h, i) => [h, i]));
-const compCols = { robbery: ['aggr_robbery', 'common_robbery'], burglary: ['burglary_res'], murder: ['murder'] };
+const compCols = {
+  robbery: ['aggr_robbery', 'common_robbery'], burglary: ['burglary_res'], murder: ['murder'],
+  sexoff: ['sexual_offences'], commercial: ['commercial_crime'], carjacking: ['carjacking'],
+};
 const csvStations = new Map();               // NORMKEY -> name
 const csvTotals = {};                        // year -> composite -> WC sum
 for (let i = 1; i < csvLines.length; i++) {
@@ -62,7 +70,7 @@ for (let i = 1; i < csvLines.length; i++) {
   const key = norm(c[idx.station]);
   csvStations.set(key, c[idx.station]);
   const yr = parseInt(c[idx.year], 10);
-  const t = (csvTotals[yr] ||= { robbery: 0, burglary: 0, murder: 0 });
+  const t = (csvTotals[yr] ||= zeroComps());
   for (const [k, cols] of Object.entries(compCols)) t[k] += cols.reduce((a, col) => a + (Number(c[idx[col]]) || 0), 0);
 }
 console.log(`DataFirst CSV: ${csvStations.size} WC stations, years ${Object.keys(csvTotals).length}`);
@@ -88,7 +96,7 @@ for (let r = 3; r < aRows.length; r++) {
   sapsNames.set(rawKey, String(row[aSt]));
   const key = REMAP[rawKey] || rawKey;
   if (!csvStations.has(key)) continue;        // new/unknown station — reported below, never guessed in
-  const st = (stations[key] ||= { name: csvStations.get(key), robbery: {}, burglary: {}, murder: {} });
+  const st = (stations[key] ||= mkStation(csvStations.get(key)));
   for (const ylab of A_YEARS) {
     const start = parseInt(ylab, 10);
     const v = Number(row[aYearCol[ylab]]) || 0;
@@ -99,7 +107,7 @@ for (let r = 3; r < aRows.length; r++) {
       // a remapped station's PRE-2023 recording — DataFirst never had it; backfill onto the parent
       (((backfill[key] ||= {})[comp] ||= {})[start] = ((backfill[key][comp] || {})[start] || 0) + v);
     }
-    const t = (annualTotals[start] ||= { robbery: 0, burglary: 0, murder: 0 });
+    const t = (annualTotals[start] ||= zeroComps());
     t[comp] += v;
   }
 }
@@ -130,7 +138,7 @@ for (const q of QUARTERS) {
     const key = REMAP[rawKey] || rawKey;
     if (!csvStations.has(key)) continue;
     wcRows++;
-    const st = (stations[key] ||= { name: csvStations.get(key), robbery: {}, burglary: {}, murder: {} });
+    const st = (stations[key] ||= mkStation(csvStations.get(key)));
     const v = Number(row[iVal]) || 0;
     st[comp][2025] = (st[comp][2025] || 0) + v;
     if (REMAP[rawKey] && v) (((folded[rawKey] ||= {})[comp] ||= {})[2025] = ((folded[rawKey][comp] || {})[2025] || 0) + v);
@@ -159,14 +167,14 @@ console.log('\noverlap cross-check (WC totals · DataFirst vs 2024/25 annual bac
 for (const y of [2015, 2017, 2019, 2021, 2022]) {
   const a = csvTotals[y], b = annualTotals[y];
   const bf = (k) => Object.values(backfill).reduce((s, comps) => s + ((comps[k] || {})[y] || 0), 0);
-  console.log(`  ${y}/${String(y + 1).slice(2)}  ` + ['robbery', 'burglary', 'murder']
+  console.log(`  ${y}/${String(y + 1).slice(2)}  ` + Object.keys(COMPOSITES)
     .map((k) => `${k} ${a[k]}→${b[k]} (+${b[k] - a[k]}, backfill +${bf(k)}, revisions +${b[k] - a[k] - bf(k)})`).join(' · '));
 }
 console.log('\nnew years (WC totals from this parse):');
 for (const y of [2023, 2024, 2025]) {
-  const t = { robbery: 0, burglary: 0, murder: 0 };
+  const t = zeroComps();
   for (const st of Object.values(stations)) for (const k of Object.keys(t)) t[k] += st[k][y] || 0;
-  console.log(`  ${y}/${String(y + 1).slice(2)}  robbery ${t.robbery} · burglary ${t.burglary} · murder ${t.murder}${y === 2025 ? '  (sum of quarterlies, unaudited)' : ''}`);
+  console.log(`  ${y}/${String(y + 1).slice(2)}  ` + Object.keys(t).map((k) => `${k} ${t[k]}`).join(' · ') + (y === 2025 ? '  (sum of quarterlies, unaudited)' : ''));
 }
 
 // ---- 5. write the supplement ----------------------------------------------------------------------
@@ -182,7 +190,7 @@ const out = {
   backfill,
 };
 writeFileSync(RAW + 'wc-supplement.json', JSON.stringify(out));
-console.log(`\nwrote data/raw/saps/wc-supplement.json — ${matched} stations × 3 crimes × 3 new years, backfill for ${Object.keys(backfill).length} station(s)`);
+console.log(`\nwrote data/raw/saps/wc-supplement.json — ${matched} stations × ${Object.keys(COMPOSITES).length} crimes × 3 new years, backfill for ${Object.keys(backfill).length} station(s)`);
 
 function parseCSVLine(line) {
   const out = []; let cur = '', q = false;
