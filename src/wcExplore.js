@@ -887,8 +887,8 @@ renderer.domElement.addEventListener('mousemove', (e) => { mouseX = e.clientX; m
 renderer.domElement.addEventListener('mouseleave', () => { mouseX = mouseY = null; tip.style.opacity = '0'; });
 
 // ---- place labels — a whisper of typography (structure-role: grey, matte, recessive) ----------------
-// Sense of place: the province names its six districts; a district names its towns (ranked by all-years
-// crime so the story-carrying hotspots win, greedy collision-pruned so dense views stay calm). Labels
+// Sense of place: the PROVINCE names its six districts. Detail (zoomed) views stay label-free — always-on
+// town names made them busy, and the rollover already names a station (maker's call, 2026-07-07). Labels
 // exist only AT REST on a flat map — they fade during drills/pies/terrain — and are pointer-transparent
 // so they can never block a tap. They must whisper: small, grey, no glow — frame, never data.
 const labelLayer = document.createElement('div');
@@ -906,7 +906,7 @@ function buildLabelSpecs() {
       return { name: REGION_META[rk].name, x, y, rank: sts.reduce((a, s) => a + total(s), 0), big: true };
     });
   } else {
-    labelSpecs = (stationsByRegion[region] || []).map((s) => ({ name: s.name, x: s.x, y: s.y, rank: total(s) }));
+    labelSpecs = []; // zoomed views stay clean — hover names the stations
   }
   labelSpecs.sort((a, b) => b.rank - a.rank);
   labelSpecs = labelSpecs.slice(0, LABEL_MAX);
