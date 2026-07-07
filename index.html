@@ -14,6 +14,7 @@
         position: fixed;
         left: 16px;
         bottom: 14px;
+        z-index: 10; /* above the place-label layer (z 5) */
         font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
         color: #8792a6;
         letter-spacing: 0.02em;
@@ -29,22 +30,49 @@
       }
       .hud b { color: #d4dcef; font-weight: 500; }
       .hud .hint { color: #ffce86; }
+      /* Control chips: the SAME toolkit the keyboard drives, tappable (touch parity). Buttons opt back
+         into pointer events (the card itself stays click-transparent for the map behind it). */
+      .hud button {
+        pointer-events: auto; appearance: none; background: none; border: 0;
+        padding: 1px 5px; margin: 0 -2px; font: inherit; color: inherit;
+        letter-spacing: inherit; border-radius: 5px; cursor: pointer;
+      }
+      .hud button:hover { background: rgba(140, 170, 210, 0.12); }
+      .hud button:active { background: rgba(140, 170, 210, 0.24); }
+      .hud button.arr { padding: 1px 3px; }
+      @media (pointer: coarse) {
+        .hud { line-height: 2.05; }
+        .hud button { padding: 5px 7px; }   /* real tap targets on touch */
+        .passive { display: none; }         /* scroll/drag hints mean nothing on a phone */
+      }
+      @media (max-width: 640px) { .hud { left: 10px; right: 10px; bottom: 10px; font-size: 11px; } }
       #fps {
-        position: fixed; right: 14px; top: 12px;
+        position: fixed; right: 14px; top: 12px; z-index: 10;
         font: 12px ui-monospace, monospace; color: #6b7689;
         padding: 4px 9px; border-radius: 6px;
         background: rgba(6, 8, 13, 0.6);
         backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
       }
     </style>
-    <script type="module" crossorigin src="/crime-data-viz/assets/index-Bh3xsKIx.js"></script>
+    <script type="module" crossorigin src="/crime-data-viz/assets/index-CTqig-XF.js"></script>
   </head>
   <body>
     <div id="app"></div>
     <div class="hud">
       <div><b id="region">Western Cape</b> — <span id="crime">robbery</span> &nbsp;·&nbsp; <span id="year">—</span> &nbsp;·&nbsp; <span id="count" style="color:#8792a6;"></span></div>
       <div id="hint" class="hint" style="margin-top:2px;">click Cape Town to zoom in</div>
-      <div><span class="hint">space</span> play/pause &nbsp;·&nbsp; <span class="hint">&larr; &rarr;</span> year &nbsp;·&nbsp; <span class="hint">&uarr; &darr;</span> crime &nbsp;·&nbsp; <span class="hint">M</span> map &nbsp;·&nbsp; <span class="hint">P</span> pie &nbsp;·&nbsp; <span class="hint">3</span> compare &nbsp;·&nbsp; <span class="hint">C</span> per-capita &nbsp;·&nbsp; <span class="hint">scroll</span> zoom &nbsp;·&nbsp; <span class="hint">drag</span> pan</div>
+      <div>
+        <button data-act="play"><span class="hint">space</span> play</button>&thinsp;·&thinsp;<button
+          data-act="yearPrev" class="arr"><span class="hint">&larr;</span></button><button
+          data-act="yearNext" class="arr"><span class="hint">&rarr;</span></button> year&thinsp;·&thinsp;<button
+          data-act="crimeUp" class="arr"><span class="hint">&uarr;</span></button><button
+          data-act="crimeDown" class="arr"><span class="hint">&darr;</span></button> crime&thinsp;·&thinsp;<button
+          data-act="map"><span class="hint">M</span> map</button>&thinsp;·&thinsp;<button
+          data-act="pie"><span class="hint">P</span> pie</button>&thinsp;·&thinsp;<button
+          data-act="compare"><span class="hint">3</span> compare</button>&thinsp;·&thinsp;<button
+          data-act="percapita"><span class="hint">C</span> per-capita</button>&thinsp;·&thinsp;<button
+          data-act="terrain"><span class="hint">T</span> terrain</button><span class="passive">&thinsp;·&thinsp;<span class="hint">scroll</span> zoom&thinsp;·&thinsp;<span class="hint">drag</span> pan</span>
+      </div>
       <div id="flag" style="color:#5e6a52; margin-top:4px;">◆ real SAPS robbery</div>
     </div>
     <div id="fps"></div>
