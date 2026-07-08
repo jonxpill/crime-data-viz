@@ -1,0 +1,52 @@
+{
+  "name": "tmnp-north-dem",
+  "description": "Table Mountain National Park (northern section: Table Mountain, Lion's Head, Devil's Peak, Newlands) elevation grid for route elevation profiles.",
+  "source": "AWS Terrain Tiles (s3.amazonaws.com/elevation-tiles-prod/geotiff), z12 @ 512px GeoTIFF (~15.8 m/px at this latitude), public domain-ish open data (Mapzen heritage; SRTM-derived blend).",
+  "built": "2026-07-08",
+  "builder": "/Users/jonxpillemer/Documents/Crime Data-Viz/pipeline/bake-tmnp-dem.mjs",
+  "file": "tmnp-north-dem.bin",
+  "format": "Int16 little-endian, row-major (index = j * cols + i), metres above sea level; values < 0 = below sea level / non-land; -9999 = outside coverage (does not occur inside bbox).",
+  "crs": "Regular grid in EPSG:4326 longitude/latitude (plate carrée node spacing) — NOT mercator.",
+  "cols": 1024,
+  "rows": 686,
+  "bbox": {
+    "west": 18.3,
+    "east": 18.48,
+    "south": -34,
+    "north": -33.9
+  },
+  "node_convention": {
+    "lng_of_i": "lng(i) = west + (i / (cols - 1)) * (east - west)",
+    "lat_of_j": "lat(j) = north - (j / (rows - 1)) * (north - south)   // row 0 = the NORTH edge",
+    "sampling": "bilinear-interpolate the four surrounding nodes for arbitrary lng/lat",
+    "approx_step_m": 16.2
+  },
+  "stats": {
+    "peak_m": 1083,
+    "min_m": -75,
+    "land_fraction": 0.612
+  },
+  "verification": [
+    {
+      "name": "Maclear's Beacon (Table Mountain summit)",
+      "lng": 18.4251,
+      "lat": -33.96657,
+      "expect": 1086,
+      "sampled_m": 1083
+    },
+    {
+      "name": "Lion's Head",
+      "lng": 18.38905,
+      "lat": -33.93524,
+      "expect": 669,
+      "sampled_m": 621
+    },
+    {
+      "name": "Devil's Peak",
+      "lng": 18.43987,
+      "lat": -33.95447,
+      "expect": 1000,
+      "sampled_m": 995
+    }
+  ]
+}

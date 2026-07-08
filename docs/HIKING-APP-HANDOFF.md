@@ -36,6 +36,20 @@ floor+gain uniforms (`uDataFloor`/`uDataGain` — density must not be double-cou
 ramp end (`#ff8a3a`) so dense cores saturate to molten orange instead of white. These were hard-won;
 copy the whole block including the `__viz.*` live-tuning-knob pattern (expo/bloom/ramp/dataCurve/matte).
 
+## Tier 0 — PRE-BAKED DELIVERABLE, ready to consume (no code crossing over)
+
+A z12 Table Mountain DEM was baked specifically for the hiking app (route elevation profiles):
+- `/Users/jonxpillemer/Documents/Crime Data-Viz/data/handoff/tmnp-north-dem.bin` — Int16 LE, row-major,
+  metres; 1024×686 nodes (~16.2 m step, matching the source's native ~15.8 m/px).
+- `/Users/jonxpillemer/Documents/Crime Data-Viz/data/handoff/tmnp-north-dem.json` — the full
+  self-describing meta: exact bbox (18.30–18.48E, 34.00–33.90S), node convention (REGULAR EPSG:4326
+  lng/lat grid — `lng(i) = west + i/(cols-1)·(east-west)`, `lat(j) = north − j/(rows-1)·(north-south)`,
+  row 0 = north edge, bilinear between nodes), source, and baked-in verification.
+- Verified against summit anchors before shipping: Maclear's Beacon 1083 m (survey 1086), Devil's Peak
+  995 m (survey 1000), Lion's Head 621 m (survey 669 — a sharp cone; z12 smoothing shaves ~50 m off
+  needle summits, fine for route profiles, know the limit). Rebuild/extend bbox or zoom:
+  `node /Users/jonxpillemer/Documents/Crime Data-Viz/pipeline/bake-tmnp-dem.mjs`.
+
 ## Tier 2 — adapt (hours, not days)
 
 **Terrain, the biggest gift.** The massif's relief already exists here:
