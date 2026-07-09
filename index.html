@@ -3,7 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Crime Data-Viz · Western Cape</title>
+    <title>Misdaadveld · Western Cape crime as a field of light</title>
+    <meta name="description" content="Misdaadveld (Afrikaans: 'crime field') — 18 years of Western Cape crime as one living field of light. Every dot is one reported crime; drill from the province into its districts, flip six crimes, ride the terrain, feel the monthly pulse." />
+    <meta property="og:title" content="Misdaadveld — Western Cape crime as a field of light" />
+    <meta property="og:description" content="Every glowing dot is one reported crime. 18 years, six crimes, 150 police precincts — a living point-field you drill, flip, and scrub." />
+    <meta property="og:url" content="https://jonxpill.github.io/crime-data-viz/" />
+    <meta property="og:type" content="website" />
     <style>
       :root { color-scheme: dark; }
       html, body { margin: 0; height: 100%; background: #05060a; overflow: hidden; }
@@ -46,6 +51,39 @@
         .passive { display: none; }         /* scroll/drag hints mean nothing on a phone */
       }
       @media (max-width: 640px) { .hud { left: 10px; right: 10px; bottom: 10px; font-size: 11px; } }
+      /* The name — quiet, structure-voiced, top-left. It must never compete with the field. */
+      #brand {
+        position: fixed; left: 16px; top: 12px; z-index: 10;
+        font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+        pointer-events: none; user-select: none;
+      }
+      #brand b { display: block; font-weight: 600; font-size: 13px; letter-spacing: 0.3em; color: #cdd6ee; opacity: 0.92; }
+      #brand span { display: block; font-size: 10.5px; letter-spacing: 0.05em; color: #77839a; }
+      @media (max-width: 640px) { #brand span { display: none; } }
+
+      /* About overlay — chip-opened, never automatic. Esc / ✕ / backdrop closes. */
+      #about { position: fixed; inset: 0; z-index: 40; display: none;
+        background: rgba(4, 6, 10, 0.72); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+      #about.open { display: flex; align-items: center; justify-content: center; }
+      #about-card {
+        position: relative; max-width: 580px; max-height: 82vh; overflow-y: auto; margin: 18px;
+        padding: 24px 28px; border-radius: 10px;
+        background: rgba(10, 13, 20, 0.94); border: 1px solid rgba(140, 170, 210, 0.16);
+        font: 12.5px/1.7 ui-monospace, "SF Mono", Menlo, monospace; color: #a8b2c6;
+      }
+      #about-card h2 { margin: 0 0 2px; font-size: 15px; font-weight: 600; letter-spacing: 0.3em; color: #e6ebf5; }
+      #about-card .tag { margin: 0 0 14px; color: #77839a; font-size: 11px; }
+      #about-card p { margin: 0 0 12px; }
+      #about-card .hon { color: #93a0b5; }
+      #about-card .src { color: #77839a; font-size: 11.5px; }
+      #about-card a { color: #ffce86; text-decoration: none; }
+      #about-card a:hover { text-decoration: underline; }
+      #about-close {
+        position: absolute; top: 10px; right: 12px; appearance: none; background: none; border: 0;
+        color: #8792a6; font: 16px ui-monospace, monospace; cursor: pointer; padding: 4px 8px; border-radius: 5px;
+      }
+      #about-close:hover { background: rgba(140, 170, 210, 0.12); color: #d4dcef; }
+
       #fps {
         position: fixed; right: 14px; top: 12px; z-index: 10;
         font: 12px ui-monospace, monospace; color: #6b7689;
@@ -54,10 +92,43 @@
         backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
       }
     </style>
-    <script type="module" crossorigin src="/crime-data-viz/assets/index-BGH1f1Ip.js"></script>
+    <script type="module" crossorigin src="/crime-data-viz/assets/index-BQA8ppds.js"></script>
   </head>
   <body>
     <div id="app"></div>
+    <div id="brand">
+      <b>MISDAADVELD</b>
+      <span>Western Cape crime as a field of light</span>
+    </div>
+    <div id="about">
+      <div id="about-card">
+        <button id="about-close" aria-label="close">✕</button>
+        <h2>MISDAADVELD</h2>
+        <p class="tag">Afrikaans: “crime field” · Western Cape, 2008/09 – 2025/26</p>
+        <p><b style="color:#d4dcef">Every glowing dot is one reported crime.</b> Eighteen years of South African
+          Police Service records for the Western Cape — robbery, residential burglary, murder, sexual offences,
+          commercial crime and carjacking across 150 police precincts — drawn as a single living field of
+          ~180,000 points. The province, its districts, the pies, the terrain and the monthly pulse are all the
+          same dots rearranging; nothing is ever redrawn, only moved.</p>
+        <p>Glow is crime; grey is geography. Colour is local density — cool and sparse through molten and dense.
+          Click a district to bloom into it. <span class="hint" style="color:#ffce86">N</span> breathes month by
+          month, <span style="color:#ffce86">C</span> shows rates per 100k people,
+          <span style="color:#ffce86">T</span> raises the land itself.</p>
+        <p class="hon"><b style="color:#b9c4d8">Honesty notes.</b> Counts are real; positions are jittered within
+          each precinct (volume is true, street addresses are not). Raw counts largely follow population — per-capita
+          (<span style="color:#ffce86">C</span>) is the fairer read (denominators: WorldPop 2020). 2025/26 is the sum
+          of SAPS’s quarterly releases and is unaudited; the monthly series (Apr 2021 – Mar 2026) comes from the same
+          quarterlies. Stations opened after 2023 (Samora Machel, Makhaza) are folded into the older precinct
+          boundaries that contain them. Carjacking is also a subcategory of aggravated robbery, so it appears inside
+          the robbery lens too. And throughout: these are <i>reported</i> crimes — what reaches a police station, not
+          all that happens.</p>
+        <p class="src">Crime: <a href="https://doi.org/10.25828/5MAW-4H90" target="_blank" rel="noopener">SAPS Annual
+          Crime Records 2008–2023 via DataFirst (CC-BY)</a> + SAPS annual &amp; quarterly releases 2023–2026
+          (saps.gov.za). Boundaries: Western Cape Government GIS. Population: WorldPop 2020. Terrain: AWS Terrain
+          Tiles. Built on three.js with a custom GPU point-field engine — one buffer of points, every view a pure
+          layout function. By Jonx Pillemer.</p>
+      </div>
+    </div>
     <div class="hud">
       <div><b id="region">Western Cape</b> — <span id="crime">robbery</span> &nbsp;·&nbsp; <span id="year">—</span> &nbsp;·&nbsp; <span id="count" style="color:#8792a6;"></span></div>
       <div id="hint" class="hint" style="margin-top:2px;">click Cape Town to zoom in</div>
@@ -72,7 +143,8 @@
           data-act="compare"><span class="hint">3</span> compare</button>&thinsp;·&thinsp;<button
           data-act="percapita"><span class="hint">C</span> per-capita</button>&thinsp;·&thinsp;<button
           data-act="terrain"><span class="hint">T</span> terrain</button>&thinsp;·&thinsp;<button
-          data-act="months"><span class="hint">N</span> months</button><span class="passive">&thinsp;·&thinsp;<span class="hint">scroll</span> zoom&thinsp;·&thinsp;<span class="hint">drag</span> pan</span>
+          data-act="months"><span class="hint">N</span> months</button>&thinsp;·&thinsp;<button
+          data-act="about"><span class="hint">?</span> about</button><span class="passive">&thinsp;·&thinsp;<span class="hint">scroll</span> zoom&thinsp;·&thinsp;<span class="hint">drag</span> pan</span>
       </div>
       <div id="flag" style="color:#5e6a52; margin-top:4px;">◆ real SAPS robbery</div>
     </div>
