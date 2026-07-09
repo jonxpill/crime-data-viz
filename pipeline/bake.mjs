@@ -80,7 +80,7 @@ for (let i = 1; i < csvLines.length; i++) {
   }
 }
 // Extend past DataFirst's 2022/23 with the SAPS releases — same shared merge door as bake-wc.mjs.
-mergeSupplement(stationMap, yearSet, ROOT);
+const suppMeta = mergeSupplement(stationMap, yearSet, ROOT);
 const YEARS = [...yearSet].sort((a, b) => a - b);                        // 2008 .. 2025
 const YEAR_LABELS = YEARS.map((y) => `${y}/${String((y + 1) % 100).padStart(2, '0')}`); // "2008/09"
 const stationList = [...stationMap.values()];
@@ -155,6 +155,7 @@ const stations = stationList.map((s) => {
     r: +(radiusByName.get(s.key) ?? 22).toFixed(1),
     pop: Math.round(popByKey.get(s.key) ?? POP_FALLBACK),
     crimes,
+    monthly: s.monthly, // fixed-order arrays over meta.monthly.labels (Apr 2021 – Mar 2026) — the pulse
   };
 });
 console.log(`Cape Town stations: ${stations.length} · years ${YEAR_LABELS[0]}–${YEAR_LABELS.at(-1)} · crimes: ${CRIMES.map((c) => c.key).join(', ')}`);
@@ -254,6 +255,7 @@ const asset = {
     years: YEARS,
     yearLabels: YEAR_LABELS,
     box: { w: W, h: H },
+    monthly: suppMeta.monthly,
   },
   stations,
   structure,

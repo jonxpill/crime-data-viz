@@ -52,7 +52,7 @@ for (let i = 1; i < csvLines.length; i++) {
 }
 // Extend past DataFirst's 2022/23 with the SAPS releases (2023/24 + 2024/25 audited, 2025/26 = summed
 // quarterlies, unaudited) — parsed + trust-checked by parse-saps.mjs, merged through ONE shared door.
-mergeSupplement(stationMap, yearSet, ROOT);
+const suppMeta = mergeSupplement(stationMap, yearSet, ROOT);
 const YEARS = [...yearSet].sort((a, b) => a - b);
 const YEAR_LABELS = YEARS.map((y) => `${y}/${String((y + 1) % 100).padStart(2, '0')}`);
 const stationList = [...stationMap.values()].filter((s) => s.lng && s.lat && !Number.isNaN(s.lng) && !Number.isNaN(s.lat));
@@ -142,7 +142,7 @@ const stations = stationList.map((s) => {
   const [x, y] = project([s.lng, s.lat]);
   const crimes = {};
   for (const cr of CRIMES) { crimes[cr.key] = {}; YEARS.forEach((yr) => { crimes[cr.key][yr] = Math.round(s.crimes[cr.key][yr] || 0); }); }
-  return { name: titleCase(s.name), x: +x.toFixed(1), y: +y.toFixed(1), r: +(radiusByName.get(s.key) ?? 8).toFixed(1), dc: s.dc, pop: Math.round(popByKey.get(s.key) ?? 5000), crimes };
+  return { name: titleCase(s.name), x: +x.toFixed(1), y: +y.toFixed(1), r: +(radiusByName.get(s.key) ?? 8).toFixed(1), dc: s.dc, pop: Math.round(popByKey.get(s.key) ?? 5000), crimes, monthly: s.monthly };
 });
 
 // ---- structure: precinct outlines at a constant arc-length step ----
@@ -207,7 +207,7 @@ const asset = {
     source: 'SAPS Annual Crime Records 2008/09–2022/23 (DataFirst cat. 1012) + SAPS annual 2024/25 and quarterly 2025/26 releases (saps.gov.za; 2025/26 = summed quarterlies, unaudited). Geography: WC GIS precincts.',
     note: 'Counts, coordinates, precinct boundaries AND per-station population are REAL — population is a WorldPop 2020 → precinct zonal join (national raster), so per-capita rates are honest. Post-2023 stations (Samora Machel, Makhaza) are folded into the old-boundary precinct that contains them (Philippi, Harare); Samora Machel recorded separately from 2018/19, backfilled onto Philippi so that polygon’s history is continuous. SAPS back-year revisions (~1–2%) are NOT applied to the DataFirst years.',
     crimeTypes: CRIMES.map(({ key, label }) => ({ key, label })), years: YEARS, yearLabels: YEAR_LABELS,
-    box: { w: W, h: H }, districts },
+    box: { w: W, h: H }, districts, monthly: suppMeta.monthly },
   stations, structure,
   terrain: bakeDEM(proj, 'wc'), // province-wide z9 relief (the whole WC in one DEM)
 };
@@ -237,7 +237,7 @@ function detailView(dPrecincts, dStations) {
   const sts = dStations.map((s) => {
     const [x, y] = pr([s.lng, s.lat]); const crimes = {};
     for (const cr of CRIMES) { crimes[cr.key] = {}; YEARS.forEach((yr) => { crimes[cr.key][yr] = Math.round(s.crimes[cr.key][yr] || 0); }); }
-    return { name: titleCase(s.name), x: +x.toFixed(1), y: +y.toFixed(1), r: +(radByName.get(s.key) ?? 8).toFixed(1), dc: s.dc, pop: Math.round(popByKey.get(s.key) ?? 5000), crimes };
+    return { name: titleCase(s.name), x: +x.toFixed(1), y: +y.toFixed(1), r: +(radByName.get(s.key) ?? 8).toFixed(1), dc: s.dc, pop: Math.round(popByKey.get(s.key) ?? 5000), crimes, monthly: s.monthly };
   });
   const struct = []; const STEP = 0.55;
   for (const f of dPrecincts) for (const ring of allRings(f.geometry)) {

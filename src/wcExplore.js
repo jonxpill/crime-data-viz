@@ -147,6 +147,14 @@ let dataMode = 'raw';
 let yi = 0;                // current year index (source of the morph)
 let t = 0;                 // 0 = years[yi], 1 = years[yi+1]
 let playing = true;
+
+// ---- the PULSE (monthly mode) — 60 calendar months, Apr 2021 – Mar 2026 ----------------------------
+// A month is just another layout of the same conserved pool (~1/12 of the dots active, the rest at the
+// roost). Layouts are built lazily per crime by the provider (see capeTown.js monthly()).
+let pulseMode = false, mi = 0, pulseData = null, monthLabels = null;
+const PULSE_MS = 340, PULSE_HOLD = 40; // month crossing + hold → ~2.6 months/sec, full sweep ≈ 23s
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const fmtMonth = (label) => { const [y, m] = label.split('-'); return `${MONTH_NAMES[+m - 1]} ${y}`; };
 let morphStart = -1;
 const YEAR_MS = 2200, HOLD_MS = 450;
 let holdUntil = 0;
@@ -192,9 +200,10 @@ let _lastHint = null;
 function refreshHint() {
   if (!hintEl || drilling) return;
   const txt = terrainMode ? 'T or tap → flat map'
-    : (pieMode || triPieMode) ? 'press M for the map'
-      : region !== 'wc' ? 'T terrain · click empty space (or M) to zoom out'
-        : 'T terrain · click any area to zoom in';
+    : pulseMode ? '←→ month · space play/pause · N or M → years'
+      : (pieMode || triPieMode) ? 'press M for the map'
+        : region !== 'wc' ? 'N months · T terrain · click empty space (or M) to zoom out'
+          : 'N months · T terrain · click any area to zoom in';
   if (txt !== _lastHint) { hintEl.textContent = txt; _lastHint = txt; }
 }
 
@@ -255,6 +264,8 @@ async function init() {
   ]);
   years = wcRaw.meta.years;
   yearLabels = wcRaw.meta.yearLabels || years;
+  monthLabels = (wcRaw.meta.monthly && wcRaw.meta.monthly.labels) || null; // the pulse's clock
+  mi = monthLabels ? monthLabels.length - 12 : 0;                          // enter on the latest full year's start
   crimeTypes = (wcRaw.meta.crimeTypes || [{ key: 'robbery', label: 'robbery' }]).map((c) => c.key);
   crimeLabels = Object.fromEntries((wcRaw.meta.crimeTypes || []).map((c) => [c.key, c.label]));
   crimeType = crimeTypes[0];
@@ -449,7 +460,7 @@ function fillAZ() {
   if (!field) return;
   const attr = field.points.geometry.getAttribute('aZ'), arr = attr.array;
   arr.fill(0);
-  const pos = layouts[yi].positions;
+  const pos = (pulseMode && pulseData ? pulseData.layouts[mi] : layouts[yi]).positions; // heights follow the SHOWN dots
   if (region === 'wc') { for (let i = 0; i < COUNT; i++) arr[i] = demHeightAt(pos[i * 2], pos[i * 2 + 1]); }
   else { const [start, k] = slices[region]; for (let m = 0; m < k; m++) arr[start + m] = demHeightAt(pos[m * 2], pos[m * 2 + 1]); }
   attr.needsUpdate = true;
@@ -471,6 +482,50 @@ function reseedTerrain() {
     terrainField.setT(1);
     terrainField.setZScale(0);
   }
+}
+
+// ---- the pulse: month-scrub control ------------------------------------------------------------
+// Mirrors the year grammar exactly: a pair of monthly layouts (mi → mi+1), lifted into the region's
+// conserved slice when drilled in; tick's playing branch advances it at pulse cadence, looping.
+function setMonthPair(i) {
+  mi = ((i % monthLabels.length) + monthLabels.length) % monthLabels.length; // loop Apr 2021 ↔ Mar 2026
+  const next = (mi + 1) % monthLabels.length;
+  const L = pulseData.layouts;
+  if (region === 'wc') {
+    field.setSource(L[mi]);
+    field.setTarget(L[next]);
+  } else {
+    field.setSource(lift(region, L[mi]));
+    field.setTarget(lift(region, L[next]));
+  }
+  t = 0;
+  refreshHud();
+}
+function buildPulse() {
+  const p = providers[region][dataMode].monthly(crimeType); // lazy: ~60 layouts for THIS crime only
+  if (p) pulseData = p;
+  return !!p;
+}
+function enterPulse() {
+  if (pulseMode || !monthLabels || !field || pieMode || triPieMode || drilling) return;
+  if (!buildPulse()) return;
+  pulseMode = true;
+  playing = true; morphStart = -1; holdUntil = performance.now();
+  setMonthPair(mi);
+  updateFlag();
+  refreshHud();
+}
+function exitPulse() {
+  if (!pulseMode) return;
+  pulseMode = false;
+  playing = false;
+  landRegion();   // re-seed the yearly pair cleanly, at rest
+  updateFlag();
+  refreshHud();
+}
+function stepMonth(dir) {
+  playing = false;
+  setMonthPair(mi + dir);
 }
 
 // ---- year-scrub control -----------------------------------------------------
@@ -520,6 +575,19 @@ function flipCrime(dir) {
   const i = crimeTypes.indexOf(crimeType);
   const next = crimeTypes[(i + dir + crimeTypes.length) % crimeTypes.length];
   if (next === crimeType) return;
+  if (pulseMode) { // pulse: cross-fade this month, old crime → new crime (lazy build evicts the old months)
+    const from = region === 'wc' ? pulseData.layouts[mi] : lift(region, pulseData.layouts[mi]);
+    crimeType = next;
+    layouts = layoutsByType[crimeType];
+    buildPulse();
+    const to = region === 'wc' ? pulseData.layouts[mi] : lift(region, pulseData.layouts[mi]);
+    field.setSource(from);
+    field.setTarget(to);
+    field.setStagger(0.6);
+    t = 0; pieMorphStart = performance.now(); pieMorphing = true; // completion re-anchors to setMonthPair(mi)
+    refreshHud();
+    return;
+  }
   if (pieMode) {
     crimeType = next;
     layouts = layoutsByType[crimeType];
@@ -553,6 +621,12 @@ function refreshHud(type = crimeType) {
     if (countEl) countEl.textContent = 'click a pie to focus it';
     return;
   }
+  if (pulseMode) {
+    if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + (rate ? ' · per 100k' : '');
+    if (yearEl) yearEl.textContent = fmtMonth(monthLabels[mi]);
+    if (countEl) countEl.textContent = ((pulseData && pulseData.totals[mi]) || 0).toLocaleString();
+    return;
+  }
   if (yearEl) yearEl.textContent = yearLabels[yi];
   if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + (rate ? ' · per 100k' : '');
   if (countEl) countEl.textContent = ((totalsByType[type] && totalsByType[type][yi]) || 0).toLocaleString();
@@ -561,10 +635,12 @@ function refreshHud(type = crimeType) {
 function updateFlag() {
   const flagEl = document.getElementById('flag');
   if (!flagEl || !yearLabels.length) return;
-  const span = `${yearLabels[0]}–${yearLabels.at(-1)}`;
+  const span = pulseMode
+    ? `${fmtMonth(monthLabels[0])}–${fmtMonth(monthLabels.at(-1))} monthly (SAPS quarterlies, unaudited)`
+    : `${yearLabels[0]}–${yearLabels.at(-1)}` + (dataMode === 'percapita' ? '' : ' (25/26 unaudited)');
   flagEl.textContent = dataMode === 'percapita'
     ? `◆ crime: SAPS (DataFirst + saps.gov.za) · population: WorldPop 2020 · ${span}`
-    : `◆ SAPS crime records · DataFirst + saps.gov.za · ${span} (25/26 unaudited)`;
+    : `◆ SAPS crime records · DataFirst + saps.gov.za · ${span}`;
 }
 
 // Morph off the map into a robbery pie and back. Data swarms into the wedges, structure into the ring
@@ -642,6 +718,14 @@ function toggleMode() {
     field.setTarget({ positions: tp.positions, density: tp.density });
     field.setStagger(0.6);
     startStructTransition(triPieFrameLayout(structN, { centers: tp.centers, R: TRI_R, boundaries: tp.boundaries, frameDots: pieFrameDots, thin: pieThin }));
+  } else if (pulseMode) {
+    // pulse: same month, raw ⇄ per-capita dot budgets (the provider's monthly() is mode-aware)
+    const from = region === 'wc' ? pulseData.layouts[mi] : lift(region, pulseData.layouts[mi]);
+    buildPulse();
+    const to = region === 'wc' ? pulseData.layouts[mi] : lift(region, pulseData.layouts[mi]);
+    field.setSource(from);
+    field.setTarget(to);
+    field.setStagger(0.6);
   } else {
     // map: only the DATA redistributes; the geography frame is identical in both modes.
     field.setSource(oldMapLayout);
@@ -673,7 +757,8 @@ function resolveTriToPie(ci) {
 
 // The `M` key: from a pie/3-pie → swarm home to the map. On the Cape Town map → drill back out.
 function goToMap() {
-  if (terrainMode) { toggleTerrain(); return; } // Cape Town terrain → flat map first (then M again drills out)
+  if (terrainMode) { toggleTerrain(); return; } // terrain → flat first (then M again exits pulse / drills out)
+  if (pulseMode) { exitPulse(); return; }       // pulse → back to the years
   if (triPieMode) { toggleTriPie(); return; }
   if (pieMode) {
     pieMode = false;
@@ -696,6 +781,7 @@ function goToMap() {
 // crime that genuinely has no detail to zoom into; the lens never moves.
 function startDrill(to) {
   if (drilling || to === region || pieMode || triPieMode) return;
+  if (pulseMode) { pulseMode = false; playing = false; updateFlag(); } // drill flies on the YEARLY field (liveMap below); land re-seeds yearly
   if (terrainMode) { // never drill mid-relief — snap flat first (normal input exits terrain before this)
     terrainMode = false; zScaleCur = 0; tiltCur = 0; fieldGroup.rotation.x = 0; trProg = 1;
     if (terrainField) terrainField.points.visible = false;
@@ -715,6 +801,18 @@ function startDrill(to) {
 
 window.addEventListener('keydown', (e) => {
   if (drilling) return; // input is quiet mid-transition
+  if (pulseMode) { // the pulse has its own clock: arrows step months, N/M return to years
+    if (e.code === 'KeyN' || e.code === 'KeyM') { e.preventDefault(); exitPulse(); }
+    else if (e.code === 'Space') { e.preventDefault(); playing = !playing; if (playing) { holdUntil = performance.now(); morphStart = -1; } }
+    else if (e.code === 'ArrowRight') { e.preventDefault(); stepMonth(1); }
+    else if (e.code === 'ArrowLeft') { e.preventDefault(); stepMonth(-1); }
+    else if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
+    else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
+    else if (e.code === 'KeyC') { e.preventDefault(); toggleMode(); }
+    else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); }
+    return;
+  }
+  if (e.code === 'KeyN') { e.preventDefault(); enterPulse(); return; }
   if (e.code === 'KeyC') { e.preventDefault(); toggleMode(); return; }
   if (e.code === 'Digit3') { e.preventDefault(); toggleTriPie(); return; }
   if (triPieMode) {
@@ -737,16 +835,17 @@ window.addEventListener('keydown', (e) => {
 // exist). Guards mirror the keydown handler exactly: input is quiet mid-drill, and the 3-pie only
 // listens to map/year/compare/per-capita. Blur after click so a focused chip can't re-fire on Space.
 const CHIP_ACTIONS = {
-  play: () => { if (triPieMode) return; playing = !playing; if (playing) { holdUntil = performance.now(); if (pieMode) setYearPair(yi); } },
-  yearPrev: () => stepYear(-1),
-  yearNext: () => stepYear(1),
+  play: () => { if (triPieMode) return; playing = !playing; if (playing) { holdUntil = performance.now(); if (pulseMode) morphStart = -1; else if (pieMode) setYearPair(yi); } },
+  yearPrev: () => (pulseMode ? stepMonth(-1) : stepYear(-1)),
+  yearNext: () => (pulseMode ? stepMonth(1) : stepYear(1)),
   crimeUp: () => { if (triPieMode) return; flipCrime(1); },
   crimeDown: () => { if (triPieMode) return; flipCrime(-1); },
   map: () => goToMap(),
-  pie: () => { if (triPieMode) return; togglePie(); },
-  compare: () => toggleTriPie(),
+  pie: () => { if (triPieMode || pulseMode) return; togglePie(); },
+  compare: () => { if (pulseMode) return; toggleTriPie(); },
   percapita: () => toggleMode(),
   terrain: () => toggleTerrain(), // guards itself (needs a loaded DEM, no pies, no drill)
+  months: () => (pulseMode ? exitPulse() : enterPulse()),
 };
 for (const el of document.querySelectorAll('.hud [data-act]')) {
   el.addEventListener('click', () => {
@@ -764,6 +863,12 @@ window.__viz = {
   bloom: (strength, threshold, radius) => { if (strength != null) bloom.strength = strength; if (threshold != null) bloom.threshold = threshold; if (radius != null) bloom.radius = radius; return { strength: bloom.strength, threshold: bloom.threshold, radius: bloom.radius }; },
   tonemap: (name) => { const m = { none: THREE.NoToneMapping, aces: THREE.ACESFilmicToneMapping, neutral: THREE.NeutralToneMapping, agx: THREE.AgXToneMapping, reinhard: THREE.ReinhardToneMapping, cineon: THREE.CineonToneMapping }; if (name && m[name] !== undefined) { renderer.toneMapping = m[name]; scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; }); } return renderer.toneMapping; },
   year: (n) => { const i = years.indexOf(n); if (i >= 0) { playing = false; setYearPair(i); t = 0; } },
+  pulse: (m) => { // debug: enter the pulse (optionally at a 'YYYY-MM'), or exit if already in it
+    if (pulseMode && m === undefined) { exitPulse(); return 'exited'; }
+    if (!pulseMode) enterPulse();
+    if (m !== undefined && monthLabels) { const i = monthLabels.indexOf(m); if (i >= 0) { playing = false; setMonthPair(i); } }
+    return { pulseMode, month: monthLabels && monthLabels[mi], total: pulseData && pulseData.totals[mi] };
+  },
   t: (v) => { playing = false; t = v; },
   flip: () => flipCrime(1),
   drift: (px) => field && field.setDrift(px),
@@ -874,10 +979,12 @@ function updateTooltip() {
   if (si < 0) { tip.style.opacity = '0'; return; }
   const s = activeStations()[si];
   const ct = hoverCrimeType || crimeType;
-  const n = (s.crimes[ct] && s.crimes[ct][years[yi]]) || 0;
+  const n = pulseMode
+    ? ((s.monthly && s.monthly[ct] && s.monthly[ct][mi]) || 0)
+    : ((s.crimes[ct] && s.crimes[ct][years[yi]]) || 0);
   const rate = s.pop ? Math.round((n / s.pop) * 100000) : 0;
   const val = dataMode === 'percapita' ? `${rate.toLocaleString()} per 100k` : `${n.toLocaleString()} reported`;
-  tip.innerHTML = `${s.name} · ${crimeLabels[ct] || ct} · ${yearLabels[yi]}` +
+  tip.innerHTML = `${s.name} · ${crimeLabels[ct] || ct} · ${pulseMode ? fmtMonth(monthLabels[mi]) : yearLabels[yi]}` +
     `<br><span style="color:#9fb0c8">${val}</span>`;
   tip.style.left = mouseX + 'px';
   tip.style.top = mouseY + 'px';
@@ -1049,7 +1156,7 @@ function tick() {
     t = swarmEase(p);
     if (p >= 1) {
       pieMorphing = false;
-      if (!pieMode && !triPieMode) setYearPair(yi);  // re-anchor the scrub pair on the flat map
+      if (!pieMode && !triPieMode) (pulseMode ? setMonthPair(mi) : setYearPair(yi)); // re-anchor the scrub pair on the flat map
     }
   } else if (flipping) {
     const p = Math.min((now - flipStart) / FLIP_MS, 1);
@@ -1063,14 +1170,15 @@ function tick() {
       holdUntil = now + HOLD_MS;
     }
   } else if (playing) {
-    if (morphStart < 0 && now >= holdUntil) morphStart = now; // begin a year crossing
+    const MS = pulseMode ? PULSE_MS : YEAR_MS, HOLD = pulseMode ? PULSE_HOLD : HOLD_MS;
+    if (morphStart < 0 && now >= holdUntil) morphStart = now; // begin a year (or month) crossing
     if (morphStart >= 0) {
-      const p = Math.min((now - morphStart) / YEAR_MS, 1);
+      const p = Math.min((now - morphStart) / MS, 1);
       t = easeInOut(p);
       if (p >= 1) {
         morphStart = -1;
-        holdUntil = now + HOLD_MS;
-        setYearPair(yi + 1);
+        holdUntil = now + HOLD;
+        if (pulseMode) setMonthPair(mi + 1); else setYearPair(yi + 1);
       }
     }
   }

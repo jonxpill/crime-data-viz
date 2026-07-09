@@ -200,6 +200,57 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
     totals[type] = years.map((y) => stations.reduce((a, s) => a + (s.crimes[type][y] || 0), 0));
   }
 
+  // ---- MONTHLY (the pulse) — built LAZILY, one crime resident at a time -----------------------------
+  // Same conserved slots/offsets/roosts as the yearly layouts (dot i stays with its precinct; a month
+  // fills ~1/12 of the pool, the rest waits at the roost), density normalised with ONE gMax across all
+  // 60 months so the seasonal rhythm stays visible (per-month normalisation would flatten it). Lazy
+  // because 60 months × 6 crimes × 2 modes built eagerly would be GBs; the cache keeps exactly ONE
+  // crime's months resident. NO `z` on these layouts — the field's aZ has one owner (fillAZ upstream).
+  const MONTH_LABELS = (data.meta.monthly && data.meta.monthly.labels) || null;
+  const monthlyCache = new Map();
+  const monthlyValue = (s, type, m) => {
+    const v = (s.monthly && s.monthly[type] && s.monthly[type][m]) || 0;
+    return mode === 'percapita' ? (v / s.pop) * PC_SCALE : v;
+  };
+  function monthly(type) {
+    if (!MONTH_LABELS) return null;
+    let got = monthlyCache.get(type);
+    if (got) return got;
+    monthlyCache.clear(); // one crime's months resident at a time — bounds memory
+    const per = MONTH_LABELS.map((_, m) => {
+      const positions = new Float32Array(COUNT * 2);
+      const activeXY = [], activeIdx = [];
+      for (const sl of slots) {
+        const n = Math.min(sl.K, Math.round(monthlyValue(sl.s, type, m) / PER_POINT));
+        for (let j = 0; j < sl.K; j++) {
+          const idx = sl.base + j;
+          if (j < n) {
+            const px = sl.s.x + sl.offs[j * 2], py = sl.s.y + sl.offs[j * 2 + 1];
+            positions[idx * 2] = px; positions[idx * 2 + 1] = py;
+            activeXY.push(px, py); activeIdx.push(idx);
+          } else {
+            positions[idx * 2] = roostPos[idx * 2]; positions[idx * 2 + 1] = roostPos[idx * 2 + 1];
+          }
+        }
+      }
+      return { positions, activeIdx, raw: neighbourCounts(Float32Array.from(activeXY), DENSITY_CELL) };
+    });
+    let gMax = 1;
+    for (const p of per) for (let k = 0; k < p.raw.length; k++) if (p.raw[k] > gMax) gMax = p.raw[k];
+    const layoutsM = per.map((p) => {
+      const density = new Float32Array(COUNT);
+      for (let k = 0; k < p.activeIdx.length; k++) {
+        const d = Math.pow(Math.min(p.raw[k] / gMax, 1), 0.55);
+        density[p.activeIdx[k]] = ACTIVE_FLOOR + (1 - ACTIVE_FLOOR) * d;
+      }
+      return { positions: p.positions, density };
+    });
+    const totalsM = MONTH_LABELS.map((_, m) => stations.reduce((a, s) => a + ((s.monthly && s.monthly[type] && s.monthly[type][m]) || 0), 0));
+    got = { layouts: layoutsM, totals: totalsM };
+    monthlyCache.set(type, got);
+    return got;
+  }
+
   /**
    * PIE layout for one crime + year, reusing the SAME slots (so the map ⇄ pie morph is a
    * conserved swarm — dot i stays with its precinct, it just flies to the wedge). Each precinct's
@@ -364,7 +415,7 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
     return { positions, density, boundaries, R, cx, cy };
   }
 
-  return { years, count: COUNT, layouts, totals, pieLayout, triPieLayout, resolvePieLayout };
+  return { years, count: COUNT, layouts, totals, pieLayout, triPieLayout, resolvePieLayout, monthly, months: MONTH_LABELS };
 }
 
 /**

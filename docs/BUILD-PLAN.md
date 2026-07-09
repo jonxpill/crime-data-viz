@@ -224,3 +224,22 @@ real skill hurdle = the WebGL/shader glow-at-scale; the rest is routine.
 `crime_particle_morph` (map↔clock morph) · `crime_starfield_density` (density=colour stars) ·
 `capetown_grey_structure_glowing_data` (grey city / glowing crime / mountain void) ·
 `capetown_elevation_points_crime` (elevation = grey point density, crime on the lowlands).
+
+## Stage — The Monthly Pulse (built 2026-07-09)
+`N months` on any map view: the field breathes month-to-month through the last five complete SAPS years
+(Apr 2021 – Mar 2026, 60 months), auto-playing on a loop; ←→ scrubs, space pauses, N/M returns to years.
+- **Data:** monthly columns live in the four 2025/26 quarterly workbooks (each carries its quarter's three
+  calendar months × 5 years, Excel serial-date headers, decoded never assumed). parse-saps.mjs harvests
+  them through the same remaps (Samora Machel→Philippi, Makhaza→Harare) into fixed-order 60-slot arrays
+  per station×crime; contiguity + reconciliation gates printed (2025/26 re-sums EXACTLY; earlier years
+  within the known ~1% revision band, folds decomposed). Both bakes ship `station.monthly` +
+  `meta.monthly.labels` (~450 KB across the three assets).
+- **Layouts:** provider `monthly(type)` builds all 60 lazily for ONE crime at a time (~130 MB transient,
+  evicted on flip) on the SAME conserved slots/roosts as the yearly layouts — a month fills ~1/12 of the
+  pool, the rest waits at the roost. Density normalised with ONE gMax across all 60 months (per-month
+  would flatten the seasonal signal). No `z` — aZ keeps its one writer (fillAZ).
+- **Explorer:** pulse state rides the existing grammar (tick's playing branch at PULSE_MS cadence,
+  setMonthPair mirrors setYearPair incl. the district lift); flips/per-capita/terrain work inside the
+  pulse; pies stay yearly; drilling exits the pulse. Flag reads "Apr 2021–Mar 2026 monthly (SAPS
+  quarterlies, unaudited)".
+- Seasonal truth in numbers before pixels: WC murder Jun 2023 = 304 vs Dec 2023 = 438 (+44%).

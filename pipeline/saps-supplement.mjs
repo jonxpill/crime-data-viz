@@ -27,6 +27,7 @@ export function mergeSupplement(stationMap, yearSet, root) {
     for (const cr of CRIMES) { if (!st.crimes[cr]) continue; for (const y of NEW_YEARS) st.crimes[cr][y] = (s[cr] && s[cr][y]) || 0; } // skip crimes this bake doesn't carry
     const bf = supp.backfill[key];
     if (bf) for (const cr of Object.keys(bf)) { if (!st.crimes[cr]) continue; for (const [y, v] of Object.entries(bf[cr])) st.crimes[cr][y] = (st.crimes[cr][y] || 0) + v; }
+    if (s.monthly) st.monthly = s.monthly; // fixed-order monthly arrays (labels in supp.meta.monthly) — the pulse
   }
   for (const y of NEW_YEARS) yearSet.add(y);
   if (missing.length) console.warn(`  supplement MISSING for ${missing.length} station(s): ${missing.join(', ')} — their 2023–2025 stay 0`);
