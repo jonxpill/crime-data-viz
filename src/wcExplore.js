@@ -152,7 +152,7 @@ let playing = true;
 // A month is just another layout of the same conserved pool (~1/12 of the dots active, the rest at the
 // roost). Layouts are built lazily per crime by the provider (see capeTown.js monthly()).
 let pulseMode = false, mi = 0, pulseData = null, monthLabels = null;
-const PULSE_MS = 340, PULSE_HOLD = 40; // month crossing + hold → ~2.6 months/sec, full sweep ≈ 23s
+const PULSE_MS = 480, PULSE_HOLD = 70; // month crossing + hold → ~1.8 months/sec, full sweep ≈ 33s (maker-tuned: calmer)
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const fmtMonth = (label) => { const [y, m] = label.split('-'); return `${MONTH_NAMES[+m - 1]} ${y}`; };
 let morphStart = -1;
