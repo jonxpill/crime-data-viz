@@ -1,6 +1,6 @@
-# Crime Data-Viz — project conventions
+# Misdaadveld (repo: crime-data-viz) — project conventions
 > Auto-loads each session. Standing rules. One-time setup in PROJECT-KICKOFF.md; the *why* in
-> docs/CONTINUITY.md. Working title — name TBD.
+> docs/CONTINUITY.md. Named MISDAADVELD (Afrikaans: “crime field”), 2026-07-09; the repo/URL keeps crime-data-viz (Pages URLs don’t redirect).
 > Origin: graduated from ~/Documents/_Ideas/crime-dataviz-cape-town.md (2026-06-30) — the deep source.
 
 ## What this is

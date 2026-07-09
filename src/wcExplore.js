@@ -800,6 +800,10 @@ function startDrill(to) {
 }
 
 window.addEventListener('keydown', (e) => {
+  if (aboutEl && aboutEl.classList.contains('open')) { // the about card swallows keys; Esc closes
+    if (e.code === 'Escape') { e.preventDefault(); toggleAbout(false); }
+    return;
+  }
   if (drilling) return; // input is quiet mid-transition
   if (pulseMode) { // the pulse has its own clock: arrows step months, N/M return to years
     if (e.code === 'KeyN' || e.code === 'KeyM') { e.preventDefault(); exitPulse(); }
@@ -846,7 +850,17 @@ const CHIP_ACTIONS = {
   percapita: () => toggleMode(),
   terrain: () => toggleTerrain(), // guards itself (needs a loaded DEM, no pies, no drill)
   months: () => (pulseMode ? exitPulse() : enterPulse()),
+  about: () => toggleAbout(),
 };
+
+// About card — chip-opened only (never automatic); ✕ / backdrop / Esc close it.
+const aboutEl = document.getElementById('about');
+function toggleAbout(show) {
+  if (!aboutEl) return;
+  aboutEl.classList.toggle('open', show ?? !aboutEl.classList.contains('open'));
+}
+document.getElementById('about-close')?.addEventListener('click', () => toggleAbout(false));
+aboutEl?.addEventListener('click', (e) => { if (e.target === aboutEl) toggleAbout(false); });
 for (const el of document.querySelectorAll('.hud [data-act]')) {
   el.addEventListener('click', () => {
     if (!drilling) { const f = CHIP_ACTIONS[el.dataset.act]; if (f) f(); }
