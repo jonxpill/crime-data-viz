@@ -76,6 +76,18 @@
   the field between raw counts and true rates (dense townships shrink, low-population CBD/Camps-Bay swell);
   rollover + flag credit switch with the mode. The population proxy is gone.
 
+- **✅ DONE (2026-07-09) — the Monthly Pulse** shipped: `N months`, 60 months Apr 2021–Mar 2026, looping.
+- **THE BIG BRAINSTORM (2026-07-10, raised not agreed)** — 126 new-visualization ideas across eight lenses,
+  full archive in [brainstorms/2026-07-10-viz-brainstorm.md](brainstorms/2026-07-10-viz-brainstorm.md).
+  Maker-shortlist pending; standouts flagged in that session: the Lockdown Canyon (time AS the landform),
+  Ember/Fire Season (recency & change as temperature), Seasonal Coil / Season Wheel (months as standing
+  geometry), The Reading (a memorial that refuses compression), The Unlit Field (the reported-vs-experienced
+  counterweight, drawn at last), Release the Field / Starling Ledger (delta murmurations), the Loom bridges
+  (District Chorale · Voice Scrub · Lament Engine), Stand In Your Suburb + One in Forty-Three
+  (personalization), Pin the Peak / Which Is Worse? (calibration play), Rank Braid / Rhythm Constellation /
+  Statistical Twins (150 characters), Poisson Fog (uncertainty as weather), Last-Digit Forensics (the counts
+  on trial), and the moonshots: Dome Pulse (Iziko planetarium), Drone Veld, Mountain Cast, the National
+  Creature (~1M points), Wade Through the Field (WebXR).
 - **Monthly granularity, 2022→2026 (raised 2026-07-07, not agreed)** — the SAPS quarterly workbooks
   (data/raw/saps/) carry per-station MONTHLY columns for every month since Jan 2022: a much finer clock
   than the annual scrub (seasonality, festive-season spikes, a month-by-month swarm). Parser sums
