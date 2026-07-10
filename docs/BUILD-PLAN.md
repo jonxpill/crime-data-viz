@@ -243,3 +243,14 @@ real skill hurdle = the WebGL/shader glow-at-scale; the rest is routine.
   pulse; pies stay yearly; drilling exits the pulse. Flag reads "Apr 2021–Mar 2026 monthly (SAPS
   quarterlies, unaudited)".
 - Seasonal truth in numbers before pixels: WC murder Jun 2023 = 304 vs Dec 2023 = 438 (+44%).
+
+## Stage — Four branches (planned 2026-07-10, awaiting per-branch GO)
+Four features from the 126-idea brainstorm, chosen as the piece's image / conscience / memory /
+shadow. Each has a SELF-CONTAINED cold-session plan in docs/plans/ and its own branch off main:
+- `feat/reading` — [The Reading](plans/reading.md) · weekend · **merge first** (smallest surface)
+- `feat/ember` — [Ember Field](plans/ember.md) · weekend-plus (one generic engine addition) · second
+- `feat/canyon` — [The Lockdown Canyon](plans/canyon.md) · project · third
+- `feat/unlit` — [The Unlit Field](plans/unlit-field.md) · project + research gate · **merge last**
+Shared conflict surface is tiny by design (each: one chip line, one keydown branch, one hint line,
+own code section); later branches rebase over earlier merges. Plans live on MAIN so every branch
+session reads all four.
