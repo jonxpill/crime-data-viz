@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointField } from './engine/PointField.js';
-import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor } from './layouts/capeTown.js';
+import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor, flockLayouts } from './layouts/capeTown.js';
 
 /*
  * THE APP — a Western Cape crime field you drill into Cape Town from. (Was the single-region Cape Town app
@@ -199,11 +199,12 @@ const hintEl = document.getElementById('hint');
 let _lastHint = null;
 function refreshHint() {
   if (!hintEl || drilling) return;
-  const txt = terrainMode ? 'T or tap → flat map'
-    : pulseMode ? '←→ month · space play/pause · N or M → years'
-      : (pieMode || triPieMode) ? 'press M for the map'
-        : region !== 'wc' ? 'N months · T terrain · click empty space (or M) to zoom out'
-          : 'N months · T terrain · click any area to zoom in';
+  const txt = flockMode ? (flockPhase === 'land' ? 'the field lands…' : 'F or tap → land')
+    : terrainMode ? 'T or tap → flat map'
+      : pulseMode ? '←→ month · space play/pause · N or M → years'
+        : (pieMode || triPieMode) ? 'press M for the map'
+          : region !== 'wc' ? 'N months · T terrain · click empty space (or M) to zoom out'
+            : 'N months · T terrain · F release · click any area to zoom in';
   if (txt !== _lastHint) { hintEl.textContent = txt; _lastHint = txt; }
 }
 
@@ -437,7 +438,7 @@ function startTerrainTransition(toLayout) {
 // coincident band, rise band → relief; on the way back, sink to band, then tick swaps the outline back.
 function toggleTerrain() {
   const d = regionData[region];
-  if (!d || !d.terrain || !d.terrain.elev || pieMode || triPieMode || drilling) return; // any region WITH a DEM
+  if (!d || !d.terrain || !d.terrain.elev || pieMode || triPieMode || drilling || flockMode) return; // any region WITH a DEM
   terrainMode = !terrainMode;
   if (terrainMode) {
     structField.points.visible = false;
@@ -514,7 +515,7 @@ function buildPulse() {
   return !!p;
 }
 function enterPulse() {
-  if (pulseMode || !monthLabels || !field || pieMode || triPieMode || drilling) return;
+  if (pulseMode || !monthLabels || !field || pieMode || triPieMode || drilling || flockMode) return;
   if (!buildPulse()) return;
   pulseMode = true;
   playing = true; morphStart = -1; holdUntil = performance.now();
@@ -533,6 +534,75 @@ function exitPulse() {
 function stepMonth(dir) {
   playing = false;
   setMonthPair(mi + dir);
+}
+
+// ---- THE FLOCK — release the field (province map only) ----------------------------------------------
+// Press F and all ~180k dots FORGET the map: the field lifts into a province-scale murmuration
+// wheeling over the grey outline — a chain of 8 precomputed flock keyframes (flockLayouts) morphed
+// through in a loop. THE STAGGER IS THE MURMURATION: each dot crosses on its own slice of t, so every
+// frame-to-frame morph ripples through the flock as a turning wave — no physics engine, no per-frame
+// position uploads, the same GPU tween the year-scrub rides. A declared PLAY state: the readouts
+// suspend (no data reading while airborne), the tooltip + labels sleep, and landing always returns
+// every dot to layouts[yi] — the truthful map — then re-anchors the scrub pair.
+let flockMode = false, flockPhase = 'fly', flockIdx = 0, flockStart = 0;
+let flockFrames = null, flockDensity = null;
+const FLOCK_MS = 2400, FLOCK_HOLD = 200, FLOCK_LAND_MS = 2800; // frame crossing · a breath · the glide home
+const FLOCK_STAGGER = 0.75, FLOCK_LAND_STAGGER = 0.6;
+
+// Pair a flock frame (positions only) with the density snapshotted at take-off — each dot KEEPS its
+// warmth through the flight, so the hot-core dots streak as warm threads across the sky.
+const withFlockDensity = (frame) => ({ positions: frame.positions, density: flockDensity });
+
+function enterFlock() {
+  // Province map only: in a district most of the pool is parked-away with density 0 — flying it would
+  // materialize dots that aren't in the view's truth. And only from the FLAT map with nothing else in
+  // flight (no pie/pulse/terrain, nothing mid-morph) — self-guarding, like toggleTerrain.
+  if (flockMode || region !== 'wc' || !field || pieMode || triPieMode || pulseMode || terrainMode
+    || drilling || flipping || pieMorphing) return;
+  if (!flockFrames) flockFrames = flockLayouts(COUNT, regionData.wc.meta.box, 0xf10c); // seeded → stable per build; built once per session
+  const live = liveMap('wc');     // wherever the map is mid-breath — the flight lifts from HERE
+  flockDensity = live.density;
+  // Full-buffer writes (offset 0), like startDrill: the flock is a PROVINCE-ONLY full-pool state — no
+  // district slice is at rest, so the whole COUNT-sized field is legitimately re-pointed.
+  field.setSource(live);
+  field.setTarget(withFlockDensity(flockFrames[0]));
+  field.setStagger(FLOCK_STAGGER);
+  field.setT(0);
+  flockMode = true; flockPhase = 'fly'; flockIdx = 0; flockStart = performance.now();
+  playing = false; morphStart = -1; t = 0;
+  refreshHud();
+}
+
+// The exact CURRENT airborne pose — replicating the vertex shader's per-dot stagger window (the same
+// seed01/window arithmetic as PointField's VERT) — because a landing must start from precisely where
+// each dot IS on screen; a uniform-t lerp would snap every dot that had already crossed its window.
+function airbornePose() {
+  const g = field.points.geometry;
+  const src = g.getAttribute('aSource').array, tgt = g.getAttribute('aTarget').array;
+  const seed = g.getAttribute('aSeed').array;
+  const uT = field.material.uniforms.uT.value;
+  const w = Math.max(field.material.uniforms.uStagger.value, 0.02);
+  const out = new Float32Array(COUNT * 2);
+  for (let i = 0; i < COUNT; i++) {
+    const s01 = (seed[i] * 0.1591549431) % 1;
+    let lt = (uT - s01 * (1 - w)) / w;
+    lt = lt < 0 ? 0 : lt > 1 ? 1 : lt;
+    out[2 * i] = src[2 * i] + (tgt[2 * i] - src[2 * i]) * lt;
+    out[2 * i + 1] = src[2 * i + 1] + (tgt[2 * i + 1] - src[2 * i + 1]) * lt;
+  }
+  return out;
+}
+
+// Land: from wherever the chain is, ONE long staggered morph home to the truthful map. tick's flock
+// branch finishes it (flockMode off → setYearPair re-anchor → HUD restore).
+function landFlock() {
+  if (!flockMode || flockPhase === 'land') return;
+  field.setSource({ positions: airbornePose(), density: flockDensity }); // full-buffer: see enterFlock
+  field.setTarget(layouts[yi]);                                          // province layouts are COUNT-sized
+  field.setStagger(FLOCK_LAND_STAGGER);
+  field.setT(0); t = 0;
+  flockPhase = 'land'; flockStart = performance.now();
+  refreshHint();
 }
 
 // ---- year-scrub control -----------------------------------------------------
@@ -576,7 +646,7 @@ function stepYear(dir) {
 
 // Flip to another crime (dir cycles the list): morph between crimes at the current year, then resume.
 function flipCrime(dir) {
-  if (flipping || crimeTypes.length < 2) return;
+  if (flipping || crimeTypes.length < 2 || flockMode) return;
   const i = crimeTypes.indexOf(crimeType);
   const next = crimeTypes[(i + dir + crimeTypes.length) % crimeTypes.length];
   if (next === crimeType) return;
@@ -617,6 +687,12 @@ function refreshHud(type = crimeType) {
   const rate = dataMode === 'percapita';
   if (regionEl) regionEl.textContent = (REGION_META[region] || REGION_META.wc).name;
   refreshHint();
+  if (flockMode) { // airborne: the readouts suspend — no data reading while the field is released
+    if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + (rate ? ' · per 100k' : '');
+    if (yearEl) yearEl.textContent = '— released —';
+    if (countEl) countEl.textContent = '';
+    return;
+  }
   if (triPieMode) {
     if (crimeEl) crimeEl.textContent = `all ${crimeTypes.length} crimes` + (rate ? ' · per capita' : '');
     if (yearEl) yearEl.textContent = yearLabels[yi];
@@ -648,7 +724,7 @@ function updateFlag() {
 // Morph off the map into a robbery pie and back. Data swarms into the wedges, structure into the ring
 // + spokes — conserved, staggered, no fades.
 function togglePie() {
-  if (!pieBuilder || !field) return;
+  if (!pieBuilder || !field || flockMode) return;
   pieMode = !pieMode;
   playing = false;
   if (pieMode) {
@@ -671,7 +747,7 @@ function togglePie() {
 
 // Break the single pie into THREE — robbery · burglary · murder, same year, side by side.
 function toggleTriPie() {
-  if (!triPieBuilder || !field) return;
+  if (!triPieBuilder || !field || flockMode) return;
   const wasPie = pieMode;
   triPieMode = !triPieMode;
   playing = false;
@@ -697,7 +773,7 @@ function toggleTriPie() {
 // Toggle raw ⇄ per-capita ('C'). The DATA field morphs to the same view in the new mode — dense
 // townships shrink, low-population hotspots swell, because rate ≠ count. Works in every view + region.
 function toggleMode() {
-  if (!field) return;
+  if (!field || flockMode) return;
   const newMode = dataMode === 'raw' ? 'percapita' : 'raw';
   const oldMapLayout = layoutsByType[crimeType][yi];
   applyMode(newMode);
@@ -749,6 +825,7 @@ function resolveTriToPie(ci) {
 
 // The `M` key: from a pie/3-pie → swarm home to the map. On the Cape Town map → drill back out.
 function goToMap() {
+  if (flockMode) { landFlock(); return; }       // airborne → land (M is an exit everywhere)
   if (terrainMode) { toggleTerrain(); return; } // terrain → flat first (then M again exits pulse / drills out)
   if (pulseMode) { exitPulse(); return; }       // pulse → back to the years
   if (triPieMode) { toggleTriPie(); return; }
@@ -771,7 +848,7 @@ function goToMap() {
 // STRUCTURE: the province outline reconfigures into Cape Town's outline. Nothing fades except the rural
 // crime that genuinely has no detail to zoom into; the lens never moves.
 function startDrill(to) {
-  if (drilling || to === region || pieMode || triPieMode) return;
+  if (drilling || to === region || pieMode || triPieMode || flockMode) return;
   if (pulseMode) { pulseMode = false; playing = false; updateFlag(); } // drill flies on the YEARLY field (liveMap below); land re-seeds yearly
   if (terrainMode) { // never drill mid-relief — snap flat first (normal input exits terrain before this)
     terrainMode = false; zScaleCur = 0; tiltCur = 0; fieldGroup.rotation.x = 0; trProg = 1;
@@ -796,6 +873,10 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (drilling) return; // input is quiet mid-transition
+  if (flockMode) { // airborne: F/M/Esc land the field; EVERYTHING else is swallowed (a declared play state)
+    if (e.code === 'KeyF' || e.code === 'KeyM' || e.code === 'Escape') { e.preventDefault(); landFlock(); }
+    return;
+  }
   if (pulseMode) { // the pulse has its own clock: arrows step months, N/M return to years
     if (e.code === 'KeyN' || e.code === 'KeyM') { e.preventDefault(); exitPulse(); }
     else if (e.code === 'Space') { e.preventDefault(); playing = !playing; if (playing) { holdUntil = performance.now(); morphStart = -1; } }
@@ -808,6 +889,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (e.code === 'KeyN') { e.preventDefault(); enterPulse(); return; }
+  if (e.code === 'KeyF') { e.preventDefault(); enterFlock(); return; } // release the field (province map only — guards itself)
   if (e.code === 'KeyC') { e.preventDefault(); toggleMode(); return; }
   if (e.code === 'Digit3') { e.preventDefault(); toggleTriPie(); return; }
   if (triPieMode) {
@@ -841,6 +923,7 @@ const CHIP_ACTIONS = {
   percapita: () => toggleMode(),
   terrain: () => toggleTerrain(), // guards itself (needs a loaded DEM, no pies, no drill)
   months: () => (pulseMode ? exitPulse() : enterPulse()),
+  release: () => (flockMode ? landFlock() : enterFlock()), // guards itself (province flat map only)
   about: () => toggleAbout(),
 };
 
@@ -854,7 +937,10 @@ document.getElementById('about-close')?.addEventListener('click', () => toggleAb
 aboutEl?.addEventListener('click', (e) => { if (e.target === aboutEl) toggleAbout(false); });
 for (const el of document.querySelectorAll('.hud [data-act]')) {
   el.addEventListener('click', () => {
-    if (!drilling) { const f = CHIP_ACTIONS[el.dataset.act]; if (f) f(); }
+    // Airborne, the toolkit sleeps: only the landing chips (F release / M map) + about respond —
+    // mirrors the keydown swallow, so touch and keyboard agree on what a released field ignores.
+    const swallowed = flockMode && !['release', 'map', 'about'].includes(el.dataset.act);
+    if (!drilling && !swallowed) { const f = CHIP_ACTIONS[el.dataset.act]; if (f) f(); }
     el.blur();
   });
 }
@@ -921,6 +1007,7 @@ window.__viz = {
   hideData: (hide = true) => { if (field) field.points.visible = !hide; },
   region: (r) => { if (REGION_META[r]) startDrill(r); return region; }, // debug: force a drill into any region
   terrain: () => { toggleTerrain(); return { terrainMode, region }; },            // debug: toggle the current region's relief
+  flock: () => { if (flockMode) landFlock(); else enterFlock(); return { flockMode, phase: flockPhase, frame: flockIdx }; }, // debug: release / land the field
 };
 
 // ---- hover readout — "Nyanga · 2,300 robbery · 2019/20" (works in map AND pie), region-aware ----
@@ -960,7 +1047,7 @@ function precinctAnchors() {
   return out;
 }
 function hoverPrecinct(clientX, clientY) {
-  if (drilling) return -1;
+  if (drilling || flockMode) return -1; // airborne dots aren't at any precinct — the tooltip sleeps
   const rect = renderer.domElement.getBoundingClientRect();
   const mx = clientX - rect.left, my = clientY - rect.top;
   fieldGroup.updateWorldMatrix(true, false);
@@ -1031,7 +1118,7 @@ function buildLabelSpecs() {
 }
 const _lv = new THREE.Vector3();
 function updateLabels() {
-  const show = !drilling && !pieMode && !triPieMode && !terrainMode && strProg >= 1 && trProg >= 1;
+  const show = !drilling && !flockMode && !pieMode && !triPieMode && !terrainMode && strProg >= 1 && trProg >= 1;
   labelLayer.style.opacity = show ? '1' : '0';
   if (!show) return;
   if (labelsRegion !== region) buildLabelSpecs();
@@ -1062,6 +1149,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => { _downX = e.clientX;
 renderer.domElement.addEventListener('pointerup', (e) => {
   if (drilling) return;
   if (Math.hypot(e.clientX - _downX, e.clientY - _downY) > 6) return; // a drag (pan), not a click
+  if (flockMode) { landFlock(); return; } // a tap anywhere lands the field — the F/Esc parity for touch
   if (triPieMode && lastTriPie) {
     const rect = renderer.domElement.getBoundingClientRect();
     const mx = e.clientX - rect.left, my = e.clientY - rect.top;
@@ -1155,7 +1243,31 @@ function tick() {
     return;
   }
 
-  if (pieMorphing) {
+  if (flockMode) {
+    // The murmuration chain: fly to the next keyframe (heavy stagger = the turning wave), hold a
+    // breath, then on — wrapping around forever until a landing is asked for. The 'land' leg is the
+    // one morph home; its completion restores the truthful at-rest pair.
+    if (flockPhase === 'hold') {
+      t = 1;
+      if (now - flockStart >= FLOCK_HOLD) {
+        const next = (flockIdx + 1) % flockFrames.length;
+        field.setSource(withFlockDensity(flockFrames[flockIdx])); // full-buffer: province-only state (see enterFlock)
+        field.setTarget(withFlockDensity(flockFrames[next]));
+        field.setStagger(FLOCK_STAGGER);
+        flockIdx = next; flockPhase = 'fly'; flockStart = now; t = 0;
+      }
+    } else {
+      const p = Math.min((now - flockStart) / (flockPhase === 'land' ? FLOCK_LAND_MS : FLOCK_MS), 1);
+      t = easeInOut(p);
+      if (p >= 1) {
+        if (flockPhase === 'land') {
+          flockMode = false;
+          setYearPair(yi);   // re-anchor the scrub pair on the truthful map (mirrors pieMorphing's re-anchor) + restore the HUD
+          morphStart = -1; holdUntil = now + HOLD_MS;
+        } else { flockPhase = 'hold'; flockStart = now; }
+      }
+    }
+  } else if (pieMorphing) {
     const p = Math.min((now - pieMorphStart) / PIE_MS, 1);
     t = swarmEase(p);
     if (p >= 1) {
