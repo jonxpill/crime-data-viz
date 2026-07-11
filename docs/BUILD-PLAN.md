@@ -262,5 +262,8 @@ Branched from post-door-fix main; plans in docs/plans/:
 - `feat/loom` — [The Loom Bridges](plans/loom.md) · weekend · S chorale + G voice-scrub, own module
 - `feat/suburb` — [Stand In Your Suburb](plans/suburb.md) · weekend-plus · bake gains lng/lat, merge last
 - `feat/forensics` — [The Forensics Strip](plans/forensics.md) · weekend-plus · wording is a merge gate
-Round-one branches (reading/ember/canyon/unlit) remain unmerged pending the maker's tweak pass;
-they forked PRE-door-fix and need setDataPair reconciliation at merge.
+Round-one verdicts (maker, 2026-07-11, mid-gallery): **canyon KEEP** · **unlit KEEP** (kept for
+importance — the honesty counterweight — rather than visual novelty) · **reading MAYBE** (pending
+another look) · **ember DROPPED** — too similar to the existing pulse; the branch stays parked in git
+(its generic age-tint engine capability may serve later), never merged. Survivors merge after the
+round-two cull, reconciled with the setDataPair door (they forked pre-fix).
