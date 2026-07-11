@@ -264,6 +264,16 @@ specific instruments (deferred) · where it lives / distribution · a name.
   station DataFirst never carried" (a structural hole needing backfill) "+36 = SAPS revisions" (documented,
   ignorable). Merging on the aggregate would have baked a fake 2023 cliff into Philippi. An unexplained
   delta is not an error bar — it's an unread story. (?)
+- **A convention that is correct by COINCIDENCE is a landmine — make the hidden parameter explicit at
+  one door.** The district partial-write worked only because Cape Town's slice happens to start at
+  offset 0; the five later districts silently wrote into Cape Town's slots. One offset-aware door
+  (setDataPair) replaced a dozen call sites that each had to remember the trick. When a trick works,
+  ask WHY it works — if the answer names a coincidence, promote the coincidence to a parameter. (?)
+- **Verify by counting STATE, not photons.** A luminance probe said "no bug" (coincident additive dots
+  under tone mapping barely move total brightness); reading the density buffers per slice band showed
+  6,739 phantom dots instantly. When a probe returns "fine" against a strong prior, distrust the
+  PROBE's sensitivity before the prior — pick an instrument whose signal is structurally forced to
+  move if the hypothesis is true. (?)
 - **When an admin unit splits but your geometry predates the split, fold the child INTO the parent —
   parent+child is the true count for the polygon you actually draw.** Dropping the new unit fakes a decline
   in the parent; showing it separately needs geometry you don't have. And check whether the child recorded
