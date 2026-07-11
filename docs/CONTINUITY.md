@@ -269,3 +269,8 @@ specific instruments (deferred) · where it lives / distribution · a name.
   in the parent; showing it separately needs geometry you don't have. And check whether the child recorded
   separately BEFORE your snapshot's end (Samora Machel since 2018/19) — if so, backfill its history too, or
   the series has a hole exactly where the fold begins. (?)
+- **A safety clamp set by TASTE becomes a hidden design ceiling — guard the failure with an EPSILON.** The
+  engine's stagger floor `max(w, 0.02)` existed only to guard a division, but 0.02 silently forbade the
+  legitimate extreme (thousands of ordered dots crossing one per second: windows of ~4e-4 — the Reading's
+  1.5 s flight clamped to 78 s). Clamp at the value that actually prevents the failure (1e-4 ≫ ÷0), not a
+  value that "feels safe"; a toy step-test of the maths BEFORE wiring the feature is what caught it. (?)
