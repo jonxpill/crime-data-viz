@@ -138,11 +138,14 @@ const popByKey = new Map();
 }
 
 // ---- station records ----
+// lng/lat ride along (4dp ≈ 11 m — ample for nearest-station work): the client's "find me"
+// geolocate needs real-world coords to haversine against; projected x/y can't give them back.
+// These are the STATION's own public coordinates (from the crime CSV), no new precision claim.
 const stations = stationList.map((s) => {
   const [x, y] = project([s.lng, s.lat]);
   const crimes = {};
   for (const cr of CRIMES) { crimes[cr.key] = {}; YEARS.forEach((yr) => { crimes[cr.key][yr] = Math.round(s.crimes[cr.key][yr] || 0); }); }
-  return { name: titleCase(s.name), x: +x.toFixed(1), y: +y.toFixed(1), r: +(radiusByName.get(s.key) ?? 8).toFixed(1), dc: s.dc, pop: Math.round(popByKey.get(s.key) ?? 5000), crimes, monthly: s.monthly };
+  return { name: titleCase(s.name), x: +x.toFixed(1), y: +y.toFixed(1), lng: +s.lng.toFixed(4), lat: +s.lat.toFixed(4), r: +(radiusByName.get(s.key) ?? 8).toFixed(1), dc: s.dc, pop: Math.round(popByKey.get(s.key) ?? 5000), crimes, monthly: s.monthly };
 });
 
 // ---- structure: precinct outlines at a constant arc-length step ----
@@ -237,7 +240,7 @@ function detailView(dPrecincts, dStations) {
   const sts = dStations.map((s) => {
     const [x, y] = pr([s.lng, s.lat]); const crimes = {};
     for (const cr of CRIMES) { crimes[cr.key] = {}; YEARS.forEach((yr) => { crimes[cr.key][yr] = Math.round(s.crimes[cr.key][yr] || 0); }); }
-    return { name: titleCase(s.name), x: +x.toFixed(1), y: +y.toFixed(1), r: +(radByName.get(s.key) ?? 8).toFixed(1), dc: s.dc, pop: Math.round(popByKey.get(s.key) ?? 5000), crimes, monthly: s.monthly };
+    return { name: titleCase(s.name), x: +x.toFixed(1), y: +y.toFixed(1), lng: +s.lng.toFixed(4), lat: +s.lat.toFixed(4), r: +(radByName.get(s.key) ?? 8).toFixed(1), dc: s.dc, pop: Math.round(popByKey.get(s.key) ?? 5000), crimes, monthly: s.monthly };
   });
   const struct = []; const STEP = 0.55;
   for (const f of dPrecincts) for (const ring of allRings(f.geometry)) {
