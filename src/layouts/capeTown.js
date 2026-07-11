@@ -18,6 +18,7 @@ import { neighbourCounts } from './density.js';
  */
 
 const TAU = Math.PI * 2;
+export const UNBORN = 1e9;  // aBirth for a slot that never ignites (engine hides aBirth > clock)
 const PER_POINT = 1.0;     // ONE glowing point per robbery — the most honest dial:
                            // a star IS a crime. Sparser + most legible; cores stack
                            // least. (Higher = sparser still; ratio always exact.)
@@ -251,6 +252,77 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
     return got;
   }
 
+  // ---- CUMULATIVE MONTHLY (the ember field) — every event gets ONE permanent dot ---------------------
+  // One dot per reported event, placed once (its station's jitter, in month order) and never moved:
+  // playback is purely the engine's age clock sweeping per-dot birth times. Births are spread through
+  // each month and land exactly ON the month index, so at rest at month m the visible count = the
+  // cumulative through m TO THE DIGIT, and a month-crossing ignites the new month's dots one by one.
+  // Slots are allocated GLOBALLY in station-then-month order — a 5-year single-crime pile-up outgrows a
+  // station's own per-year K, so the per-slice partition can't hold it; jitter cycles the station's offs
+  // past K (exact overlaps drift apart, each dot has its own seed). RAW counts ONLY, whatever this
+  // build's mode: an ember is one reported EVENT; a per-capita rate-dot has no birth to ignite.
+  // cumulativeFits (checked at build, all crimes) is the app's gate; the throw below is the backstop —
+  // if a data refresh outgrows the pool we fail LOUDLY, because silently sampling would fake the count
+  // and the count is the whole point.
+  const cumulativeCache = new Map();
+  const rawMonthly = (s, type, m) => (s.monthly && s.monthly[type] && s.monthly[type][m]) || 0;
+  let cumulativeFits = true;
+  if (MONTH_LABELS) for (const type of types) {
+    let n = 0;
+    for (const s of stations) for (let m = 0; m < MONTH_LABELS.length; m++) n += rawMonthly(s, type, m);
+    if (n > COUNT) cumulativeFits = false;
+  }
+  function cumulativeMonthly(type) {
+    if (!MONTH_LABELS) return null;
+    let got = cumulativeCache.get(type);
+    if (got) return got;
+    cumulativeCache.clear(); // one crime's ember field resident at a time — same bound as monthly()
+    const M = MONTH_LABELS.length;
+    let total = 0;
+    for (const sl of slots) for (let m = 0; m < M; m++) total += rawMonthly(sl.s, type, m);
+    if (total > COUNT) throw new Error(
+      `[capeTown] EMBER OVERFLOW: ${total.toLocaleString()} cumulative '${type}' events exceed the ` +
+      `${COUNT.toLocaleString()}-slot pool — the data outgrew the slot sizing. Grow the pool ` +
+      `(PER_POINT / peak-year sizing), NEVER sample the events down.`);
+    const positions = new Float32Array(COUNT * 2);
+    const births = new Float32Array(COUNT).fill(UNBORN);
+    const perMonth = new Float32Array(M); // this month's province-wide events (→ cumulative totals)
+    const activeXY = [], activeIdx = [];
+    let cursor = 0;
+    for (const sl of slots) {
+      let used = 0; // events placed at this station so far — cycles its offs past K
+      for (let m = 0; m < M; m++) {
+        const n = rawMonthly(sl.s, type, m);
+        perMonth[m] += n;
+        for (let j = 0; j < n; j++) {
+          const o = sl.K ? (used % sl.K) * 2 : 0;
+          const px = sl.s.x + (sl.K ? sl.offs[o] : 0), py = sl.s.y + (sl.K ? sl.offs[o + 1] : 0);
+          positions[cursor * 2] = px; positions[cursor * 2 + 1] = py;
+          births[cursor] = m - 1 + (j + 1) / n; // spread through the month, landing exactly ON m
+          activeXY.push(px, py); activeIdx.push(cursor);
+          used++; cursor++;
+        }
+      }
+    }
+    for (let i = cursor; i < COUNT; i++) { // surplus slots wait at a roost, never born
+      positions[i * 2] = roostPos[i * 2]; positions[i * 2 + 1] = roostPos[i * 2 + 1];
+    }
+    // Density still rides along (dot SIZE + the age-mode-off crossfade read it): the 5-year pile-up's
+    // own crowding, normalised to itself like every other layout.
+    const raw = neighbourCounts(Float32Array.from(activeXY), DENSITY_CELL);
+    let gMax = 1; for (let k = 0; k < raw.length; k++) if (raw[k] > gMax) gMax = raw[k];
+    const density = new Float32Array(COUNT);
+    for (let k = 0; k < activeIdx.length; k++) {
+      const d = Math.pow(Math.min(raw[k] / gMax, 1), 0.55);
+      density[activeIdx[k]] = ACTIVE_FLOOR + (1 - ACTIVE_FLOOR) * d;
+    }
+    const totals = new Array(M); // cumulative events through month m, all stations
+    let run = 0; for (let m = 0; m < M; m++) { run += perMonth[m]; totals[m] = run; }
+    got = { layout: { positions, density }, births, totals, count: total };
+    cumulativeCache.set(type, got);
+    return got;
+  }
+
   /**
    * PIE layout for one crime + year, reusing the SAME slots (so the map ⇄ pie morph is a
    * conserved swarm — dot i stays with its precinct, it just flies to the wedge). Each precinct's
@@ -415,7 +487,7 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
     return { positions, density, boundaries, R, cx, cy };
   }
 
-  return { years, count: COUNT, layouts, totals, pieLayout, triPieLayout, resolvePieLayout, monthly, months: MONTH_LABELS };
+  return { years, count: COUNT, layouts, totals, pieLayout, triPieLayout, resolvePieLayout, monthly, cumulativeMonthly, cumulativeFits, months: MONTH_LABELS };
 }
 
 /**
