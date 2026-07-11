@@ -279,3 +279,7 @@ specific instruments (deferred) · where it lives / distribution · a name.
   in the parent; showing it separately needs geometry you don't have. And check whether the child recorded
   separately BEFORE your snapshot's end (Samora Machel since 2018/19) — if so, backfill its history too, or
   the series has a hole exactly where the fold begins. (?)
+- **Give every sensory output a pure state→signal function and a debug hook that returns its numbers.**
+  Sound (the loom bridges) became headless-verifiable because the six frequencies are a pure function of
+  app state that BOTH the voices and `__viz.chorale()` consume — the node check proves the digits, and only
+  taste is left to the ear. Applies to any output you can't assert on (audio, haptics, shader feel). (?)
