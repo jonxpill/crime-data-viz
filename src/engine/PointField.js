@@ -52,6 +52,9 @@ export class PointField {
     geometry.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
     // Per-point terrain height (0 for flat fields; the terrain field fills it).
     geometry.setAttribute('aZ', new THREE.BufferAttribute(new Float32Array(count), 1));
+    // Per-point BIRTH time on the age clock (any unit the caller likes — the engine doesn't know
+    // what a "month" is). Only read when uAgeMode is on; a huge birth (> any clock value) = never born.
+    geometry.setAttribute('aBirth', new THREE.BufferAttribute(new Float32Array(count), 1));
     // BufferGeometry needs *some* `position`; we drive xy ourselves, keep z=0.
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
     geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1e6);
@@ -86,6 +89,11 @@ export class PointField {
         uShimmerSpeed: { value: 0.8 }, // how fast the breath cycles (slow = calm)
         uZScale: { value: 0 }, // terrain vertical scale (0 = flat map; raised = relief)
         uOpacity: { value: 1 }, // global fade — cross-fades map structure ↔ terrain relief
+        // AGE-TINTED FIELD (data role only): when uAgeMode is on, colour comes from each point's AGE
+        // (uMonth − aBirth) on a fixed cooling curve instead of density, and points not yet born are
+        // hidden. uMonth is just the clock — fractional values ignite a period's points one by one.
+        uMonth: { value: 0 },
+        uAgeMode: { value: 0 },
         uRampCool: { value: ramp[0] },
         uRampMid: { value: ramp[1] },
         uRampWarm: { value: ramp[2] },
@@ -153,6 +161,12 @@ export class PointField {
   setZScale(s) { this.material.uniforms.uZScale.value = s; }
   /** Global opacity 0..1 — for cross-fading fields (map mesh ↔ terrain). */
   setOpacity(o) { this.material.uniforms.uOpacity.value = o; }
+  /** Per-point birth times on the age clock (caller units; huge value = never born). */
+  setBirths(arr) { this.points.geometry.getAttribute('aBirth').copyArray(arr).needsUpdate = true; }
+  /** Advance the age clock — fractional values sweep a period's points alight one by one. */
+  setMonth(m) { this.material.uniforms.uMonth.value = m; }
+  /** Age-tint mode: colour = fixed cooling curve of (clock − birth) instead of density; unborn hidden. */
+  setAgeMode(on) { this.material.uniforms.uAgeMode.value = on ? 1 : 0; }
 }
 
 const VERT = /* glsl */ `
@@ -168,6 +182,7 @@ const VERT = /* glsl */ `
   uniform float uShimmerSpeed;
   uniform float uZScale;
   uniform float uMaxSize;
+  uniform float uMonth;
 
   attribute vec2 aSource;
   attribute vec2 aTarget;
@@ -175,9 +190,11 @@ const VERT = /* glsl */ `
   attribute float aTargetDensity;
   attribute float aSeed;
   attribute float aZ;
+  attribute float aBirth;
 
   varying float vDensity;
   varying float vTwinkle;
+  varying float vAge;
 
   // Smooth, slightly eased blend so the field "settles" rather than slides linearly.
   void main() {
@@ -190,6 +207,7 @@ const VERT = /* glsl */ `
     vec2 pos = mix(aSource, aTarget, lt);
     float density = mix(aSourceDensity, aTargetDensity, lt);
     vDensity = density;
+    vAge = uMonth - aBirth; // age on the caller's clock; negative = not yet born (fragment hides it)
 
     // Idle drift — each point wanders a slow, tiny orbit on its own phase, so the
     // field shimmers like a living swarm even at rest. Two summed frequencies keep
@@ -226,6 +244,7 @@ const FRAG = /* glsl */ `
   uniform float uOpacity;
   uniform float uDataFloor;
   uniform float uDataGain;
+  uniform float uAgeMode;
   uniform vec3 uRampCool;
   uniform vec3 uRampMid;
   uniform vec3 uRampWarm;
@@ -233,6 +252,16 @@ const FRAG = /* glsl */ `
 
   varying float vDensity;
   varying float vTwinkle;
+  varying float vAge;
+
+  // AGE curve — fixed and disclosed: born white-hot, cools amber → deep red across ~6 clock units,
+  // then settles as dark ash. The ash NEVER reaches zero — nothing that happened ever reads as "safe";
+  // it must sit as a THIRD tone (not data-bright, not the structure slate).
+  vec3 ageTint(float a) {
+    vec3 c = mix(vec3(1.00, 0.97, 0.90), vec3(1.00, 0.56, 0.18), smoothstep(1.0, 3.0, a)); // white-hot → amber
+    c = mix(c, vec3(0.62, 0.10, 0.05), smoothstep(3.0, 6.0, a));                           // → deep red
+    return mix(c, vec3(0.30, 0.19, 0.16), smoothstep(6.0, 12.0, a));                       // → ash (the floor)
+  }
 
   vec3 ramp(float d) {
     // cool/dim -> mid -> warm/bright. The cool end is held across the whole
@@ -249,7 +278,14 @@ const FRAG = /* glsl */ `
     if (r > 1.0) discard;
     float core = smoothstep(1.0, 0.0, r);
 
-    if (uGlow > 0.5) {
+    if (uGlow > 0.5 && uAgeMode > 0.5) {
+      // DATA, AGE-TINTED — birth replaces density as the colour channel. Unborn points are hidden
+      // (the field only ever grows as the clock advances); brightness cools with the tint so fresh
+      // points blaze and the ash holds a faint permanent glow. Additive path unchanged.
+      if (vAge < 0.0) discard;
+      float heat = mix(1.0, 0.14, smoothstep(0.0, 6.0, vAge));
+      gl_FragColor = vec4(ageTint(vAge), core * core * heat * vTwinkle);
+    } else if (uGlow > 0.5) {
       // DATA — glowing, density-coloured. Parked points (density ~0, used by the
       // year-scrub to hold surplus slots at a precinct centre) are invisible.
       if (vDensity < 0.02) discard;
