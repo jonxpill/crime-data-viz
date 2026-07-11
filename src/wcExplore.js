@@ -546,8 +546,13 @@ function stepMonth(dir) {
 // every dot to layouts[yi] — the truthful map — then re-anchors the scrub pair.
 let flockMode = false, flockPhase = 'fly', flockIdx = 0, flockStart = 0;
 let flockFrames = null, flockDensity = null;
-const FLOCK_MS = 2400, FLOCK_HOLD = 200, FLOCK_LAND_MS = 2800; // frame crossing · a breath · the glide home
+const FLOCK_MS = 2400, FLOCK_SWAP = 0.7, FLOCK_LAND_MS = 2800; // leg length · overlap point · the glide home
 const FLOCK_STAGGER = 0.75, FLOCK_LAND_STAGGER = 0.6;
+// Continuous-motion levers: the curl flow + boosted idle drift keep every dot streaming BETWEEN
+// waypoints (amplitudes are eased in the tick; speeds are set only while amplitudes are tiny —
+// a speed change mid-flight snaps orbit/flow phase).
+const FLOCK_FLOW = 9, FLOCK_FLOW_SPEED = 1.15, FLOCK_DRIFT = 5.5, FLOCK_DRIFT_SPEED = 2.4;
+let flowCur = 0, flockDriftCur = 0.4;
 
 // Pair a flock frame (positions only) with the density snapshotted at take-off — each dot KEEPS its
 // warmth through the flight, so the hot-core dots streak as warm threads across the sky.
@@ -567,6 +572,7 @@ function enterFlock() {
   field.setSource(live);
   field.setTarget(withFlockDensity(flockFrames[0]));
   field.setStagger(FLOCK_STAGGER);
+  field.setDriftSpeed(FLOCK_DRIFT_SPEED); // amp still at-rest tiny here; it ramps in the tick
   field.setT(0);
   flockMode = true; flockPhase = 'fly'; flockIdx = 0; flockStart = performance.now();
   playing = false; morphStart = -1; t = 0;
@@ -1247,24 +1253,28 @@ function tick() {
     // The murmuration chain: fly to the next keyframe (heavy stagger = the turning wave), hold a
     // breath, then on — wrapping around forever until a landing is asked for. The 'land' leg is the
     // one morph home; its completion restores the truthful at-rest pair.
-    if (flockPhase === 'hold') {
-      t = 1;
-      if (now - flockStart >= FLOCK_HOLD) {
-        const next = (flockIdx + 1) % flockFrames.length;
-        field.setSource(withFlockDensity(flockFrames[flockIdx])); // full-buffer: province-only state (see enterFlock)
-        field.setTarget(withFlockDensity(flockFrames[next]));
-        field.setStagger(FLOCK_STAGGER);
-        flockIdx = next; flockPhase = 'fly'; flockStart = now; t = 0;
-      }
-    } else {
-      const p = Math.min((now - flockStart) / (flockPhase === 'land' ? FLOCK_LAND_MS : FLOCK_MS), 1);
+    if (flockPhase === 'land') {
+      const p = Math.min((now - flockStart) / FLOCK_LAND_MS, 1);
       t = easeInOut(p);
       if (p >= 1) {
-        if (flockPhase === 'land') {
-          flockMode = false;
-          setYearPair(yi);   // re-anchor the scrub pair on the truthful map (mirrors pieMorphing's re-anchor) + restore the HUD
-          morphStart = -1; holdUntil = now + HOLD_MS;
-        } else { flockPhase = 'hold'; flockStart = now; }
+        flockMode = false;
+        field.setDriftSpeed(1.0); // flow/drift amplitudes have eased ~to rest through the glide
+        setYearPair(yi);   // re-anchor the scrub pair on the truthful map (mirrors pieMorphing's re-anchor) + restore the HUD
+        morphStart = -1; holdUntil = now + HOLD_MS;
+      }
+    } else {
+      // Continuous legs: LINEAR t (an eased leg would bring every dot to a stop at each waypoint),
+      // and the next leg begins at FLOCK_SWAP of this one FROM THE EXACT AIRBORNE POSE — dots change
+      // heading mid-air, so the flock never lands between frames. The flow field carries the
+      // in-between motion.
+      const p = Math.min((now - flockStart) / FLOCK_MS, 1);
+      t = p;
+      if (p >= FLOCK_SWAP) {
+        const next = (flockIdx + 1) % flockFrames.length;
+        field.setSource({ positions: airbornePose(), density: flockDensity }); // full-buffer: province-only state (see enterFlock)
+        field.setTarget(withFlockDensity(flockFrames[next]));
+        field.setStagger(FLOCK_STAGGER);
+        flockIdx = next; flockStart = now; t = 0;
       }
     }
   } else if (pieMorphing) {
@@ -1309,6 +1319,16 @@ function tick() {
     }
     structField.setTime(time);
   }
+  // Released-field motion ramps: flow + boosted drift ease UP on take-off and settle through the
+  // landing glide (amplitudes only — speeds are pinned while amplitudes are live, see FLOCK_ consts).
+  if (field && (flockMode || flowCur > 0.001 || Math.abs(flockDriftCur - 0.4) > 0.01)) {
+    const airborne = flockMode && flockPhase !== 'land';
+    flowCur += ((airborne ? FLOCK_FLOW : 0) - flowCur) * 0.045;
+    flockDriftCur += ((airborne ? FLOCK_DRIFT : 0.4) - flockDriftCur) * 0.045;
+    field.setFlow(flowCur, FLOCK_FLOW_SPEED);
+    field.setDrift(flockDriftCur);
+  }
+
   // Terrain (Cape Town only): ease the land up/down + the view tilt, advance the band⇄relief swarm, and
   // lift the crime with it. In the province zScaleCur stays 0 (T is a no-op there), so it renders flat.
   if (terrainField) {

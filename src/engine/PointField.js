@@ -85,6 +85,10 @@ export class PointField {
         uShimmer: { value: 0.9 },      // amplitude (0 = still; ~0.3 gentle, ~0.45 present, ~0.9 dramatic)
         uShimmerSpeed: { value: 0.8 }, // how fast the breath cycles (slow = calm)
         uZScale: { value: 0 }, // terrain vertical scale (0 = flat map; raised = relief)
+        // Flow field — continuous curl advection for RELEASED/play states. 0 in every truthful view;
+        // a play mode ramps it up so dots stream between morph waypoints instead of ever resting.
+        uFlow: { value: 0 },
+        uFlowSpeed: { value: 1 },
         uOpacity: { value: 1 }, // global fade — cross-fades map structure ↔ terrain relief
         uRampCool: { value: ramp[0] },
         uRampMid: { value: ramp[1] },
@@ -152,6 +156,11 @@ export class PointField {
     if (mid) u.uRampMid.value.set(mid);
     if (warm) u.uRampWarm.value.set(warm);
   }
+  /** Flow-field advection for play states: amp in world units (0 = off), optional speed multiplier.
+   *  Keep speed FIXED while amp > 0 — the flow is a function of time, so a speed change mid-flight
+   *  snaps every dot's phase; ramp the amplitude instead. */
+  setFlow(amp, speed) { this.material.uniforms.uFlow.value = amp; if (speed != null) this.material.uniforms.uFlowSpeed.value = speed; }
+
   /** Terrain vertical scale — 0 = flat map, higher lifts each point's aZ into relief. */
   setZScale(s) { this.material.uniforms.uZScale.value = s; }
   /** Global opacity 0..1 — for cross-fading fields (map mesh ↔ terrain). */
@@ -170,6 +179,8 @@ const VERT = /* glsl */ `
   uniform float uShimmer;
   uniform float uShimmerSpeed;
   uniform float uZScale;
+  uniform float uFlow;
+  uniform float uFlowSpeed;
   uniform float uMaxSize;
 
   attribute vec2 aSource;
@@ -203,6 +214,21 @@ const VERT = /* glsl */ `
     float wander = uDrift * (1.3 - 0.5 * density);
     pos.x += wander * (sin(tt * 0.5 + ph) + 0.5 * sin(tt * 1.1 + ph * 2.0));
     pos.y += wander * (cos(tt * 0.43 + ph * 1.3) + 0.5 * cos(tt * 0.9 + ph * 1.7));
+
+    // FLOW FIELD — divergence-free curl advection for released/play states (uFlow is 0 in every
+    // truthful view). Sampled from POSITION + time, never per-dot randomness, so neighbours ride the
+    // same stream — coherent turning waves, not jitter. Two octaves of the analytic curl
+    // (∂ψ/∂y, −∂ψ/∂x) of trig potentials: swirls that never bunch the field up.
+    if (uFlow > 0.0) {
+      float ft = uTime * uFlowSpeed;
+      vec2 q1 = pos * 0.011;
+      vec2 f1 = vec2(-1.30 * sin(q1.x + ft * 0.90) * sin(q1.y * 1.30 - ft * 0.63),
+                     -cos(q1.x + ft * 0.90) * cos(q1.y * 1.30 - ft * 0.63));
+      vec2 q2 = pos * 0.033;
+      vec2 f2 = vec2(-0.80 * sin(q2.x - ft * 1.70) * sin(q2.y * 0.80 + ft * 1.10),
+                     -cos(q2.x - ft * 1.70) * cos(q2.y * 0.80 + ft * 1.10));
+      pos += uFlow * (f1 + 0.5 * f2);
+    }
 
     // Per-point breath. Data: a gentle twinkle. Structure: each dot fades slightly in/out on
     // its OWN phase (never brighter than base), so the frame shimmers like faint stars.
