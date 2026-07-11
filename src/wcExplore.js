@@ -7,6 +7,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointField } from './engine/PointField.js';
 import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor } from './layouts/capeTown.js';
+import { createChorale, createVoiceScrub } from './sound/loomBridge.js';
 
 /*
  * THE APP — a Western Cape crime field you drill into Cape Town from. (Was the single-region Cape Town app
@@ -174,6 +175,13 @@ let structDotSize = 1.6;
 // Structure swarm transition (one pool; map outline ⇄ pie frame ⇄ Cape Town outline).
 let structCurrent = null, strProg = 1, strStart = 0, strDur = 2400, strTo = null, strStagger = 0.6;
 
+// ---- THE LOOM BRIDGES (sound) — see src/sound/loomBridge.js ---------------------------------------
+// Two pure observers of this file's state: S = the district chorale (six districts as six voices),
+// G = the voice scrub (your hum's pitch picks the year — mic is local-only). All audio lives in the
+// module; here it's only wiring: deps getters in, hint text out.
+let chorale = null, voiceScrub = null;
+let choraleHint = null, voiceHint = null; // hint overrides while a bridge is live (voice wins: privacy first)
+
 // ---- terrain (Cape Town ONLY — the province has no DEM) --------------------------------------------
 // A SEPARATE relief pool, ported from main.js and gated to region==='ct'. structField (the conserved
 // drill pool) is never touched: on 'T' we swap the CT outline for this pool at its band pose — which
@@ -199,11 +207,12 @@ const hintEl = document.getElementById('hint');
 let _lastHint = null;
 function refreshHint() {
   if (!hintEl || drilling) return;
-  const txt = terrainMode ? 'T or tap → flat map'
+  const txt = voiceHint || choraleHint // a live sound bridge owns the hint (G's privacy line is mandatory)
+    || (terrainMode ? 'T or tap → flat map'
     : pulseMode ? '←→ month · space play/pause · N or M → years'
       : (pieMode || triPieMode) ? 'press M for the map'
         : region !== 'wc' ? 'N months · T terrain · click empty space (or M) to zoom out'
-          : 'N months · T terrain · click any area to zoom in';
+          : 'N months · T terrain · click any area to zoom in');
   if (txt !== _lastHint) { hintEl.textContent = txt; _lastHint = txt; }
 }
 
@@ -371,6 +380,26 @@ async function init() {
   terrainField.points.visible = false;
   fieldGroup.add(terrainField.points);
   reseedTerrain();
+
+  // The loom bridges — deps are GETTERS into this file's live state (the modules observe, never own).
+  // Districts get the province's stations grouped by dc: crimes + monthly + pop + x is all a voice needs.
+  const loomDistricts = DETAIL_REGIONS.map((rk) => ({
+    key: rk, name: REGION_META[rk].name,
+    stations: orderedStations.filter((s) => norm(s.dc) === REGION_META[rk].dc),
+  }));
+  chorale = createChorale({
+    districts: loomDistricts, years, monthCount: monthLabels ? monthLabels.length : 0,
+    get: () => ({ yi, mi, pulseMode, crimeType, blocked: pieMode || triPieMode }), // pies: the chorale falls silent
+    hint: (txt) => { choraleHint = txt; refreshHint(); },
+  });
+  voiceScrub = createVoiceScrub({
+    yearCount: () => years.length,
+    blocked: () => pieMode || triPieMode || pulseMode || drilling, // the voice writes YEARS — never into a pie/pulse/drill
+    isPlaying: () => playing,
+    setPlaying: (b) => { playing = b; if (b) { holdUntil = performance.now(); morphStart = -1; } }, // mirrors the Space resume
+    scrub: (i) => { playing = false; setYearPair(i); }, // the ONLY write either bridge has — the existing year door
+    hint: (txt) => { voiceHint = txt; refreshHint(); },
+  });
 
   applyMode('raw');
   frameUnion(wcRaw.meta.box, ctRaw.meta.box);
@@ -805,6 +834,7 @@ window.addEventListener('keydown', (e) => {
     else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
     else if (e.code === 'KeyC') { e.preventDefault(); toggleMode(); }
     else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); }
+    else if (e.code === 'KeyS') { e.preventDefault(); chorale?.toggle(); } // the pulse re-voices per month — December becomes a heard crescendo
     return;
   }
   if (e.code === 'KeyN') { e.preventDefault(); enterPulse(); return; }
@@ -824,6 +854,9 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
   else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
   else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); } // Cape Town relief (no-op in the province)
+  // The loom bridges: no-op inside the pies (the 3-pie branch above already returns).
+  else if (e.code === 'KeyS') { e.preventDefault(); if (!pieMode) chorale?.toggle(); }
+  else if (e.code === 'KeyG') { e.preventDefault(); if (!pieMode) voiceScrub?.toggle(); }
 });
 
 // HUD chips → the SAME actions as the keys (touch parity: on a phone the keyboard toolkit doesn't
@@ -841,6 +874,8 @@ const CHIP_ACTIONS = {
   percapita: () => toggleMode(),
   terrain: () => toggleTerrain(), // guards itself (needs a loaded DEM, no pies, no drill)
   months: () => (pulseMode ? exitPulse() : enterPulse()),
+  sound: () => { if (pieMode || triPieMode) return; chorale?.toggle(); },              // S — mirrors the keys' pie guard
+  sing: () => { if (pieMode || triPieMode || pulseMode) return; voiceScrub?.toggle(); }, // G — year-writer: quiet in the pulse too
   about: () => toggleAbout(),
 };
 
@@ -921,6 +956,11 @@ window.__viz = {
   hideData: (hide = true) => { if (field) field.points.visible = !hide; },
   region: (r) => { if (REGION_META[r]) startDrill(r); return region; }, // debug: force a drill into any region
   terrain: () => { toggleTerrain(); return { terrainMode, region }; },            // debug: toggle the current region's relief
+  // The loom bridges, headless: chorale() = the CURRENT six frequencies + the full mapping table
+  // (pure — needs no AudioContext); sing(hz) = inject a fake pitch and scrub, mic never opened.
+  chorale: () => (chorale ? chorale.debug() : null),
+  sing: (hz) => (voiceScrub ? voiceScrub.sing(hz) : null),
+  loom: () => ({ chorale: !!chorale && chorale.isOn(), voice: voiceScrub ? voiceScrub.state() : null }),
 };
 
 // ---- hover readout — "Nyanga · 2,300 robbery · 2019/20" (works in map AND pie), region-aware ----
@@ -1134,6 +1174,10 @@ let frames = 0, fpsWall = -1;
 function tick() {
   const now = performance.now();
   const time = clock.getElapsedTime();
+
+  // The chorale observes every frame (cheap: a string compare when on) — BEFORE the drill early-return
+  // so a chord holds honestly through a drill (the year doesn't change mid-flight; neither should it).
+  if (chorale) chorale.update();
 
   if (drilling) {
     const p = Math.min((now - drillStart) / DRILL_MS, 1);
