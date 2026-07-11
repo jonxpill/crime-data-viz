@@ -581,6 +581,93 @@ export function bandFor(data, terr, { band = 0.4 } = {}) {
   return { positions, density, z };
 }
 
+/**
+ * THE FLOCK — 8 murmuration keyframes for "release the field" (the province-only play state).
+ *
+ * Pure + seeded like every layout, but POSITIONS ONLY: the flight carries whatever density the live
+ * map had at take-off (the caller snapshots it), so no density is fabricated here. Each frame is a
+ * murmuration silhouette: 3–5 anisotropic gaussian lobes, each stretched along its own direction of
+ * travel, whose centres drift along seeded two-frequency Lissajous paths across the box. A dot joins
+ * ONE lobe for the whole flight with a FIXED unit offset, so consecutive frames morph coherently —
+ * the flock wheels as one organism instead of reshuffling — and the engine's per-dot stagger turns
+ * each frame-to-frame morph into the traveling wave that IS the murmuration. INTEGER path
+ * frequencies close the cycle, so the frame 7 → frame 0 wrap is as smooth as any other beat.
+ *
+ * Bounds are provable, not hoped-for: unit offsets are truncated at ±2.3σ, and with the amplitudes
+ * below the worst case is |x| ≤ (0.3 + 0.5)·halfW + 2.3·2.0·(0.10·1.2·1.4)·S ≈ 1.57·halfW (y is
+ * tighter still) where S = min(halfW, halfH) — inside a 1.6×-box stage for ANY box aspect. ~15% of
+ * dots get a 2× halo spread so the silhouette's edge feathers instead of ending on a gaussian cliff.
+ *
+ * @returns {Array<{positions:Float32Array}>} 8 frames; a `.halo` Uint8Array mask rides along on the
+ *          array for the node-level verification (the app never reads it).
+ */
+export function flockLayouts(count, box, seed = 0xf10c) {
+  const rng = mulberry32(seed);
+  const halfW = box.w / 2, halfH = box.h / 2, S = Math.min(halfW, halfH);
+  const FRAMES = 8, HALO = 0.15, TRUNC = 2.3, HALO_MULT = 2.0;
+
+  // 3–5 lobes: each a Lissajous drift path + a breathing, travel-stretched gaussian spread.
+  const nL = 3 + Math.floor(rng() * 3);
+  const lobes = [];
+  for (let li = 0; li < nL; li++) {
+    lobes.push({
+      cx0: (rng() - 0.5) * 0.6 * halfW,                 // path centre… (|cx0| ≤ 0.3·halfW)
+      cy0: (rng() - 0.5) * 0.5 * halfH + 0.08 * halfH,  // …with a small upward bias — wheeling OVER the land
+      ax: (0.25 + rng() * 0.25) * halfW,                // path amplitude ≤ 0.5·halfW
+      ay: (0.2 + rng() * 0.25) * halfH,                 // ≤ 0.45·halfH
+      fx: 1 + Math.floor(rng() * 2),                    // INTEGER frequencies → the 8-frame cycle closes
+      fy: 1 + Math.floor(rng() * 2),
+      px: rng() * TAU, py: rng() * TAU,                 // path phases
+      sig: (0.065 + rng() * 0.035) * S,                 // base spread ≤ 0.10·S (breath ×1.2 · stretch ×1.4 → ≤ 0.168·S)
+      sph: rng() * TAU,                                 // breath phase
+      w: 0.5 + rng(),                                   // share of the pool
+    });
+  }
+
+  // A dot's whole flight identity, chosen ONCE: its lobe, its truncated unit offset, core or halo.
+  const wSum = lobes.reduce((a, l) => a + l.w, 0);
+  const lobeOf = new Uint8Array(count), ux = new Float32Array(count), uy = new Float32Array(count);
+  const halo = new Uint8Array(count);
+  const trunc = (g) => (g < -TRUNC ? -TRUNC : g > TRUNC ? TRUNC : g);
+  for (let i = 0; i < count; i++) {
+    let r = rng() * wSum, li = 0;
+    while (li < nL - 1 && r > lobes[li].w) { r -= lobes[li].w; li++; }
+    lobeOf[i] = li;
+    halo[i] = rng() < HALO ? 1 : 0;
+    ux[i] = trunc(gauss(rng));
+    uy[i] = trunc(gauss(rng));
+  }
+
+  const frames = [];
+  for (let k = 0; k < FRAMES; k++) {
+    const ph = (k / FRAMES) * TAU;
+    // Each lobe at this beat: centre on its path, spread breathing, stretched along the travel
+    // tangent (long thin bird-stream in the direction of flight, not a static blob).
+    const beat = lobes.map((l) => {
+      const breath = 0.75 + 0.45 * Math.sin(2 * ph + l.sph);
+      const dx = l.ax * l.fx * Math.cos(l.fx * ph + l.px), dy = l.ay * l.fy * Math.cos(l.fy * ph + l.py);
+      const ang = Math.atan2(dy, dx);
+      return {
+        cx: l.cx0 + l.ax * Math.sin(l.fx * ph + l.px),
+        cy: l.cy0 + l.ay * Math.sin(l.fy * ph + l.py),
+        ca: Math.cos(ang), sa: Math.sin(ang),
+        sA: l.sig * breath * 1.4,   // along-travel — the streaming body
+        sC: l.sig * breath * 0.65,  // cross-travel — thin
+      };
+    });
+    const positions = new Float32Array(count * 2);
+    for (let i = 0; i < count; i++) {
+      const b = beat[lobeOf[i]], m = halo[i] ? HALO_MULT : 1;
+      const oA = ux[i] * b.sA * m, oC = uy[i] * b.sC * m;
+      positions[2 * i] = b.cx + b.ca * oA - b.sa * oC;
+      positions[2 * i + 1] = b.cy + b.sa * oA + b.ca * oC;
+    }
+    frames.push({ positions });
+  }
+  frames.halo = halo;
+  return frames;
+}
+
 function gauss(rng) {
   let u = 0, v = 0;
   while (u === 0) u = rng();
