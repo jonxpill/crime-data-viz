@@ -245,6 +245,19 @@ function liveMap(reg) {
   return reg === 'wc' ? live : lift(reg, live);
 }
 const structRest = () => outlines[region] || outlines.wc;
+// ONE door for AT-REST data-field writes (year scrub, crime/mode flips, pies, pulse): the province
+// writes full-size at offset 0; a district writes ONLY its conserved slice — everything outside it
+// keeps the parked-away pose landing gave it. This partial-write trick used to be correct by
+// COINCIDENCE (Cape Town's slice starts at 0, so offset-0 writes landed in the right slots); for the
+// other five districts it silently wrote into Cape Town's slots and left the real slice frozen. The
+// door makes the offset explicit. Boundary crossings (landRegion, startDrill) still write the FULL
+// buffer via lift()/liveMap().
+const sliceStart = () => (region === 'wc' ? 0 : slices[region][0]);
+function setDataPair(src, tgt) {
+  const o = sliceStart();
+  field.setSource(src, o);
+  field.setTarget(tgt, o);
+}
 // Cycle a detail outline (its own point count) up to structN dots so the frame is a DENSE line, not sparse.
 function cycleOutline(structure, n) {
   const cN = structure.length / 2, pos = new Float32Array(n * 2);
@@ -491,13 +504,7 @@ function setMonthPair(i) {
   mi = ((i % monthLabels.length) + monthLabels.length) % monthLabels.length; // loop Apr 2021 ↔ Mar 2026
   const next = (mi + 1) % monthLabels.length;
   const L = pulseData.layouts;
-  if (region === 'wc') {
-    field.setSource(L[mi]);
-    field.setTarget(L[next]);
-  } else {
-    field.setSource(lift(region, L[mi]));
-    field.setTarget(lift(region, L[next]));
-  }
+  setDataPair(L[mi], L[next]);
   t = 0;
   refreshHud();
 }
@@ -534,11 +541,9 @@ function setYearPair(i) {
   const next = (yi + 1) % years.length;
   if (pieMode && pieYears) {                       // scrub the PIE through the years — frame holds, wedges re-fill
     lastPie = pieYears[yi];
-    field.setSource({ positions: pieYears[yi].positions, density: pieYears[yi].density });
-    field.setTarget({ positions: pieYears[next].positions, density: pieYears[next].density });
+    setDataPair(pieYears[yi], pieYears[next]);
   } else {
-    field.setSource(layouts[yi]);
-    field.setTarget(layouts[next]);
+    setDataPair(layouts[yi], layouts[next]);
   }
   t = 0;
   refreshHud();
@@ -547,9 +552,9 @@ function stepYear(dir) {
   playing = false;
   if (triPieMode && triPieYears) {                 // step the 3-PIE year — all three re-fill at once
     yi = (yi + dir + years.length) % years.length;
-    field.setSource({ positions: lastTriPie.positions, density: lastTriPie.density });
+    const prevTp = lastTriPie;
     lastTriPie = triPieYears[yi];
-    field.setTarget({ positions: lastTriPie.positions, density: lastTriPie.density });
+    setDataPair(prevTp, lastTriPie);
     field.setStagger(0.6);
     t = 0; pieMorphStart = performance.now(); pieMorphing = true;
     refreshHud();
@@ -557,9 +562,9 @@ function stepYear(dir) {
   }
   if (pieMode && pieYears) {                       // step the PIE year with an ANIMATED morph
     yi = (yi + dir + years.length) % years.length;
-    field.setSource({ positions: lastPie.positions, density: lastPie.density });
+    const prevPie = lastPie;
     lastPie = pieYears[yi];
-    field.setTarget({ positions: pieYears[yi].positions, density: pieYears[yi].density });
+    setDataPair(prevPie, lastPie);
     field.setStagger(0.6);
     t = 0; pieMorphStart = performance.now(); pieMorphing = true;
     refreshHud();
@@ -576,13 +581,11 @@ function flipCrime(dir) {
   const next = crimeTypes[(i + dir + crimeTypes.length) % crimeTypes.length];
   if (next === crimeType) return;
   if (pulseMode) { // pulse: cross-fade this month, old crime → new crime (lazy build evicts the old months)
-    const from = region === 'wc' ? pulseData.layouts[mi] : lift(region, pulseData.layouts[mi]);
+    const from = pulseData.layouts[mi];
     crimeType = next;
     layouts = layoutsByType[crimeType];
     buildPulse();
-    const to = region === 'wc' ? pulseData.layouts[mi] : lift(region, pulseData.layouts[mi]);
-    field.setSource(from);
-    field.setTarget(to);
+    setDataPair(from, pulseData.layouts[mi]);
     field.setStagger(0.6);
     t = 0; pieMorphStart = performance.now(); pieMorphing = true; // completion re-anchors to setMonthPair(mi)
     refreshHud();
@@ -592,9 +595,9 @@ function flipCrime(dir) {
     crimeType = next;
     layouts = layoutsByType[crimeType];
     pieYears = years.map((_, k) => pieBuilder(crimeType, k, { cx: 0, cy: 0, R: PIE_R }));
-    field.setSource({ positions: lastPie.positions, density: lastPie.density });
+    const prevPie = lastPie;
     lastPie = pieYears[yi];
-    field.setTarget({ positions: pieYears[yi].positions, density: pieYears[yi].density });
+    setDataPair(prevPie, lastPie);
     field.setStagger(0.6);
     t = 0; pieMorphStart = performance.now(); pieMorphing = true;
     refreshHud();
@@ -604,8 +607,7 @@ function flipCrime(dir) {
   flipping = true;
   flipStart = performance.now();
   morphStart = -1;
-  field.setSource(layoutsByType[crimeType][yi]);
-  field.setTarget(layoutsByType[next][yi]);
+  setDataPair(layoutsByType[crimeType][yi], layoutsByType[next][yi]);
   t = 0;
   refreshHud(next);
 }
@@ -653,14 +655,12 @@ function togglePie() {
     pieYears = years.map((_, i) => pieBuilder(crimeType, i, { cx: 0, cy: 0, R: PIE_R }));
     const pie = pieYears[yi];
     lastPie = pie;
-    field.setSource(layoutsByType[crimeType][yi]);
-    field.setTarget({ positions: pie.positions, density: pie.density });
+    setDataPair(layoutsByType[crimeType][yi], pie);
     field.setStagger(0.6);
     structField.setSize(PIE_LINE_SIZE);
     startStructTransition(pieFrameLayout(structN, { cx: 0, cy: 0, R: PIE_R, boundaries: pie.boundaries, frameDots: pieFrameDots, thin: pieThin }));
   } else {
-    field.setSource({ positions: lastPie.positions, density: lastPie.density });
-    field.setTarget(layoutsByType[crimeType][yi]);
+    setDataPair(lastPie, layoutsByType[crimeType][yi]);
     field.setStagger(0.55);
     structField.setSize(structDotSize);
     startStructTransition(structRest());
@@ -679,15 +679,13 @@ function toggleTriPie() {
     pieMode = false;
     triPieYears = years.map((_, i) => triPieBuilder(i, { gap: TRI_GAP, R: TRI_R }));
     const tp = triPieYears[yi]; lastTriPie = tp;
-    const dataSrc = wasPie && lastPie ? { positions: lastPie.positions, density: lastPie.density } : layoutsByType[crimeType][yi];
-    field.setSource(dataSrc);
-    field.setTarget({ positions: tp.positions, density: tp.density });
+    const dataSrc = wasPie && lastPie ? lastPie : layoutsByType[crimeType][yi];
+    setDataPair(dataSrc, tp);
     field.setStagger(0.6);
     structField.setSize(PIE_LINE_SIZE);
     startStructTransition(triPieFrameLayout(structN, { centers: tp.centers, R: TRI_R, boundaries: tp.boundaries, frameDots: pieFrameDots, thin: pieThin }));
   } else {
-    field.setSource({ positions: lastTriPie.positions, density: lastTriPie.density });
-    field.setTarget(layoutsByType[crimeType][yi]);
+    setDataPair(lastTriPie, layoutsByType[crimeType][yi]);
     field.setStagger(0.55);
     structField.setSize(structDotSize);
     startStructTransition(structRest());
@@ -707,29 +705,24 @@ function toggleMode() {
   if (pieMode) {
     pieYears = years.map((_, i) => pieBuilder(crimeType, i, { cx: 0, cy: 0, R: PIE_R }));
     const oldPie = lastPie, pie = pieYears[yi]; lastPie = pie;
-    field.setSource({ positions: oldPie.positions, density: oldPie.density });
-    field.setTarget({ positions: pie.positions, density: pie.density });
+    setDataPair(oldPie, pie);
     field.setStagger(0.6);
     startStructTransition(pieFrameLayout(structN, { cx: 0, cy: 0, R: PIE_R, boundaries: pie.boundaries, frameDots: pieFrameDots, thin: pieThin }));
   } else if (triPieMode) {
     triPieYears = years.map((_, i) => triPieBuilder(i, { gap: TRI_GAP, R: TRI_R }));
     const oldTp = lastTriPie, tp = triPieYears[yi]; lastTriPie = tp;
-    field.setSource({ positions: oldTp.positions, density: oldTp.density });
-    field.setTarget({ positions: tp.positions, density: tp.density });
+    setDataPair(oldTp, tp);
     field.setStagger(0.6);
     startStructTransition(triPieFrameLayout(structN, { centers: tp.centers, R: TRI_R, boundaries: tp.boundaries, frameDots: pieFrameDots, thin: pieThin }));
   } else if (pulseMode) {
     // pulse: same month, raw ⇄ per-capita dot budgets (the provider's monthly() is mode-aware)
-    const from = region === 'wc' ? pulseData.layouts[mi] : lift(region, pulseData.layouts[mi]);
+    const from = pulseData.layouts[mi];
     buildPulse();
-    const to = region === 'wc' ? pulseData.layouts[mi] : lift(region, pulseData.layouts[mi]);
-    field.setSource(from);
-    field.setTarget(to);
+    setDataPair(from, pulseData.layouts[mi]);
     field.setStagger(0.6);
   } else {
     // map: only the DATA redistributes; the geography frame is identical in both modes.
-    field.setSource(oldMapLayout);
-    field.setTarget(layoutsByType[crimeType][yi]);
+    setDataPair(oldMapLayout, layoutsByType[crimeType][yi]);
     field.setStagger(0.55);
   }
   t = 0; pieMorphStart = performance.now(); pieMorphing = true;
@@ -745,8 +738,7 @@ function resolveTriToPie(ci) {
   const resolved = resolvePieBuilder(ci, yi, { cx: 0, cy: 0, R: PIE_R });
   pieYears = years.map((_, i) => pieBuilder(crimeType, i, { cx: 0, cy: 0, R: PIE_R }));
   lastPie = resolved;
-  field.setSource({ positions: lastTriPie.positions, density: lastTriPie.density });
-  field.setTarget({ positions: resolved.positions, density: resolved.density });
+  setDataPair(lastTriPie, resolved);
   field.setStagger(0.6);
   structField.setSize(PIE_LINE_SIZE);
   startStructTransition(pieFrameLayout(structN, { cx: 0, cy: 0, R: PIE_R, boundaries: resolved.boundaries, frameDots: pieFrameDots, thin: pieThin }));
@@ -762,8 +754,7 @@ function goToMap() {
   if (triPieMode) { toggleTriPie(); return; }
   if (pieMode) {
     pieMode = false;
-    field.setSource({ positions: lastPie.positions, density: lastPie.density });
-    field.setTarget(layoutsByType[crimeType][yi]);
+    setDataPair(lastPie, layoutsByType[crimeType][yi]);
     field.setStagger(0.55);
     structField.setSize(structDotSize);
     startStructTransition(structRest());
@@ -896,7 +887,7 @@ window.__viz = {
     if (r != null) PIE_R = r;
     if (pieMode && pieBuilder) {
       const pie = pieBuilder(crimeType, yi, { cx: 0, cy: 0, R: PIE_R }); lastPie = pie;
-      field.setSource({ positions: pie.positions, density: pie.density }); field.setTarget({ positions: pie.positions, density: pie.density }); field.setT(1);
+      setDataPair(pie, pie); field.setT(1);
       const f = pieFrameLayout(structN, { cx: 0, cy: 0, R: PIE_R, boundaries: pie.boundaries, frameDots: pieFrameDots, thin: pieThin });
       structField.setSource(f); structField.setTarget(f); structField.setT(1); strProg = 1; structCurrent = f;
     }
@@ -908,8 +899,7 @@ window.__viz = {
     if (triPieMode && triPieBuilder) {
       triPieYears = years.map((_, i) => triPieBuilder(i, { gap: TRI_GAP, R: TRI_R }));
       lastTriPie = triPieYears[yi];
-      field.setSource({ positions: lastTriPie.positions, density: lastTriPie.density });
-      field.setTarget({ positions: lastTriPie.positions, density: lastTriPie.density }); field.setT(1);
+      setDataPair(lastTriPie, lastTriPie); field.setT(1);
       const f = triPieFrameLayout(structN, { centers: lastTriPie.centers, R: TRI_R, boundaries: lastTriPie.boundaries, frameDots: pieFrameDots, thin: pieThin });
       structField.setSource(f); structField.setTarget(f); structField.setT(1); strProg = 1; structCurrent = f;
     }

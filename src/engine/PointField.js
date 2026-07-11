@@ -105,17 +105,20 @@ export class PointField {
     this.points.frustumCulled = false;
   }
 
-  /** Fill the SOURCE endpoint from a layout { positions:Float32Array(n*2), density:Float32Array(n) }. */
-  setSource(layout) { this._fill('aSource', 'aSourceDensity', layout); }
+  /** Fill the SOURCE endpoint from a layout { positions:Float32Array(n*2), density:Float32Array(n) }.
+   *  `offset` (in POINTS) writes a partial layout into a slice of the pool starting there — the rest of
+   *  the buffer keeps its previous values. Callers own the slice bookkeeping; offset 0 + full-size
+   *  layout is a whole-buffer write (the classic path). */
+  setSource(layout, offset = 0) { this._fill('aSource', 'aSourceDensity', layout, offset); }
 
-  /** Fill the TARGET endpoint from a layout. */
-  setTarget(layout) { this._fill('aTarget', 'aTargetDensity', layout); }
+  /** Fill the TARGET endpoint from a layout (same offset semantics as setSource). */
+  setTarget(layout, offset = 0) { this._fill('aTarget', 'aTargetDensity', layout, offset); }
 
-  _fill(posAttr, densAttr, layout) {
+  _fill(posAttr, densAttr, layout, offset = 0) {
     const g = this.points.geometry;
-    g.getAttribute(posAttr).copyArray(layout.positions).needsUpdate = true;
-    g.getAttribute(densAttr).copyArray(layout.density).needsUpdate = true;
-    if (layout.z) {
+    const pos = g.getAttribute(posAttr); pos.array.set(layout.positions, offset * 2); pos.needsUpdate = true;
+    const den = g.getAttribute(densAttr); den.array.set(layout.density, offset); den.needsUpdate = true;
+    if (layout.z && offset === 0) {
       const z = layout.z instanceof Float32Array ? layout.z : Float32Array.from(layout.z);
       g.setAttribute('aZ', new THREE.BufferAttribute(z, 1)); // fresh attribute → reliably uploads
     }

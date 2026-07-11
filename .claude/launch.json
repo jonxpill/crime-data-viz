@@ -6,6 +6,30 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "autoPort": true
+    },
+    {
+      "name": "catspike",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "/Users/jonxpillemer/Documents/cat-pointfield", "run", "dev", "--", "--port", "5174", "--strictPort"],
+      "port": 5174
+    },
+    {
+      "name": "menagerie",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "/Users/jonxpillemer/Documents/menagerie", "run", "dev", "--", "--port", "5175", "--strictPort"],
+      "port": 5175
+    },
+    {
+      "name": "menagerie-sound",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "/Users/jonxpillemer/Documents/menagerie", "run", "dev"],
+      "autoPort": true
+    },
+    {
+      "name": "misdaad-main",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "/Users/jonxpillemer/Documents/Crime Data-Viz", "run", "dev"],
+      "autoPort": true
     }
   ]
 }
