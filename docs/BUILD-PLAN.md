@@ -254,3 +254,13 @@ shadow. Each has a SELF-CONTAINED cold-session plan in docs/plans/ and its own b
 Shared conflict surface is tiny by design (each: one chip line, one keydown branch, one hint line,
 own code section); later branches rebase over earlier merges. Plans live on MAIN so every branch
 session reads all four.
+
+## Stage — Round two: four more branches (planned 2026-07-11, GO given)
+Build-first-then-chop round (the maker: "more visualisations first, then chop the weakest").
+Branched from post-door-fix main; plans in docs/plans/:
+- `feat/flock` — [Release the Field](plans/flock.md) · weekend · province-only play state
+- `feat/loom` — [The Loom Bridges](plans/loom.md) · weekend · S chorale + G voice-scrub, own module
+- `feat/suburb` — [Stand In Your Suburb](plans/suburb.md) · weekend-plus · bake gains lng/lat, merge last
+- `feat/forensics` — [The Forensics Strip](plans/forensics.md) · weekend-plus · wording is a merge gate
+Round-one branches (reading/ember/canyon/unlit) remain unmerged pending the maker's tweak pass;
+they forked PRE-door-fix and need setDataPair reconciliation at merge.
