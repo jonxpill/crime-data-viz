@@ -269,3 +269,8 @@ specific instruments (deferred) · where it lives / distribution · a name.
   in the parent; showing it separately needs geometry you don't have. And check whether the child recorded
   separately BEFORE your snapshot's end (Samora Machel since 2018/19) — if so, backfill its history too, or
   the series has a hole exactly where the fold begins. (?)
+- **When a channel can't tween, stage its swap where the channel is invisible.** The engine tweens
+  positions+density between endpoints but `aZ` is ONE attribute — it snaps on `setTarget`. The canyon's
+  crime flip hides that snap by sinking the surface flat (zScale→0), swapping the landform at zero height,
+  and rising as the new crime — the constraint becomes the choreography. Generalises: mask any
+  non-interpolable state change at the moment its visual weight is zero. (?)
