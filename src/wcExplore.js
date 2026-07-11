@@ -199,7 +199,7 @@ const hintEl = document.getElementById('hint');
 let _lastHint = null;
 function refreshHint() {
   if (!hintEl || drilling) return;
-  const txt = flockMode ? (flockPhase === 'land' ? 'the field lands…' : 'F or tap → land')
+  const txt = flockMode ? (flockPhase === 'land' ? 'the field lands…' : (attractMode ? 'press any key' : 'F or tap → land'))
     : terrainMode ? 'T or tap → flat map'
       : pulseMode ? '←→ month · space play/pause · N or M → years'
         : (pieMode || triPieMode) ? 'press M for the map'
@@ -376,6 +376,8 @@ async function init() {
   applyMode('raw');
   frameUnion(wcRaw.meta.box, ctRaw.meta.box);
   landRegion(); // seed the province at rest
+  enterFlock(true); // the page OPENS released — a nameless swarm; any key or tap lands it into the data
+  lastInputAt = performance.now();
 
   refreshHud();
   updateFlag();
@@ -546,19 +548,30 @@ function stepMonth(dir) {
 // every dot to layouts[yi] — the truthful map — then re-anchors the scrub pair.
 let flockMode = false, flockPhase = 'fly', flockIdx = 0, flockStart = 0;
 let flockFrames = null, flockDensity = null;
-const FLOCK_MS = 2400, FLOCK_SWAP = 0.7, FLOCK_LAND_MS = 2800; // leg length · overlap point · the glide home
-const FLOCK_STAGGER = 0.75, FLOCK_LAND_STAGGER = 0.6;
+const FLOCK_MS = 3200, FLOCK_LAND_MS = 2800; // leg length · the glide home
+// Stagger ≈ 1 keeps EVERY dot in motion for the whole leg (heavy stagger parks each dot outside its
+// own window — that was the stop-start). The turning-wave texture now comes from the flow field.
+const FLOCK_STAGGER = 0.97, FLOCK_LAND_STAGGER = 0.6;
+// Surge easing: t(p) = p − (A/2π)·sin(2πp). Velocity swings smoothly between (1−A) and (1+A) and its
+// SLOPE MATCHES at every leg join (1−A on both sides) — the flock slows into each waypoint, banks,
+// and surges out, but never stops and never steps. This is the anti-jerk.
+const FLOCK_SURGE = 0.62;
+const surgeEase = (p) => p - (FLOCK_SURGE / (2 * Math.PI)) * Math.sin(2 * Math.PI * p);
 // Continuous-motion levers: the curl flow + boosted idle drift keep every dot streaming BETWEEN
 // waypoints (amplitudes are eased in the tick; speeds are set only while amplitudes are tiny —
 // a speed change mid-flight snaps orbit/flow phase).
-const FLOCK_FLOW = 9, FLOCK_FLOW_SPEED = 1.15, FLOCK_DRIFT = 5.5, FLOCK_DRIFT_SPEED = 2.4;
+const FLOCK_FLOW = 15, FLOCK_FLOW_SPEED = 1.05, FLOCK_DRIFT = 5.5, FLOCK_DRIFT_SPEED = 2.4;
+// The ATTRACT state: the page LANDS released (a nameless swarm over the dark terrain) and any input
+// wakes it into the data; long idleness on the resting province releases it again.
+const IDLE_RELEASE_MS = 75000;
+let attractMode = false, lastInputAt = 0;
 let flowCur = 0, flockDriftCur = 0.4;
 
 // Pair a flock frame (positions only) with the density snapshotted at take-off — each dot KEEPS its
 // warmth through the flight, so the hot-core dots streak as warm threads across the sky.
 const withFlockDensity = (frame) => ({ positions: frame.positions, density: flockDensity });
 
-function enterFlock() {
+function enterFlock(attract = false) {
   // Province map only: in a district most of the pool is parked-away with density 0 — flying it would
   // materialize dots that aren't in the view's truth. And only from the FLAT map with nothing else in
   // flight (no pie/pulse/terrain, nothing mid-morph) — self-guarding, like toggleTerrain.
@@ -575,6 +588,7 @@ function enterFlock() {
   field.setDriftSpeed(FLOCK_DRIFT_SPEED); // amp still at-rest tiny here; it ramps in the tick
   field.setT(0);
   flockMode = true; flockPhase = 'fly'; flockIdx = 0; flockStart = performance.now();
+  attractMode = attract;
   playing = false; morphStart = -1; t = 0;
   refreshHud();
 }
@@ -874,13 +888,15 @@ function startDrill(to) {
 }
 
 window.addEventListener('keydown', (e) => {
+  lastInputAt = performance.now();
   if (aboutEl && aboutEl.classList.contains('open')) { // the about card swallows keys; Esc closes
     if (e.code === 'Escape') { e.preventDefault(); toggleAbout(false); }
     return;
   }
   if (drilling) return; // input is quiet mid-transition
-  if (flockMode) { // airborne: F/M/Esc land the field; EVERYTHING else is swallowed (a declared play state)
-    if (e.code === 'KeyF' || e.code === 'KeyM' || e.code === 'Escape') { e.preventDefault(); landFlock(); }
+  if (flockMode) { // airborne: ANY key lands the field (it's the attract state — input means "wake")
+    e.preventDefault();
+    landFlock();
     return;
   }
   if (pulseMode) { // the pulse has its own clock: arrows step months, N/M return to years
@@ -1151,7 +1167,8 @@ function updateLabels() {
 // Click: (1) in the 3-pie, resolve to the clicked pie; (2) on the province MAP, clicking Cape Town's
 // cluster drills in; (3) on the Cape Town MAP, a tap drills back out. A tap is told from a pan by move distance.
 let _downX = 0, _downY = 0;
-renderer.domElement.addEventListener('pointerdown', (e) => { _downX = e.clientX; _downY = e.clientY; });
+renderer.domElement.addEventListener('pointerdown', (e) => { lastInputAt = performance.now(); _downX = e.clientX; _downY = e.clientY; });
+window.addEventListener('wheel', () => { lastInputAt = performance.now(); }, { passive: true });
 renderer.domElement.addEventListener('pointerup', (e) => {
   if (drilling) return;
   if (Math.hypot(e.clientX - _downX, e.clientY - _downY) > 6) return; // a drag (pan), not a click
@@ -1263,17 +1280,16 @@ function tick() {
         morphStart = -1; holdUntil = now + HOLD_MS;
       }
     } else {
-      // Continuous legs: LINEAR t (an eased leg would bring every dot to a stop at each waypoint),
-      // and the next leg begins at FLOCK_SWAP of this one FROM THE EXACT AIRBORNE POSE — dots change
-      // heading mid-air, so the flock never lands between frames. The flow field carries the
-      // in-between motion.
+      // Full legs under the SURGE easing: velocity slides between (1−A) and (1+A) with matched
+      // slope at the joins — the flock slows into each waypoint, banks, surges out; never stops,
+      // never steps. At p=1 (stagger ≈ 1) the pose IS the frame, so the handoff to the next leg is
+      // seamless — no pose-readback needed in flight (airbornePose still serves the landing).
       const p = Math.min((now - flockStart) / FLOCK_MS, 1);
-      t = p;
-      if (p >= FLOCK_SWAP) {
+      t = surgeEase(p);
+      if (p >= 1) {
         const next = (flockIdx + 1) % flockFrames.length;
-        field.setSource({ positions: airbornePose(), density: flockDensity }); // full-buffer: province-only state (see enterFlock)
+        field.setSource(withFlockDensity(flockFrames[flockIdx])); // full-buffer: province-only state (see enterFlock)
         field.setTarget(withFlockDensity(flockFrames[next]));
-        field.setStagger(FLOCK_STAGGER);
         flockIdx = next; flockStart = now; t = 0;
       }
     }
@@ -1319,6 +1335,12 @@ function tick() {
     }
     structField.setTime(time);
   }
+  // Idle attract: long stillness on the resting province releases the field again (any input wakes it).
+  if (!flockMode && region === 'wc' && !drilling && !pieMode && !triPieMode && !pulseMode
+    && !terrainMode && !flipping && !pieMorphing && lastInputAt > 0 && now - lastInputAt > IDLE_RELEASE_MS) {
+    enterFlock(true);
+  }
+
   // Released-field motion ramps: flow + boosted drift ease UP on take-off and settle through the
   // landing glide (amplitudes only — speeds are pinned while amplitudes are live, see FLOCK_ consts).
   if (field && (flockMode || flowCur > 0.001 || Math.abs(flockDriftCur - 0.4) > 0.01)) {
