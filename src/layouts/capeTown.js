@@ -581,6 +581,139 @@ export function bandFor(data, terr, { band = 0.4 } = {}) {
   return { positions, density, z };
 }
 
+/**
+ * THE CANYON — time as the landform. A rate SURFACE over a (years × precincts) grid: x = the SAPS
+ * years, y = the stations (district blocks kept in input order, north→south within each), height +
+ * colour = PER-CAPITA rate. Dots are SAMPLES of the surface — a declared mode (dot count carries NO
+ * volume; every cell gets the same budget) — bilinearly smoothed between cell centres so the range
+ * reads as relief, not a bar chart. Normalised ONCE per crime across ALL years×stations (never per
+ * frame, never per year) through the codebase's pow-0.55 compression: monotone, so "2020/21 is the
+ * lowest" survives, but the heavy per-capita tail (harbour-sized populations) can't flatten the
+ * whole range into one spike. Fills a fixed pool `n` (sized upstream to the biggest region); each
+ * build spreads that budget evenly over its own cells (area-constant sampling, so glow-per-px stays
+ * comparable across regions), surplus parks at an off-frame roost (density 0, invisible).
+ *
+ * @returns {{ positions:Float32Array, density:Float32Array, z:Float32Array,
+ *             anchors:{name:string,yi:number,x:number,y:number,z:number,rate:number}[],
+ *             grid:{x0:number,y0:number,cellW:number,cellH:number,cols:number,rows:number},
+ *             seams:number[], maxRate:number }}
+ *   anchors — one per (station, year) cell centre; hover snaps to these (z is the LIFTED 0..1 height).
+ *   grid    — x0/y0 = LEFT/TOP edge; rows run north→south downward. seams = rows where a district starts.
+ */
+export function canyonLayout(n, stations, years, type, box, { zPow = 0.55 } = {}) {
+  const { w: W, h: H } = box;
+  const rng = mulberry32(0xca9109);
+  // y-order: keep the input's district blocks (the province list arrives district-ordered), sort
+  // north→south (y descending) WITHIN each block — metro stays adjacent, rows read like the map.
+  const blocks = new Map();
+  for (const s of stations) {
+    const k = (s.dc || '').toLowerCase().trim();
+    if (!blocks.has(k)) blocks.set(k, []);
+    blocks.get(k).push(s);
+  }
+  const order = [], seams = [];
+  for (const group of blocks.values()) {
+    if (order.length) seams.push(order.length);
+    order.push(...group.slice().sort((a, b) => b.y - a.y));
+  }
+  const rows = order.length, cols = years.length;
+  const cellW = W / cols, cellH = H / rows;
+  const x0 = -W / 2, y0 = H / 2;
+
+  // The rate surface at the cell centres (the nodes), normalised once across every cell of THIS
+  // crime — then lifted through the monotone pow curve. Height and colour both ride this value.
+  const rate = new Float32Array(rows * cols);
+  let maxRate = 0;
+  for (let r = 0; r < rows; r++) {
+    const s = order[r];
+    for (let c = 0; c < cols; c++) {
+      const v = ((s.crimes[type][years[c]] || 0) / s.pop) * 100000;
+      rate[r * cols + c] = v;
+      if (v > maxRate) maxRate = v;
+    }
+  }
+  const lifted = new Float32Array(rows * cols);
+  for (let k = 0; k < rate.length; k++) lifted[k] = Math.pow(rate[k] / (maxRate || 1), zPow);
+
+  // Bilinear sample of the LIFTED node grid at continuous cell coords (clamped at the edges) — the
+  // surface passes exactly through each node, so a cell centre reads its own true value.
+  const cR = (v) => (v < 0 ? 0 : v > rows - 1 ? rows - 1 : v);
+  const cC = (v) => (v < 0 ? 0 : v > cols - 1 ? cols - 1 : v);
+  const sample = (gc, gr) => {
+    const gcc = cC(gc), gcr = cR(gr);
+    const c0 = Math.floor(gcc), r0 = Math.floor(gcr);
+    const c1 = Math.min(cols - 1, c0 + 1), r1 = Math.min(rows - 1, r0 + 1);
+    const fx = gcc - c0, fy = gcr - r0;
+    const a = lifted[r0 * cols + c0], b = lifted[r0 * cols + c1];
+    const c = lifted[r1 * cols + c0], d = lifted[r1 * cols + c1];
+    return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+  };
+
+  const positions = new Float32Array(n * 2), density = new Float32Array(n), z = new Float32Array(n);
+  const anchors = [];
+  const perCell = Math.max(1, Math.floor(n / (rows * cols)));
+  let idx = 0;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const cx = x0 + (c + 0.5) * cellW, cy = y0 - (r + 0.5) * cellH;
+      // rate recomputed in float64 — the tooltip must match crimes/pop×100k to the digit (the
+      // Float32Array node grid is for the GPU; its rounding must never reach the readout).
+      anchors.push({
+        name: order[r].name, yi: c, x: cx, y: cy, z: lifted[r * cols + c],
+        rate: ((order[r].crimes[type][years[c]] || 0) / order[r].pop) * 100000,
+      });
+      for (let j = 0; j < perCell && idx < n; j++, idx++) {
+        const u = rng() - 0.5, v = rng() - 0.5;       // jitter within the cell
+        const px = cx + u * cellW, py = cy + v * cellH;
+        const h = sample(c + u, r + v);               // the smoothed surface at THIS dot
+        positions[idx * 2] = px; positions[idx * 2 + 1] = py;
+        z[idx] = h;
+        density[idx] = ACTIVE_FLOOR + (1 - ACTIVE_FLOOR) * h; // colour = height = the rate (one channel, two reads)
+      }
+    }
+  }
+  for (; idx < n; idx++) {                            // surplus → off-frame roost, invisible
+    const a = rng() * TAU, rr = 900 * (0.8 + rng() * 0.5);
+    positions[idx * 2] = Math.cos(a) * rr;
+    positions[idx * 2 + 1] = Math.sin(a) * rr;
+  }
+  return { positions, density, z, anchors, grid: { x0, y0, cellW, cellH, cols, rows }, seams, maxRate };
+}
+
+/**
+ * Structure graticule for the canyon: one thin line per year boundary (vertical) + one per district
+ * seam (horizontal, plus the top/bottom edges). Grey/matte, flat at z=0 — the frame the rate surface
+ * rises from. Same contract as pieFrameLayout: only `frameDots` draw the lines (split ∝ line length,
+ * so verticals and horizontals read equally thin), surplus parks off-frame (density 0).
+ */
+export function canyonFrameLayout(n, { grid, seams = [], frameDots = 42000, thin = 0.5 } = {}) {
+  const { x0, y0, cellW, cellH, cols, rows } = grid;
+  const W = cellW * cols, H = cellH * rows;
+  const positions = new Float32Array(n * 2), density = new Float32Array(n), z = new Float32Array(n);
+  const rng = mulberry32(0x5eed1e);
+  const lines = [];
+  for (let c = 0; c <= cols; c++) lines.push({ x: x0 + c * cellW, len: H, vert: true });
+  for (const r of [0, ...seams, rows]) lines.push({ y: y0 - r * cellH, len: W, vert: false });
+  const totalLen = lines.reduce((a, l) => a + l.len, 0);
+  const used = Math.min(n, frameDots);
+  let k = 0;
+  for (const l of lines) {
+    const m = Math.min(used - k, Math.round(used * (l.len / totalLen)));
+    for (let j = 0; j < m; j++, k++) {
+      const t = rng() * l.len, off = gauss(rng) * thin;
+      positions[k * 2] = l.vert ? l.x + off : x0 + t;
+      positions[k * 2 + 1] = l.vert ? y0 - t : l.y + off;
+      density[k] = 0.5;
+    }
+  }
+  for (; k < n; k++) {                                // surplus → off-frame roost, invisible
+    const a = rng() * TAU, r = 1100 * (0.8 + rng() * 0.5);
+    positions[k * 2] = Math.cos(a) * r;
+    positions[k * 2 + 1] = Math.sin(a) * r;
+  }
+  return { positions, density, z };
+}
+
 function gauss(rng) {
   let u = 0, v = 0;
   while (u === 0) u = rng();
