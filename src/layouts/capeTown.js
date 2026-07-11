@@ -415,7 +415,12 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
     return { positions, density, boundaries, R, cx, cy };
   }
 
-  return { years, count: COUNT, layouts, totals, pieLayout, triPieLayout, resolvePieLayout, monthly, months: MONTH_LABELS };
+  // slotRanges: station i's contiguous [base, K] in this build's buffer (same order as data.stations)
+  // — lets a downstream post-pass (the suburb focus dim) address ONE station's dots without the
+  // builder knowing what "focus" means. Identical across raw/percapita (K is sized to the max of both).
+  const slotRanges = slots.map((sl) => [sl.base, sl.K]);
+
+  return { years, count: COUNT, layouts, totals, slotRanges, pieLayout, triPieLayout, resolvePieLayout, monthly, months: MONTH_LABELS };
 }
 
 /**

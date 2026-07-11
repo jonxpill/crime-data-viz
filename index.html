@@ -78,11 +78,37 @@
       #about-card .src { color: #77839a; font-size: 11.5px; }
       #about-card a { color: #ffce86; text-decoration: none; }
       #about-card a:hover { text-decoration: underline; }
-      #about-close {
+      #about-close, #locate-close {
         position: absolute; top: 10px; right: 12px; appearance: none; background: none; border: 0;
         color: #8792a6; font: 16px ui-monospace, monospace; cursor: pointer; padding: 4px 8px; border-radius: 5px;
       }
-      #about-close:hover { background: rgba(140, 170, 210, 0.12); color: #d4dcef; }
+      #about-close:hover, #locate-close:hover { background: rgba(140, 170, 210, 0.12); color: #d4dcef; }
+
+      /* Locate overlay (H) — the about card's quieter sibling: one field, one button, one promise. */
+      #locate { position: fixed; inset: 0; z-index: 40; display: none;
+        background: rgba(4, 6, 10, 0.72); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+      #locate.open { display: flex; align-items: center; justify-content: center; }
+      #locate-card {
+        position: relative; width: 340px; margin: 18px; padding: 22px 24px; border-radius: 10px;
+        background: rgba(10, 13, 20, 0.94); border: 1px solid rgba(140, 170, 210, 0.16);
+        font: 12.5px/1.7 ui-monospace, "SF Mono", Menlo, monospace; color: #a8b2c6;
+      }
+      #locate-card h2 { margin: 0 0 2px; font-size: 13px; font-weight: 600; letter-spacing: 0.3em; color: #e6ebf5; }
+      #locate-card .tag { margin: 0 0 12px; color: #77839a; font-size: 11px; }
+      #locate-input {
+        width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px;
+        background: rgba(6, 8, 13, 0.8); border: 1px solid rgba(140, 170, 210, 0.22); color: #e4ebf4;
+        font: 13px ui-monospace, "SF Mono", Menlo, monospace; outline: none;
+      }
+      #locate-input:focus { border-color: rgba(255, 206, 134, 0.45); }
+      #locate-match { min-height: 19px; margin: 8px 0 10px; color: #ffce86; font-size: 11.5px; }
+      #locate-me {
+        appearance: none; width: 100%; padding: 7px 10px; border-radius: 6px; cursor: pointer;
+        background: rgba(140, 170, 210, 0.10); border: 1px solid rgba(140, 170, 210, 0.22);
+        color: #d4dcef; font: inherit;
+      }
+      #locate-me:hover { background: rgba(140, 170, 210, 0.18); }
+      #locate-card .priv { margin: 10px 0 0; color: #77839a; font-size: 10.5px; }
 
       #fps {
         position: fixed; right: 14px; top: 12px; z-index: 10;
@@ -128,6 +154,17 @@
           layout function. By Jonx Pillemer.</p>
       </div>
     </div>
+    <div id="locate">
+      <div id="locate-card">
+        <button id="locate-close" aria-label="close">✕</button>
+        <h2>STAND IN YOUR SUBURB</h2>
+        <p class="tag">the field dims to your precinct — walk its years</p>
+        <input id="locate-input" type="text" autocomplete="off" spellcheck="false" placeholder="suburb or police precinct…" />
+        <div id="locate-match">…</div>
+        <button id="locate-me">◎ find me</button>
+        <p class="priv">“find me” is matched on your device only — your location is never sent, never stored</p>
+      </div>
+    </div>
     <div class="hud">
       <div><b id="region">Western Cape</b> — <span id="crime">robbery</span> &nbsp;·&nbsp; <span id="year">—</span> &nbsp;·&nbsp; <span id="count" style="color:#8792a6;"></span></div>
       <div id="hint" class="hint" style="margin-top:2px;">click Cape Town to zoom in</div>
@@ -143,6 +180,7 @@
           data-act="percapita"><span class="hint">C</span> per-capita</button>&thinsp;·&thinsp;<button
           data-act="terrain"><span class="hint">T</span> terrain</button>&thinsp;·&thinsp;<button
           data-act="months"><span class="hint">N</span> months</button>&thinsp;·&thinsp;<button
+          data-act="suburb"><span class="hint">H</span> my suburb</button>&thinsp;·&thinsp;<button
           data-act="about"><span class="hint">?</span> about</button><span class="passive">&thinsp;·&thinsp;<span class="hint">scroll</span> zoom&thinsp;·&thinsp;<span class="hint">drag</span> pan</span>
       </div>
       <div id="flag" style="color:#5e6a52; margin-top:4px;">◆ real SAPS robbery</div>
