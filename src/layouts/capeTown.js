@@ -1,4 +1,5 @@
 import { neighbourCounts } from './density.js';
+import { forensicsStats, LOOK_CLOSER_D } from './forensics.js';
 
 /**
  * Cape Town layouts — the REAL-data instruments. Still just pure functions
@@ -415,7 +416,98 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
     return { positions, density, boundaries, R, cx, cy };
   }
 
-  return { years, count: COUNT, layouts, totals, pieLayout, triPieLayout, resolvePieLayout, monthly, months: MONTH_LABELS };
+  /**
+   * THE FORENSICS STRIP — statistics about the statistics. Every station becomes a thin vertical
+   * ribbon of its 60 MONTHLY RETURNS (one dot = one month's filed tally, NOT one crime: this view
+   * inspects the bookkeeping, so the monthly return itself is the honest unit — the pool could
+   * never hold one-dot-per-crime for 60 months anyway, 101 stations' 5-year totals exceed their
+   * peak-year slots). Columns sort by dispersion D ascending: the most crystalline — suspiciously
+   * regular — land LEFT, the "look closer" end. Within a column, dot m sits at month-row m (Apr
+   * 2021 bottom → Mar 2026 top) and its x-offset is that month's seasonally-adjusted residual in
+   * Poisson units (z = r/√mean, one shared scale): an honest tally wobbles ±~2σ, a rigid series
+   * draws a plumb line — and the plumb line packs its dots tighter, so density = light does the
+   * flagging by itself. Stations with mean < 5/month have no testable signal: they park in a
+   * separate DIM group past a seam ("too small to test"), never ranked, held at flat low density
+   * so tightness there can't masquerade as a look-closer glow. Identity is conserved: dot j of a
+   * station is always month j (same slots across crime flips — the re-sort IS the show); the huge
+   * slot surplus waits at the roosts.
+   */
+  function forensicsLayout(type, { W = 800, H = 440 } = {}) {
+    const stats = forensicsStats(stations, type);
+    const idx = stations.map((_, i) => i);
+    const tested = idx.filter((i) => stats[i].testable).sort((a, b) => stats[a].D - stats[b].D);
+    const small = idx.filter((i) => !stats[i].testable).sort((a, b) => stats[a].D - stats[b].D);
+    const GAP = small.length ? 3 : 0;                       // a visible seam (in columns) before the untested group
+    const ncol = tested.length + small.length;
+    const dx = Math.min(W / (ncol + GAP), 30);              // capped so a 5-station district doesn't stretch absurdly wide
+    const x0 = (-(ncol + GAP) * dx) / 2;
+    const colX = (r) => x0 + (r + 0.5 + (r >= tested.length ? GAP : 0)) * dx;
+    const nM = (stations[0] && stations[0].monthly && stations[0].monthly[type] || []).length;
+    const JIT = 0.42;                                       // 3σ of wobble stays inside the column
+    const UNTESTED_D = 0.10;                                // flat, dim — excluded means excluded
+
+    const positions = new Float32Array(COUNT * 2);
+    const density = new Float32Array(COUNT);
+    const activeXY = [], activeIdx = [], activeTested = [];
+    const columns = [];
+    const ordered = tested.concat(small);
+    let reports = 0;
+    for (const s of stations) for (const v of (s.monthly && s.monthly[type]) || []) reports += v;
+    for (let r = 0; r < ordered.length; r++) {
+      const si = ordered[r], sl = slots[si], st = stats[si];
+      const x = colX(r);
+      columns.push({ si, x, D: st.D, testable: st.testable });
+      const n = Math.min(sl.K, nM);                         // every station's K ≥ 193 ≥ 60, so n = 60 in practice
+      for (let j = 0; j < sl.K; j++) {
+        const p = sl.base + j;
+        if (j < n) {
+          const zc = Math.max(-3, Math.min(3, st.z[j]));    // clamp the rare wild month to the column edge
+          const px = x + (zc / 3) * dx * JIT;
+          const py = -H / 2 + ((j + 0.5) / nM) * H;
+          positions[p * 2] = px; positions[p * 2 + 1] = py;
+          activeXY.push(px, py); activeIdx.push(p); activeTested.push(st.testable);
+        } else {                                            // surplus waits at its own roost (invisible)
+          positions[p * 2] = roostPos[p * 2]; positions[p * 2 + 1] = roostPos[p * 2 + 1];
+        }
+      }
+    }
+    // density = local crowding, ONE gMax across the whole strip (a crystalline plumb line stacks
+    // tight → glows hot; an honest wobble spreads → stays cool). The untested group is HELD at a
+    // flat dim value instead: we refused to test it, so its tightness must not glow "look closer".
+    const raw = neighbourCounts(Float32Array.from(activeXY), DENSITY_CELL);
+    let gMax = 1; for (let k = 0; k < raw.length; k++) if (raw[k] > gMax) gMax = raw[k];
+    for (let k = 0; k < activeIdx.length; k++) {
+      density[activeIdx[k]] = activeTested[k]
+        ? ACTIVE_FLOOR + (1 - ACTIVE_FLOOR) * Math.pow(Math.min(raw[k] / gMax, 1), 0.55)
+        : UNTESTED_D;
+    }
+    // The frame spec (grey skeleton + captions downstream): zone extents, the boundary seams, and
+    // the D = 1 reference tick interpolated into the sorted ranks (clamped to an edge when every
+    // testable station sits on one side of 1 — with real SAPS data none sit below 0.77, so the
+    // look-closer zone can be honestly EMPTY).
+    const zones = [];
+    const nLook = tested.filter((i) => stats[i].D < LOOK_CLOSER_D).length;
+    if (nLook) zones.push({ x0: colX(0) - dx / 2, x1: colX(nLook - 1) + dx / 2, n: nLook, label: `quieter than a tally — look closer · D < ${LOOK_CLOSER_D}` });
+    if (tested.length > nLook) zones.push({ x0: colX(nLook) - dx / 2, x1: colX(tested.length - 1) + dx / 2, n: tested.length - nLook, label: 'behaves like a tally' });
+    if (small.length) zones.push({ x0: colX(tested.length) - dx / 2, x1: colX(ncol - 1) + dx / 2, n: small.length, label: 'too small to test' });
+    const edges = [];
+    if (nLook && tested.length > nLook) edges.push(colX(nLook) - dx / 2);
+    if (small.length && tested.length) edges.push(x0 + (tested.length + GAP / 2) * dx); // mid-seam
+    let d1x = null;
+    if (tested.length) {
+      const D0 = stats[tested[0]].D, Dn = stats[tested[tested.length - 1]].D;
+      if (D0 >= 1) d1x = colX(0) - dx / 2;
+      else if (Dn < 1) d1x = colX(tested.length - 1) + dx / 2;
+      else for (let r = 1; r < tested.length; r++) {
+        const a = stats[tested[r - 1]].D, b = stats[tested[r]].D;
+        if (b >= 1) { d1x = colX(r - 1) + ((1 - a) / (b - a)) * dx; break; }
+      }
+    }
+    const frame = { x0, x1: x0 + (ncol + GAP) * dx, baseY: -H / 2 - 16, topY: H / 2, edges, d1x, zones };
+    return { positions, density, columns, stats, frame, W, H, reports, active: activeIdx.length, threshold: LOOK_CLOSER_D };
+  }
+
+  return { years, count: COUNT, layouts, totals, pieLayout, triPieLayout, resolvePieLayout, forensicsLayout, monthly, months: MONTH_LABELS };
 }
 
 /**
