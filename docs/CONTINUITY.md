@@ -269,3 +269,6 @@ specific instruments (deferred) · where it lives / distribution · a name.
   in the parent; showing it separately needs geometry you don't have. And check whether the child recorded
   separately BEFORE your snapshot's end (Samora Machel since 2018/19) — if so, backfill its history too, or
   the series has a hole exactly where the fold begins. (?)
+- **When a primary source blocks robots, pull the exact document from the Internet Archive rather than
+  settling for secondary quotes** — a citation must point at the real table (statssa.gov.za sits behind
+  Incapsula; web.archive.org served both GPSJS PDFs intact, rates then read to the digit).
