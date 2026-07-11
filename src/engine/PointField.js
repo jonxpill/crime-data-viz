@@ -138,6 +138,14 @@ export class PointField {
   setDriftSpeed(mult) { this.material.uniforms.uDriftSpeed.value = mult; }
   /** Per-dot transition stagger (0 = all move together; ~0.6 = a cascading swarm). */
   setStagger(w) { this.material.uniforms.uStagger.value = w; }
+  /** Replace the per-point seed buffer (twinkle/drift phase AND stagger order). Random seeds =
+   *  an organic flock; ORDERED seeds turn a staggered morph into a strict procession — dot k
+   *  crosses at uT ≈ fract(seed_k / 2π). Callers restore the old array to return to randomness. */
+  setSeeds(seeds) {
+    const a = this.points.geometry.getAttribute('aSeed');
+    a.copyArray(seeds);
+    a.needsUpdate = true;
+  }
   /** DATA per-dot brightness curve: floor (lone-ember glow) + gain (density dependence; low = tamer cores). */
   setDataFloor(v) { this.material.uniforms.uDataFloor.value = v; }
   setDataGain(v) { this.material.uniforms.uDataGain.value = v; }
@@ -185,7 +193,9 @@ const VERT = /* glsl */ `
     // crosses over a window w of uT, starting at a seed-based offset. Endpoints are
     // preserved (everyone is fully at source at uT=0, fully at target at uT=1).
     float seed01 = fract(aSeed * 0.1591549431);
-    float w = max(uStagger, 0.02);
+    // The floor only guards the division — keep it an EPSILON, not a taste value: per-dot windows
+    // of a few 1e-4 are legitimate (thousands of ordered dots crossing one at a time).
+    float w = max(uStagger, 1.0e-4);
     float lt = clamp((uT - seed01 * (1.0 - w)) / w, 0.0, 1.0);
     vec2 pos = mix(aSource, aTarget, lt);
     float density = mix(aSourceDensity, aTargetDensity, lt);
