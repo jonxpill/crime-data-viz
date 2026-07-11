@@ -6,7 +6,8 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointField } from './engine/PointField.js';
-import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor } from './layouts/capeTown.js';
+import { loadCapeTown, buildCrimeLayouts, buildUnlitLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor } from './layouts/capeTown.js';
+import RATES from '../data/vocs-reporting.json'; // GPSJS reporting rates + citations — bundled, so the offline single-file build needs no fetch
 
 /*
  * THE APP — a Western Cape crime field you drill into Cape Town from. (Was the single-region Cape Town app
@@ -187,6 +188,23 @@ const bandW = 0.4, terrainDotSize = 2.5, GX = 432, GY = 378; // fixed relief dot
 let terrainTargetLayout = null, terrainCurrent = null;
 let trProg = 1, trStart = 0, trDur = 950, trTo = null;
 
+// ---- THE UNLIT FIELD — the third role: ESTIMATED ABSENCE -------------------------------------------
+// 'U' on a map view condenses the survey-implied UNREPORTED crimes out of the dark: U = R×(1−r)/r per
+// station-year (rates + full citations in data/vocs-reporting.json; the rate is national and applied
+// uniformly — declared on the chip and the About card). Its own pool: NO glow, normal blending, dim
+// slate-violet, flat density — never data (no glow, no density read), never frame (violet, count-true).
+// Blocked in pies/pulse/terrain (v1); murder + commercial have no survey rate, so U shows a one-line
+// note instead of dots — excluded, never guessed.
+let unlitField = null;
+const unlitProviders = {}; // per region — same conserved-slot grammar as the crime providers
+const unlitSlices = {};    // each district's slot range in the province unlit pool (mirrors `slices`)
+let UNLIT_COUNT = 0;
+let unlitOn = false;       // user INTENT — survives crime flips (an excluded crime shows the note; dots return after)
+let unlitShown = false;    // dots actually condensed (pool visible)
+let unlitProg = 1, unlitStart = 0, unlitPhase = null; // own clock for condense-in / disperse-out
+const UNLIT_MS = 1600;
+let unlitSrc = null, unlitTgt = null; // CPU copies of the live endpoints (mid-flight captures need them)
+
 const yearEl = document.getElementById('year');
 const fpsEl = document.getElementById('fps');
 const crimeEl = document.getElementById('crime');
@@ -202,8 +220,8 @@ function refreshHint() {
   const txt = terrainMode ? 'T or tap → flat map'
     : pulseMode ? '←→ month · space play/pause · N or M → years'
       : (pieMode || triPieMode) ? 'press M for the map'
-        : region !== 'wc' ? 'N months · T terrain · click empty space (or M) to zoom out'
-          : 'N months · T terrain · click any area to zoom in';
+        : region !== 'wc' ? 'N months · T terrain · U unlit · click empty space (or M) to zoom out'
+          : 'N months · T terrain · U unlit · click any area to zoom in';
   if (txt !== _lastHint) { hintEl.textContent = txt; _lastHint = txt; }
 }
 
@@ -342,6 +360,24 @@ async function init() {
   // Per-dot relief height on the DATA field, filled per region by fillAZ() when terrain is on (0 at rest).
   field.points.geometry.setAttribute('aZ', new THREE.BufferAttribute(new Float32Array(COUNT), 1));
 
+  // The unlit pool — one per-region builder set, exactly the crime providers' pattern: the province
+  // build IS the pool, each district a conserved contiguous slice (byte-identical crime subsets →
+  // identical per-station slot counts; the sum-check guards that assumption like `slices` does).
+  unlitProviders.wc = buildUnlitLayouts(provinceData, RATES, { types: T });
+  for (const rk of DETAIL_REGIONS) unlitProviders[rk] = buildUnlitLayouts(detailData[rk], RATES, { types: T });
+  UNLIT_COUNT = unlitProviders.wc.count;
+  let uc = 0;
+  for (const rk of DETAIL_REGIONS) { unlitSlices[rk] = [uc, unlitProviders[rk].count]; uc += unlitProviders[rk].count; }
+  if (uc !== UNLIT_COUNT) console.warn('[unlit] district slices don\'t sum to the pool', { uc, UNLIT_COUNT });
+
+  unlitField = new PointField(UNLIT_COUNT, { glow: false, size: 1.55, matte: '#55496b' }); // dim slate-violet — apart from structure slate AND every data ramp hue
+  unlitField.setPixelRatio(renderer.getPixelRatio());
+  unlitField.setDrift(0.0);      // still, like the frame — a drifting shadow would read as data
+  unlitField.setShimmer(0.35);   // calmer than the frame's breath: present, not twinkling
+  unlitField.setMaxSize(7);
+  unlitField.points.visible = false;
+  fieldGroup.add(unlitField.points);
+
   // regionData: the DATA object (with terrain DEM + box) per drillable region — the terrain code reads the
   // CURRENT region's relief here. Province + Cape Town got their elev via loadCapeTown; the five districts
   // keep terrain nested in wc-districts.json, so load each district's DEM bin now (tolerant when offline).
@@ -427,6 +463,7 @@ function toggleTerrain() {
   if (!d || !d.terrain || !d.terrain.elev || pieMode || triPieMode || drilling) return; // any region WITH a DEM
   terrainMode = !terrainMode;
   if (terrainMode) {
+    unlitBlock(); // no estimate on the relief (v1) — flat maps only
     structField.points.visible = false;
     terrainField.points.visible = true;
     terrainTargetLayout = terrainRelief();
@@ -484,6 +521,105 @@ function reseedTerrain() {
   }
 }
 
+// ---- the unlit field: toggle + morphs ----------------------------------------------------------
+// Pool-sized layout for the CURRENT region at year index yiArg — a district's build is lifted into
+// its conserved slice, every other slot parked at the province roosts (lift()'s grammar, own pool).
+function unlitLift(regionKey, l) {
+  const d = unlitProviders.wc.disperse();
+  const positions = new Float32Array(UNLIT_COUNT * 2), density = new Float32Array(UNLIT_COUNT);
+  positions.set(d.positions, 0);
+  const start = unlitSlices[regionKey][0];
+  positions.set(l.positions, start * 2);
+  density.set(l.density, start);
+  return { positions, density };
+}
+function unlitL(yiArg, type = crimeType, mode = dataMode) {
+  const l = unlitProviders[region].layout(type, yiArg, mode);
+  return region === 'wc' ? l : unlitLift(region, l);
+}
+const unlitRoost = () => (region === 'wc' ? unlitProviders.wc.disperse() : unlitLift(region, unlitProviders[region].disperse()));
+// The one door for the pool's GPU endpoints — keeps CPU copies so a mid-flight change can capture
+// the live pose instead of snapping (liveMap's job, for this pool).
+function unlitSet(a, b) {
+  unlitSrc = a; unlitTgt = b;
+  unlitField.setSource(a); unlitField.setTarget(b);
+}
+function unlitLive() { // current interpolated pose (stagger ignored — same approximation as liveMap)
+  if (!unlitSrc) return unlitRoost();
+  const p = unlitProg < 1 ? swarmEase(unlitProg) : t;
+  const positions = new Float32Array(UNLIT_COUNT * 2), density = new Float32Array(UNLIT_COUNT);
+  for (let i = 0; i < UNLIT_COUNT; i++) {
+    positions[2 * i] = unlitSrc.positions[2 * i] + (unlitTgt.positions[2 * i] - unlitSrc.positions[2 * i]) * p;
+    positions[2 * i + 1] = unlitSrc.positions[2 * i + 1] + (unlitTgt.positions[2 * i + 1] - unlitSrc.positions[2 * i + 1]) * p;
+    density[i] = unlitSrc.density[i] + (unlitTgt.density[i] - unlitSrc.density[i]) * p;
+  }
+  return { positions, density };
+}
+function unlitAnchorPair() { // fall in step with the year pair — the shadow scrubs WITH the reported field
+  unlitSet(unlitL(yi), unlitL((yi + 1) % years.length));
+  unlitField.setT(t);
+}
+function unlitCondense() { // in from the roosts (or from mid-disperse — the live capture reverses smoothly)
+  const from = unlitShown ? unlitLive() : unlitRoost();
+  unlitShown = true;
+  unlitField.points.visible = true;
+  unlitField.setStagger(0.6);
+  unlitSet(from, unlitL(yi));
+  unlitPhase = 'in'; unlitStart = performance.now(); unlitProg = 0;
+}
+function unlitDisperse() { // fly home to the roosts, dimming out on the way; tick hides on arrival
+  unlitField.setStagger(0.6);
+  unlitSet(unlitLive(), unlitRoost());
+  unlitPhase = 'out'; unlitStart = performance.now(); unlitProg = 0;
+}
+function hideUnlitNow() {
+  unlitShown = false; unlitPhase = null; unlitProg = 1;
+  if (unlitField) unlitField.points.visible = false;
+}
+// Reconcile the shadow with the CURRENT crime/mode/year/region — called wherever the map re-anchors
+// at rest (setYearPair). Intent survives an excluded crime: the note shows, the dots return on the
+// next included crime.
+function unlitAfterAnchor() {
+  if (!unlitField || !unlitOn) { updateUnlitChip(); return; }
+  if (pieMode || triPieMode || pulseMode || terrainMode || drilling) return;
+  if (!RATES.rates[crimeType]) { if (unlitShown) hideUnlitNow(); }
+  else if (!unlitShown || unlitPhase === 'out') unlitCondense();
+  else unlitAnchorPair();
+  updateUnlitChip();
+}
+function unlitBlock() { // a blocked view opens (pie/pulse/terrain/drill) — the estimate leaves with it
+  if (!unlitField) return;
+  if (unlitShown && unlitPhase !== 'out') unlitDisperse();
+  unlitOn = false;
+  updateUnlitChip();
+}
+function toggleUnlit() {
+  if (!unlitField || drilling || flipping || pieMode || triPieMode || pulseMode || terrainMode) return;
+  unlitOn = !unlitOn;
+  if (!unlitOn) { if (unlitShown) unlitDisperse(); }
+  else if (RATES.rates[crimeType]) {
+    morphStart = -1; holdUntil = performance.now() + UNLIT_MS + 400; // the condense gets its beat before the years resume
+    setYearPair(yi); // clean re-anchor at rest; the hook condenses the shadow in
+  }
+  updateUnlitChip();
+}
+// The legend chip — the estimate's on-screen declaration, visible the whole time it's active.
+// Sexual offences ALWAYS carry the floor caveat; excluded crimes state their reason instead of dots.
+function updateUnlitChip() {
+  const chip = document.getElementById('unlit-chip');
+  if (!chip) return;
+  const active = unlitOn && !pieMode && !triPieMode && !pulseMode && !terrainMode;
+  if (!active) { chip.style.display = 'none'; return; }
+  const spec = RATES.rates[crimeType];
+  chip.innerHTML = !spec
+    ? (crimeType === 'murder'
+      ? '◌ murder is near-fully recorded — no unreported estimate (GPSJS)'
+      : '◌ commercial crime sits outside household surveys — no estimate')
+    : `◌ estimated unreported (survey-based) · GPSJS national r=${Math.round(spec.r * 100)}%` +
+      (spec.floor ? ' · <b style="color:#b3a4d6">floor — surveys under-capture sexual offences</b>' : '');
+  chip.style.display = 'block';
+}
+
 // ---- the pulse: month-scrub control ------------------------------------------------------------
 // Mirrors the year grammar exactly: a pair of monthly layouts (mi → mi+1), lifted into the region's
 // conserved slice when drilled in; tick's playing branch advances it at pulse cadence, looping.
@@ -509,6 +645,7 @@ function buildPulse() {
 function enterPulse() {
   if (pulseMode || !monthLabels || !field || pieMode || triPieMode || drilling) return;
   if (!buildPulse()) return;
+  unlitBlock(); // no estimate in the pulse (v1) — it disperses as the months take over
   pulseMode = true;
   playing = true; morphStart = -1; holdUntil = performance.now();
   setMonthPair(mi);
@@ -541,6 +678,7 @@ function setYearPair(i) {
     field.setTarget(layouts[next]);
   }
   t = 0;
+  unlitAfterAnchor(); // the shadow re-anchors with the reported field (no-op unless active on a map)
   refreshHud();
 }
 function stepYear(dir) {
@@ -606,6 +744,10 @@ function flipCrime(dir) {
   morphStart = -1;
   field.setSource(layoutsByType[crimeType][yi]);
   field.setTarget(layoutsByType[next][yi]);
+  if (unlitField && unlitShown) { // the shadow flips WITH the reported field — or flies home if the next crime has no rate
+    unlitField.setStagger(0.6);
+    unlitSet(unlitLive(), RATES.rates[next] ? unlitL(yi, next) : unlitRoost());
+  }
   t = 0;
   refreshHud(next);
 }
@@ -650,6 +792,7 @@ function togglePie() {
   pieMode = !pieMode;
   playing = false;
   if (pieMode) {
+    unlitBlock(); // no estimate in the pies (v1)
     pieYears = years.map((_, i) => pieBuilder(crimeType, i, { cx: 0, cy: 0, R: PIE_R }));
     const pie = pieYears[yi];
     lastPie = pie;
@@ -677,6 +820,7 @@ function toggleTriPie() {
   playing = false;
   if (triPieMode) {
     pieMode = false;
+    unlitBlock(); // no estimate in the compare view (v1)
     triPieYears = years.map((_, i) => triPieBuilder(i, { gap: TRI_GAP, R: TRI_R }));
     const tp = triPieYears[yi]; lastTriPie = tp;
     const dataSrc = wasPie && lastPie ? { positions: lastPie.positions, density: lastPie.density } : layoutsByType[crimeType][yi];
@@ -731,6 +875,10 @@ function toggleMode() {
     field.setSource(oldMapLayout);
     field.setTarget(layoutsByType[crimeType][yi]);
     field.setStagger(0.55);
+    if (unlitField && unlitShown) { // the estimate re-budgets with the mode (same pop denominators)
+      unlitField.setStagger(0.55);
+      unlitSet(unlitLive(), unlitL(yi));
+    }
   }
   t = 0; pieMorphStart = performance.now(); pieMorphing = true;
   refreshHud();
@@ -797,6 +945,12 @@ function startDrill(to) {
   structField.setSource(structCurrent);
   structField.setTarget(outlines[to]);
   structField.setStagger(0.62);
+  if (unlitField && unlitShown) { // the estimate can't survive the region change — it flies home with the drill
+    unlitField.setStagger(0.62);
+    unlitSet(unlitLive(), unlitRoost());
+    unlitOn = false;
+    updateUnlitChip();
+  }
 }
 
 window.addEventListener('keydown', (e) => {
@@ -833,6 +987,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
   else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
   else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); } // Cape Town relief (no-op in the province)
+  else if (e.code === 'KeyU') { e.preventDefault(); toggleUnlit(); }   // the unlit field (map views only)
 });
 
 // HUD chips → the SAME actions as the keys (touch parity: on a phone the keyboard toolkit doesn't
@@ -849,6 +1004,7 @@ const CHIP_ACTIONS = {
   compare: () => { if (pulseMode) return; toggleTriPie(); },
   percapita: () => toggleMode(),
   terrain: () => toggleTerrain(), // guards itself (needs a loaded DEM, no pies, no drill)
+  unlit: () => toggleUnlit(),     // guards itself (map views only)
   months: () => (pulseMode ? exitPulse() : enterPulse()),
   about: () => toggleAbout(),
 };
@@ -931,6 +1087,9 @@ window.__viz = {
   hideData: (hide = true) => { if (field) field.points.visible = !hide; },
   region: (r) => { if (REGION_META[r]) startDrill(r); return region; }, // debug: force a drill into any region
   terrain: () => { toggleTerrain(); return { terrainMode, region }; },            // debug: toggle the current region's relief
+  unlit: () => { toggleUnlit(); return { unlitOn, unlitShown, pool: UNLIT_COUNT }; }, // debug: toggle the estimated-unreported field
+  unlitDots: (px) => unlitField && unlitField.setSize(px),
+  unlitMatte: (hex) => unlitField && unlitField.material.uniforms.uMatte.value.set(hex),
 };
 
 // ---- hover readout — "Nyanga · 2,300 robbery · 2019/20" (works in map AND pie), region-aware ----
@@ -1000,6 +1159,14 @@ function updateTooltip() {
   const val = dataMode === 'percapita' ? `${rate.toLocaleString()} per 100k` : `${n.toLocaleString()} reported`;
   tip.innerHTML = `${s.name} · ${crimeLabels[ct] || ct} · ${pulseMode ? fmtMonth(monthLabels[mi]) : yearLabels[yi]}` +
     `<br><span style="color:#9fb0c8">${val}</span>`;
+  if (unlitOn && unlitShown && !pulseMode && !pieMode && !triPieMode && RATES.rates[ct]) { // est line leaves WITH the chip — never numbers without the declaration
+    const spec = RATES.rates[ct];
+    const u = Math.round((n * (1 - spec.r)) / spec.r); // the exact math the dots draw — R×(1−r)/r
+    const uval = dataMode === 'percapita'
+      ? `est. +${(s.pop ? Math.round((u / s.pop) * 100000) : 0).toLocaleString()} per 100k unreported`
+      : `est. +${u.toLocaleString()} unreported`;
+    tip.innerHTML += `<br><span style="color:#9c8fc0">${uval} (r=${Math.round(spec.r * 100)}%, GPSJS national${spec.floor ? ' · floor' : ''})</span>`;
+  }
   tip.style.left = mouseX + 'px';
   tip.style.top = mouseY + 'px';
   tip.style.opacity = '1';
@@ -1150,9 +1317,11 @@ function tick() {
     const e = drillEase(p);
     field.setT(e); structField.setT(e);
     field.setTime(time); structField.setTime(time);
+    if (unlitField && unlitShown) { unlitField.setT(e); unlitField.setTime(time); } // dispersing with the drill
     if (p >= 1) {
       drilling = false;
       region = drillTo;
+      hideUnlitNow(); // the estimate dispersed with the drill (intent already off) — land clean
       repoint();
       landRegion();                                  // re-seed cleanly at the landed region's map, at rest
       reseedTerrain();                               // rebuild the relief pool for the landed region ('T' shows ITS mountains)
@@ -1207,6 +1376,20 @@ function tick() {
     }
     structField.setTime(time);
   }
+  if (unlitField && unlitShown) {
+    if (unlitProg < 1) { // own clock: condense-in / disperse-out
+      unlitProg = Math.min((now - unlitStart) / UNLIT_MS, 1);
+      unlitField.setT(swarmEase(unlitProg));
+      if (unlitProg >= 1) {
+        if (unlitPhase === 'out') hideUnlitNow();
+        else unlitAnchorPair(); // condensed — fall in step with the year scrub
+        unlitPhase = null;
+      }
+    } else {
+      unlitField.setT(t); // anchored: the shadow rides the SAME t as the reported field
+    }
+    if (unlitShown) unlitField.setTime(time);
+  }
   // Terrain (Cape Town only): ease the land up/down + the view tilt, advance the band⇄relief swarm, and
   // lift the crime with it. In the province zScaleCur stays 0 (T is a no-op there), so it renders flat.
   if (terrainField) {
@@ -1252,4 +1435,5 @@ window.addEventListener('resize', () => {
   if (field) field.setPixelRatio(renderer.getPixelRatio());
   if (structField) structField.setPixelRatio(renderer.getPixelRatio());
   if (terrainField) terrainField.setPixelRatio(renderer.getPixelRatio());
+  if (unlitField) unlitField.setPixelRatio(renderer.getPixelRatio());
 });
