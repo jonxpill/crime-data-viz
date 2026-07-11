@@ -419,6 +419,108 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
 }
 
 /**
+ * THE UNLIT FIELD — layouts for the THIRD semantic role: ESTIMATED ABSENCE. Per station-year the
+ * survey-implied unreported count U = R × (1 − r) / r (R = SAPS reported, r = the GPSJS national
+ * reporting rate from data/vocs-reporting.json — every rate cited there, uniformity declared in
+ * the app). Same conserved-slot grammar as the data build (fixed slots sized to the peak, surplus
+ * at an off-screen roost) so U condenses in / disperses out as a swarm, and the year scrub reads
+ * as the shadow breathing alongside the reported field. Density is FLAT-dim: the estimate must
+ * never fake a density read — its only honest channel is dot COUNT.
+ *
+ * Crimes without a survey rate (murder, commercial) return null — EXCLUDED, never guessed; the
+ * app shows a note instead of dots.
+ */
+export function buildUnlitLayouts(data, ratesSpec, { types, roost = 700, dim = 0.32 } = {}) {
+  const years = data.meta.years;
+  const stations = data.stations;
+  const rng = mulberry32(0x11a7e5); // own seed — the shadow's jitter must not echo the data's
+  const included = types.filter((ty) => ratesSpec.rates[ty]);
+
+  const est = (s, type, y) => { // U for one station-year — the exact number the tooltip shows
+    const spec = ratesSpec.rates[type];
+    const R = (s.crimes[type] && s.crimes[type][y]) || 0;
+    return Math.round((R * (1 - spec.r)) / spec.r);
+  };
+  const dotsOf = (s, type, y, mode) => {
+    const u = est(s, type, y);
+    return mode === 'percapita' ? Math.round((u / s.pop) * PC_SCALE) : u; // same PC_SCALE as the data → rates stay comparable
+  };
+
+  // Slots sized to the busiest (crime, year, mode) SINGLE crime — the unlit field never joins the
+  // compare views, so the pool needs the max, not the sum. Both modes share the buffer (like the
+  // data build) so raw ⇄ per-capita morphs instead of resizing.
+  const slots = stations.map((s) => {
+    let peak = 0;
+    for (const ty of included) for (const y of years) peak = Math.max(peak, dotsOf(s, ty, y, 'raw'), dotsOf(s, ty, y, 'percapita'));
+    const K = peak;
+    const offs = new Float32Array(K * 2);
+    for (let j = 0; j < K; j++) {
+      // HIGH jitter (0.75·r vs the data's 0.5·r) — a diffuse halo AROUND the reported cluster,
+      // reading as shadow-population, never as a second data core.
+      const ang = rng() * TAU;
+      const rad = Math.abs(gauss(rng)) * 0.75 * s.r;
+      offs[j * 2] = Math.cos(ang) * rad;
+      offs[j * 2 + 1] = Math.sin(ang) * rad;
+    }
+    return { s, K, offs };
+  });
+  let base = 0;
+  for (const sl of slots) { sl.base = base; base += sl.K; }
+  const COUNT = base;
+
+  // Roosts — same off-frame grammar as the data pool: each slot waits out past the frame edge in
+  // its station's direction, so toggling U condenses the shadow IN and disperses it OUT.
+  const roostPos = new Float32Array(COUNT * 2);
+  for (const sl of slots) {
+    const central = Math.hypot(sl.s.x, sl.s.y) < 30;
+    const baseAng = Math.atan2(sl.s.y, sl.s.x);
+    for (let j = 0; j < sl.K; j++) {
+      const idx = sl.base + j;
+      const ang = central ? rng() * TAU : baseAng + (rng() - 0.5) * 0.9;
+      const rr = roost * (0.8 + rng() * 0.5);
+      roostPos[idx * 2] = Math.cos(ang) * rr;
+      roostPos[idx * 2 + 1] = Math.sin(ang) * rr;
+    }
+  }
+  const dispersePose = { positions: roostPos, density: new Float32Array(COUNT) };
+
+  // Lazy, single-residency cache (the monthly() pattern): 18 year-layouts per (crime, mode) is
+  // ~14 MB — keep exactly one combination resident.
+  const cache = new Map();
+  function layout(type, yiArg, mode = 'raw') {
+    if (!ratesSpec.rates[type]) return null; // excluded (murder/commercial) — the caller shows the note
+    const key = type + '|' + mode;
+    let got = cache.get(key);
+    if (!got) {
+      cache.clear();
+      got = years.map((y) => {
+        const positions = new Float32Array(COUNT * 2);
+        const density = new Float32Array(COUNT);
+        for (const sl of slots) {
+          const n = Math.min(sl.K, dotsOf(sl.s, type, y, mode));
+          for (let j = 0; j < sl.K; j++) {
+            const idx = sl.base + j;
+            if (j < n) {
+              positions[idx * 2] = sl.s.x + sl.offs[j * 2];
+              positions[idx * 2 + 1] = sl.s.y + sl.offs[j * 2 + 1];
+              density[idx] = dim; // FLAT — count is the only channel; no emergent-density claim
+            } else {
+              positions[idx * 2] = roostPos[idx * 2];
+              positions[idx * 2 + 1] = roostPos[idx * 2 + 1];
+            }
+          }
+        }
+        return { positions, density };
+      });
+      cache.set(key, got);
+    }
+    return got[yiArg];
+  }
+
+  return { count: COUNT, layout, disperse: () => dispersePose };
+}
+
+/**
  * Structure frame for a pie: n dots strewn along the outline ring + one radial spoke per wedge
  * boundary. Grey/matte (the frame). The SAME structure pool that draws the map band / terrain
  * relief swarms here, so nothing fades — it just reconfigures into the chart's skeleton.
