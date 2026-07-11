@@ -920,6 +920,7 @@ function togglePeople() { // J — only meaningful while focused
 // The caption — the money line, with its own honesty attached: the 1:100 scale, the population
 // source, and 'reported' (these are reports that reached a station, not victims).
 const captionEl = document.createElement('div');
+captionEl.id = 'suburb-caption';
 captionEl.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:10;' +
   'max-width:min(92vw,640px);text-align:center;font:12px/1.6 ui-monospace,"SF Mono",Menlo,monospace;' +
   'color:#a8b2c6;padding:7px 14px;border-radius:8px;background:rgba(6,8,13,.66);' +
@@ -1175,6 +1176,26 @@ window.__viz = {
     return { station: s.name, pop: s.pop, personDots: Math.round(s.pop / PEOPLE_PER_DOT), n,
       caption: suburbCaptionLine(s.pop, n, crimeLabels[crimeType] || crimeType, yearLabels[yi]) };
   },
+  focusForensic: () => { // verification: is the dim post-pass REALLY on the GPU buffer? Per-station
+    if (!field) return null; // ratio of the field's live target densities vs the undimmed provider
+    const arr = field.points.geometry.getAttribute('aTargetDensity').array; // layout — 1.0 = kept, 0.12 = dimmed.
+    const b = providers[region][dataMode];
+    const und = b.layouts[crimeType][(yi + 1) % years.length].density; // at rest, target = yi+1
+    const o = sliceStart();
+    const sts = activeStations();
+    const ratios = b.slotRanges.map(([b0, k], si) => {
+      let sum = 0, n = 0;
+      for (let j = 0; j < k; j++) { const u = und[b0 + j]; if (u > 0.001) { sum += arr[o + b0 + j] / u; n++; } }
+      return { name: sts[si].name, ratio: n ? sum / n : -1, active: n };
+    });
+    return { focusMode, region, station: focusMode && focusStation >= 0 ? sts[focusStation].name : null, ratios };
+  },
+  peopleForensic: () => ({ // verification: the beacon/people pools' live state
+    beaconVisible: !!(beaconField && beaconField.points.visible),
+    peopleVisible: !!(peopleField && peopleField.points.visible),
+    peopleActive: peopleField ? peopleField.points.geometry.getAttribute('aTargetDensity').array.filter((d) => d > 0).length : 0,
+    pop: focusMode && focusStation >= 0 ? activeStations()[focusStation].pop : 0,
+  }),
 };
 
 // ---- hover readout — "Nyanga · 2,300 robbery · 2019/20" (works in map AND pie), region-aware ----
