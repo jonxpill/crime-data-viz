@@ -279,3 +279,8 @@ specific instruments (deferred) · where it lives / distribution · a name.
   in the parent; showing it separately needs geometry you don't have. And check whether the child recorded
   separately BEFORE your snapshot's end (Samora Machel since 2018/19) — if so, backfill its history too, or
   the series has a hole exactly where the fold begins. (?)
+- **To interrupt a per-element staggered/eased interpolation mid-flight, read back the EXACT pose by
+  replicating the easing math per element — never approximate with the global t.** Elements past their
+  window have arrived, ones before it haven't left; a uniform lerp snaps both. (The flock's landing:
+  airbornePose() mirrors the shader's stagger window on the CPU, so the glide home starts from
+  precisely where every dot is on screen.) (?)
