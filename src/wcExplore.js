@@ -199,11 +199,18 @@ const hintEl = document.getElementById('hint');
 let _lastHint = null;
 function refreshHint() {
   if (!hintEl || drilling) return;
-  const txt = terrainMode ? 'T or tap → flat map'
-    : pulseMode ? '←→ month · space play/pause · N or M → years'
-      : (pieMode || triPieMode) ? 'press M for the map'
-        : region !== 'wc' ? 'N months · T terrain · click empty space (or M) to zoom out'
-          : 'N months · T terrain · click any area to zoom in';
+  // The reading's doorway stays quiet: one hint pair, murder map only (no chip — see the reading).
+  const rHint = crimeType === 'murder' && (region === 'wc' || region === 'ct') ? ' · R a reading' : '';
+  const txt = readingMode && readingPhase !== 'home'
+    ? (readingPhase === 'gather' ? 'the murders are gathering…'
+      : readingCount >= readingM ? 'the reading is complete · R returns them to the map'
+        : readingPaused ? 'paused — space resumes · R or Esc ends the reading'
+          : 'space pause · R or Esc ends the reading')
+    : terrainMode ? 'T or tap → flat map'
+      : pulseMode ? '←→ month · space play/pause · N or M → years'
+        : (pieMode || triPieMode) ? 'press M for the map'
+          : region !== 'wc' ? `N months · T terrain${rHint} · click empty space (or M) to zoom out`
+            : `N months · T terrain${rHint} · click any area to zoom in`;
   if (txt !== _lastHint) { hintEl.textContent = txt; _lastHint = txt; }
 }
 
@@ -424,7 +431,7 @@ function startTerrainTransition(toLayout) {
 // coincident band, rise band → relief; on the way back, sink to band, then tick swaps the outline back.
 function toggleTerrain() {
   const d = regionData[region];
-  if (!d || !d.terrain || !d.terrain.elev || pieMode || triPieMode || drilling) return; // any region WITH a DEM
+  if (!d || !d.terrain || !d.terrain.elev || pieMode || triPieMode || drilling || readingMode) return; // any region WITH a DEM
   terrainMode = !terrainMode;
   if (terrainMode) {
     structField.points.visible = false;
@@ -507,7 +514,7 @@ function buildPulse() {
   return !!p;
 }
 function enterPulse() {
-  if (pulseMode || !monthLabels || !field || pieMode || triPieMode || drilling) return;
+  if (pulseMode || !monthLabels || !field || pieMode || triPieMode || drilling || readingMode) return;
   if (!buildPulse()) return;
   pulseMode = true;
   playing = true; morphStart = -1; holdUntil = performance.now();
@@ -526,6 +533,226 @@ function exitPulse() {
 function stepMonth(dir) {
   playing = false;
   setMonthPair(mi + dir);
+}
+
+// ---- THE READING — a memorial that refuses compression (murders only) -------------------------------
+// The chosen year's recorded murders leave the map for a dim holding cloud off-right, then file past
+// a thin grey line at ONE PER SECOND — igniting as they cross — and accrete into a slowly growing
+// column (oldest at the bottom). It is ONE morph with ORDERED seeds: seed_k = (k/M)·2π puts dot k's
+// stagger window at uT ≈ k/M, uT advances wall-clock over M seconds, and the engine never learns
+// what a ceremony is. The pace is fixed — the duration IS the statement. Space pauses; R/Esc/M end
+// it gently. The counter is RAW recorded murders (never rate-dots), whatever the display mode.
+let readingMode = false, readingPhase = '';          // '' | 'gather' | 'read' | 'home'
+let readingPaused = false, readingElapsed = 0;       // ceremony seconds (uT = elapsed / M)
+let readingM = 0, readingCount = -1, readingSecShown = -1;
+let readingQueue = null, readingColumn = null;       // COUNT-sized endpoints (non-murder parked in BOTH)
+let readingIdx = null, readingSeeds = null;          // buffer index + ordered seed of reading dot k
+let readingSeedsSaved = null;                        // the field's random seeds, restored on exit
+let readingPhaseStart = 0, readingLastNow = 0, readingSpeed = 1; // speed ≠ 1 is the debug soak only (__viz)
+const READ_GATHER_MS = 2400, READ_HOME_MS = 3000, READ_FLIGHT_S = 1.5;
+
+// Ceremony geometry, in the active region's map frame. The line sits midway queue → column: with a
+// linear mix that is where the AVERAGE dot is at lt = 0.5 — the same lt the counter counts at.
+function readingGeom() {
+  const box = regionData[region].meta.box;
+  return {
+    QX: box.w * 0.30, QR: Math.min(box.w, box.h) * 0.17,
+    COL_X: -box.w * 0.08, COL_Y0: -box.h * 0.30,
+    LINE_X: box.w * 0.11, LINE_H: box.h * 0.34,
+  };
+}
+// Per-dot stagger window: w · (M seconds of uT) = a ~1.5 s flight. Capped for degenerate tiny M so
+// (1 - w) stays positive and the last dot still lands by uT = 1.
+const readingW = () => Math.min(0.95, READ_FLIGHT_S / readingM);
+
+// QUEUE + COLUMN endpoints from a COUNT-sized RAW murder map layout. Active dots (density > 0 —
+// ACTIVE_FLOOR guarantees actives never read as parked) go to the cloud / the column, in buffer
+// order (station-grouped); every other slot keeps the murder layout's own parked pose in BOTH
+// endpoints, so nothing else moves for the whole reading.
+function readingLayouts(base) {
+  const n = base.density.length;
+  const { QX, QR, COL_X, COL_Y0 } = readingGeom();
+  const idx = [];
+  for (let i = 0; i < n; i++) if (base.density[i] > 0) idx.push(i);
+  const M = idx.length;
+  if (!M) return null;
+  const qPos = Float32Array.from(base.positions), qDen = new Float32Array(n);
+  const cPos = Float32Array.from(base.positions), cDen = new Float32Array(n);
+  const ROW_W = 16, DY = 0.1;                        // fixed per-dot area → the column's HEIGHT ∝ M (honest)
+  const g3 = () => Math.random() + Math.random() + Math.random() - 1.5; // cheap gaussian-ish
+  for (let k = 0; k < M; k++) {
+    const i = idx[k];
+    const ang = Math.random() * Math.PI * 2;
+    const rad = Math.abs(g3()) * 0.55 * QR;          // soft-falloff cloud, not a hard disc
+    qPos[i * 2] = QX + Math.cos(ang) * rad;
+    qPos[i * 2 + 1] = Math.sin(ang) * rad * 1.25;
+    qDen[i] = 0.06;                                  // dim — waiting, not yet read
+    cPos[i * 2] = COL_X + (Math.random() - 0.5) * ROW_W;
+    cPos[i * 2 + 1] = COL_Y0 + k * DY + (Math.random() - 0.5) * 0.6; // oldest-read at the bottom
+    cDen[i] = 0.85;                                  // warm — the column genuinely is packed
+  }
+  return { queue: { positions: qPos, density: qDen }, column: { positions: cPos, density: cDen }, idx };
+}
+
+// The thin grey line the dots cross — structure role (grey, matte, no glow: a threshold, never
+// data). A few hundred of the shared pool's dots; the surplus parks off-screen invisible (the
+// pie-frame pattern), so the frame is a crisp line, not a blown band.
+function readingLineLayout(n) {
+  const { LINE_X, LINE_H } = readingGeom();
+  const positions = new Float32Array(n * 2), density = new Float32Array(n), z = new Float32Array(n);
+  const LINE_N = Math.min(n, 600);
+  for (let k = 0; k < n; k++) {
+    if (k < LINE_N) {
+      positions[k * 2] = LINE_X + (Math.random() - 0.5) * 1.1;
+      positions[k * 2 + 1] = -LINE_H + (k / LINE_N) * 2 * LINE_H + (Math.random() - 0.5) * 1.5;
+      density[k] = 0.45;
+    } else {
+      const a = Math.random() * Math.PI * 2, r = 900 * (0.8 + Math.random() * 0.5);
+      positions[k * 2] = Math.cos(a) * r;
+      positions[k * 2 + 1] = Math.sin(a) * r;
+      density[k] = 0;
+    }
+  }
+  return { positions, density, z };
+}
+
+// Bake the field's CURRENT on-screen pose (the vertex shader's per-dot staggered mix, minus the
+// cosmetic drift) into a plain layout, so a new morph can begin from EXACTLY what the eye sees —
+// mid-transition, any seeds, any stagger. Mirrors the shader: fract(aSeed/2π), epsilon floor, and
+// Math.fround so float32 seeds resolve the same way they do on the GPU.
+function bakeFieldPose() {
+  const g = field.points.geometry;
+  const src = g.getAttribute('aSource').array, tgt = g.getAttribute('aTarget').array;
+  const sd = g.getAttribute('aSourceDensity').array, td = g.getAttribute('aTargetDensity').array;
+  const seeds = g.getAttribute('aSeed').array;
+  const uT = field.material.uniforms.uT.value;
+  const w = Math.max(field.material.uniforms.uStagger.value, 1e-4);
+  const positions = new Float32Array(COUNT * 2), density = new Float32Array(COUNT);
+  for (let i = 0; i < COUNT; i++) {
+    const s01 = Math.fround(seeds[i] * 0.1591549431) % 1;
+    const lt = Math.min(1, Math.max(0, (uT - s01 * (1 - w)) / w));
+    positions[2 * i] = src[2 * i] + (tgt[2 * i] - src[2 * i]) * lt;
+    positions[2 * i + 1] = src[2 * i + 1] + (tgt[2 * i + 1] - src[2 * i + 1]) * lt;
+    density[i] = sd[i] + (td[i] - sd[i]) * lt;
+  }
+  return { positions, density };
+}
+
+// The counter and the column are ONE formula: a dot is "read" the moment its window crosses
+// lt = 0.5 (where the line stands). Binary search calling the shader's own math — lt at fixed uT
+// is non-increasing in k for ordered seeds — so the count CANNOT disagree with the pixels
+// (step-tested exact at every uT, float32 seeds included; closed forms drift ±1 at boundaries).
+function readingCountAt(uT) {
+  const w = readingW();
+  let lo = 0, hi = readingM;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    const s01 = Math.fround(readingSeeds[mid] * 0.1591549431) % 1;
+    if ((uT - s01 * (1 - w)) / w >= 0.5) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+
+function enterReading() {
+  if (readingMode || !field || drilling || pieMorphing || flipping || pieMode || triPieMode || pulseMode || terrainMode) return;
+  if (crimeType !== 'murder' || (region !== 'wc' && region !== 'ct')) return; // v1: province + Cape Town
+  const raw = providers[region].raw;                 // recorded murders are COUNTS — raw build, whatever the display mode
+  const L = raw.layouts.murder[yi];
+  const r = readingLayouts(region === 'wc' ? L : lift(region, L));
+  if (!r) return;
+  readingQueue = r.queue; readingColumn = r.column; readingIdx = r.idx;
+  readingM = r.idx.length;
+  if (readingM !== (raw.totals.murder[yi] || 0)) console.warn('[reading] dots ≠ recorded murders', { M: readingM, total: raw.totals.murder[yi] });
+  playing = false; morphStart = -1;
+  readingMode = true; readingPhase = 'gather'; readingPaused = false;
+  readingElapsed = 0; readingCount = -1; readingSecShown = -1; readingSpeed = 1;
+  field.setSource(bakeFieldPose());                  // from exactly what the eye sees (any mode, mid-morph)
+  field.setTarget(readingQueue);
+  field.setStagger(0.55);
+  t = 0; readingPhaseStart = performance.now();
+  startStructTransition(readingLineLayout(structN), READ_GATHER_MS, 0.6);
+  refreshHud();
+}
+
+// The gather has landed: impose the ORDER (dot k's window at uT ≈ k/M), then let the clock walk.
+function beginReadingClock(now) {
+  readingSeedsSaved = Float32Array.from(field.points.geometry.getAttribute('aSeed').array);
+  const seeds = Float32Array.from(readingSeedsSaved);
+  readingSeeds = new Float32Array(readingM);
+  for (let k = 0; k < readingM; k++) {
+    readingSeeds[k] = (k / readingM) / 0.1591549431; // fract(seed · 1/2π) = k/M (step-tested to ~1e-7)
+    seeds[readingIdx[k]] = readingSeeds[k];
+  }
+  field.setSeeds(seeds);
+  field.setSource(readingQueue);
+  field.setTarget(readingColumn);
+  field.setStagger(readingW());
+  readingPhase = 'read';
+  readingElapsed = 0; readingLastNow = now; t = 0;
+  refreshHud();
+}
+
+function exitReading() {
+  if (!readingMode || readingPhase === 'home') return;
+  const pose = bakeFieldPose();                      // freeze the eye's pose BEFORE seeds go back to random
+  if (readingSeedsSaved) { field.setSeeds(readingSeedsSaved); readingSeedsSaved = null; }
+  field.setSource(pose);
+  field.setTarget(region === 'wc' ? layouts[yi] : lift(region, layouts[yi]));
+  field.setStagger(0.55);
+  t = 0; readingPhase = 'home'; readingPhaseStart = performance.now();
+  startStructTransition(structRest(), READ_HOME_MS, 0.6);
+  refreshHud();
+}
+
+function readingPauseToggle() {
+  if (!readingMode || readingPhase !== 'read') return;
+  readingPaused = !readingPaused;
+  refreshHud();
+}
+
+const fmtDur = (s) => {
+  s = Math.max(0, Math.round(s));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  return h ? `${h}h ${m}m` : m ? (r ? `${m}m ${r}s` : `${m}m`) : `${r}s`;
+};
+
+// The ceremony's HUD line — counter + elapsed/remaining. Writes only when a count or a whole
+// second changes (called every frame while reading).
+function updateReadingHud(force = false) {
+  if (!countEl) return;
+  const uT = Math.min(readingElapsed / readingM, 1);
+  const n = readingPhase === 'read' ? readingCountAt(uT) : 0;
+  const sec = Math.floor(readingElapsed);
+  if (!force && n === readingCount && sec === readingSecShown) return;
+  if (readingTickOn && readingPhase === 'read' && n > readingCount && readingCount >= 0) readingTickSound();
+  const wasDone = readingCount >= readingM;
+  readingCount = n; readingSecShown = sec;
+  const total = readingM.toLocaleString();
+  if (readingPhase === 'gather') {
+    countEl.textContent = `${total} recorded murders — at one per second this reading takes ${fmtDur(readingM)}`;
+  } else if (n >= readingM) {
+    countEl.textContent = `${total} of ${total} recorded murders — read, one per second, in ${fmtDur(readingM)}`;
+    if (!wasDone) refreshHud();                      // completion flips the hint, once
+  } else {
+    countEl.textContent = `${n.toLocaleString()} of ${total} recorded murders · ${fmtDur(sec)} elapsed · ${fmtDur(readingM - sec)} left`;
+  }
+}
+
+// Optional stretch, default OFF (__viz.readingTick(true)): one soft tick per counter increment —
+// a −24 dB sine with a 90 ms decay, once per FRAME the count rises (so a 60× soak doesn't
+// machine-gun). Audio failure must never break the ceremony.
+let readingTickOn = false, readingAudio = null;
+function readingTickSound() {
+  try {
+    readingAudio = readingAudio || new (window.AudioContext || window.webkitAudioContext)();
+    const t0 = readingAudio.currentTime;
+    const osc = readingAudio.createOscillator(), gain = readingAudio.createGain();
+    osc.type = 'sine'; osc.frequency.value = 660;
+    gain.gain.setValueAtTime(0.063, t0);             // −24 dB
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
+    osc.connect(gain).connect(readingAudio.destination);
+    osc.start(t0); osc.stop(t0 + 0.1);
+  } catch { /* audio blocked → the reading stays silent */ }
 }
 
 // ---- year-scrub control -----------------------------------------------------
@@ -571,7 +798,7 @@ function stepYear(dir) {
 
 // Flip to another crime (dir cycles the list): morph between crimes at the current year, then resume.
 function flipCrime(dir) {
-  if (flipping || crimeTypes.length < 2) return;
+  if (flipping || crimeTypes.length < 2 || readingMode) return;
   const i = crimeTypes.indexOf(crimeType);
   const next = crimeTypes[(i + dir + crimeTypes.length) % crimeTypes.length];
   if (next === crimeType) return;
@@ -615,6 +842,12 @@ function refreshHud(type = crimeType) {
   const rate = dataMode === 'percapita';
   if (regionEl) regionEl.textContent = (REGION_META[region] || REGION_META.wc).name;
   refreshHint();
+  if (readingMode && readingPhase !== 'home') {      // the ceremony owns the line ('home' restores it)
+    if (crimeEl) crimeEl.textContent = 'murder · a reading';
+    if (yearEl) yearEl.textContent = yearLabels[yi];
+    updateReadingHud(true);
+    return;
+  }
   if (triPieMode) {
     if (crimeEl) crimeEl.textContent = `all ${crimeTypes.length} crimes` + (rate ? ' · per capita' : '');
     if (yearEl) yearEl.textContent = yearLabels[yi];
@@ -646,7 +879,7 @@ function updateFlag() {
 // Morph off the map into a robbery pie and back. Data swarms into the wedges, structure into the ring
 // + spokes — conserved, staggered, no fades.
 function togglePie() {
-  if (!pieBuilder || !field) return;
+  if (!pieBuilder || !field || readingMode) return;
   pieMode = !pieMode;
   playing = false;
   if (pieMode) {
@@ -671,7 +904,7 @@ function togglePie() {
 
 // Break the single pie into THREE — robbery · burglary · murder, same year, side by side.
 function toggleTriPie() {
-  if (!triPieBuilder || !field) return;
+  if (!triPieBuilder || !field || readingMode) return;
   const wasPie = pieMode;
   triPieMode = !triPieMode;
   playing = false;
@@ -699,7 +932,7 @@ function toggleTriPie() {
 // Toggle raw ⇄ per-capita ('C'). The DATA field morphs to the same view in the new mode — dense
 // townships shrink, low-population hotspots swell, because rate ≠ count. Works in every view + region.
 function toggleMode() {
-  if (!field) return;
+  if (!field || readingMode) return;
   const newMode = dataMode === 'raw' ? 'percapita' : 'raw';
   const oldMapLayout = layoutsByType[crimeType][yi];
   applyMode(newMode);
@@ -757,6 +990,7 @@ function resolveTriToPie(ci) {
 
 // The `M` key: from a pie/3-pie → swarm home to the map. On the Cape Town map → drill back out.
 function goToMap() {
+  if (readingMode) { exitReading(); return; }   // M (key or chip) ends the reading gently
   if (terrainMode) { toggleTerrain(); return; } // terrain → flat first (then M again exits pulse / drills out)
   if (pulseMode) { exitPulse(); return; }       // pulse → back to the years
   if (triPieMode) { toggleTriPie(); return; }
@@ -780,7 +1014,7 @@ function goToMap() {
 // STRUCTURE: the province outline reconfigures into Cape Town's outline. Nothing fades except the rural
 // crime that genuinely has no detail to zoom into; the lens never moves.
 function startDrill(to) {
-  if (drilling || to === region || pieMode || triPieMode) return;
+  if (drilling || to === region || pieMode || triPieMode || readingMode) return;
   if (pulseMode) { pulseMode = false; playing = false; updateFlag(); } // drill flies on the YEARLY field (liveMap below); land re-seeds yearly
   if (terrainMode) { // never drill mid-relief — snap flat first (normal input exits terrain before this)
     terrainMode = false; zScaleCur = 0; tiltCur = 0; fieldGroup.rotation.x = 0; trProg = 1;
@@ -805,6 +1039,12 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (drilling) return; // input is quiet mid-transition
+  if (readingMode) { // the reading swallows the toolkit — only pause and the gentle exits speak
+    if (e.code === 'Space') { e.preventDefault(); readingPauseToggle(); }
+    else if (e.code === 'KeyR' || e.code === 'Escape' || e.code === 'KeyM') { e.preventDefault(); exitReading(); }
+    return;
+  }
+  if (e.code === 'KeyR') { e.preventDefault(); enterReading(); return; } // guards itself: murder map, wc/ct only
   if (pulseMode) { // the pulse has its own clock: arrows step months, N/M return to years
     if (e.code === 'KeyN' || e.code === 'KeyM') { e.preventDefault(); exitPulse(); }
     else if (e.code === 'Space') { e.preventDefault(); playing = !playing; if (playing) { holdUntil = performance.now(); morphStart = -1; } }
@@ -839,7 +1079,7 @@ window.addEventListener('keydown', (e) => {
 // exist). Guards mirror the keydown handler exactly: input is quiet mid-drill, and the 3-pie only
 // listens to map/year/compare/per-capita. Blur after click so a focused chip can't re-fire on Space.
 const CHIP_ACTIONS = {
-  play: () => { if (triPieMode) return; playing = !playing; if (playing) { holdUntil = performance.now(); if (pulseMode) morphStart = -1; else if (pieMode) setYearPair(yi); } },
+  play: () => { if (readingMode) { readingPauseToggle(); return; } if (triPieMode) return; playing = !playing; if (playing) { holdUntil = performance.now(); if (pulseMode) morphStart = -1; else if (pieMode) setYearPair(yi); } },
   yearPrev: () => (pulseMode ? stepMonth(-1) : stepYear(-1)),
   yearNext: () => (pulseMode ? stepMonth(1) : stepYear(1)),
   crimeUp: () => { if (triPieMode) return; flipCrime(1); },
@@ -863,10 +1103,26 @@ document.getElementById('about-close')?.addEventListener('click', () => toggleAb
 aboutEl?.addEventListener('click', (e) => { if (e.target === aboutEl) toggleAbout(false); });
 for (const el of document.querySelectorAll('.hud [data-act]')) {
   el.addEventListener('click', () => {
-    if (!drilling) { const f = CHIP_ACTIONS[el.dataset.act]; if (f) f(); }
+    // Mid-reading the row goes quiet except pause (play), the gentle exit (map) and about —
+    // mirroring the keydown handler's reading branch (space/R/Esc/M).
+    if (!drilling && (!readingMode || ['play', 'map', 'about'].includes(el.dataset.act))) {
+      const f = CHIP_ACTIONS[el.dataset.act]; if (f) f();
+    }
     el.blur();
   });
 }
+
+// "hold a reading" — the About card's quiet doorway into the ceremony (deliberately NO control-row
+// chip: the row must not gamify a memorial). Flips the lens to murder if needed; the gather then
+// starts from whatever the eye was seeing (bakeFieldPose), so the flip needs no morph of its own.
+document.getElementById('about-reading')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  toggleAbout(false);
+  if (readingMode || drilling || pieMode || triPieMode || pulseMode || terrainMode || pieMorphing || flipping) return;
+  if (region !== 'wc' && region !== 'ct') return;
+  if (crimeType !== 'murder') { crimeType = 'murder'; layouts = layoutsByType.murder; }
+  enterReading();
+});
 
 // Debug hook (region-aware).
 window.__viz = {
@@ -931,6 +1187,12 @@ window.__viz = {
   hideData: (hide = true) => { if (field) field.points.visible = !hide; },
   region: (r) => { if (REGION_META[r]) startDrill(r); return region; }, // debug: force a drill into any region
   terrain: () => { toggleTerrain(); return { terrainMode, region }; },            // debug: toggle the current region's relief
+  reading: (speed) => { // debug: no arg = STATUS ONLY; a number enters + sets the clock multiplier (60 = soak); false exits
+    if (speed === false) { exitReading(); return 'exiting'; }
+    if (typeof speed === 'number' && speed > 0) { if (!readingMode) enterReading(); readingSpeed = speed; }
+    return { readingMode, phase: readingPhase, M: readingM, count: readingCount, elapsed: Math.round(readingElapsed), speed: readingSpeed };
+  },
+  readingTick: (on = true) => { readingTickOn = !!on; return readingTickOn; }, // stretch flag, default OFF
 };
 
 // ---- hover readout — "Nyanga · 2,300 robbery · 2019/20" (works in map AND pie), region-aware ----
@@ -989,6 +1251,7 @@ function hoverPrecinct(clientX, clientY) {
 let mouseX = null, mouseY = null;
 function updateTooltip() {
   if (mouseX == null) return;
+  if (readingMode) { tip.style.opacity = '0'; return; } // station anchors mean nothing mid-ceremony
   const si = hoverPrecinct(mouseX, mouseY);
   if (si < 0) { tip.style.opacity = '0'; return; }
   const s = activeStations()[si];
@@ -1041,7 +1304,7 @@ function buildLabelSpecs() {
 }
 const _lv = new THREE.Vector3();
 function updateLabels() {
-  const show = !drilling && !pieMode && !triPieMode && !terrainMode && strProg >= 1 && trProg >= 1;
+  const show = !drilling && !readingMode && !pieMode && !triPieMode && !terrainMode && strProg >= 1 && trProg >= 1;
   labelLayer.style.opacity = show ? '1' : '0';
   if (!show) return;
   if (labelsRegion !== region) buildLabelSpecs();
@@ -1071,6 +1334,7 @@ let _downX = 0, _downY = 0;
 renderer.domElement.addEventListener('pointerdown', (e) => { _downX = e.clientX; _downY = e.clientY; });
 renderer.domElement.addEventListener('pointerup', (e) => {
   if (drilling) return;
+  if (readingMode) return; // no drilling out of a memorial by tap — R/Esc/M end it deliberately
   if (Math.hypot(e.clientX - _downX, e.clientY - _downY) > 6) return; // a drag (pan), not a click
   if (triPieMode && lastTriPie) {
     const rect = renderer.domElement.getBoundingClientRect();
@@ -1182,6 +1446,25 @@ function tick() {
       setYearPair(yi);
       morphStart = -1;
       holdUntil = now + HOLD_MS;
+    }
+  } else if (readingMode) {
+    if (readingPhase === 'gather') {                 // map → holding cloud (a normal random-seed swarm)
+      const p = Math.min((now - readingPhaseStart) / READ_GATHER_MS, 1);
+      t = swarmEase(p);
+      if (p >= 1) beginReadingClock(now);
+    } else if (readingPhase === 'read') {            // the ceremony's own clock: uT walks M seconds, wall-time
+      if (!readingPaused) readingElapsed += ((now - readingLastNow) / 1000) * readingSpeed;
+      readingLastNow = now;
+      t = Math.min(readingElapsed / readingM, 1);
+      updateReadingHud();
+    } else {                                         // 'home' — the dots morph gently back to the murder map
+      const p = Math.min((now - readingPhaseStart) / READ_HOME_MS, 1);
+      t = swarmEase(p);
+      if (p >= 1) {
+        readingMode = false; readingPhase = '';
+        setYearPair(yi);                             // re-anchor the year pair cleanly, at rest (playing stays off)
+        refreshHud();
+      }
     }
   } else if (playing) {
     const MS = pulseMode ? PULSE_MS : YEAR_MS, HOLD = pulseMode ? PULSE_HOLD : HOLD_MS;
