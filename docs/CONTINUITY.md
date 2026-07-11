@@ -151,6 +151,11 @@ specific instruments (deferred) · where it lives / distribution · a name.
 > Append ONE sharp line when a *universal* lesson surfaces during building (universal + sharp + behaviour-
 > changing). Append only — the steward promotes. Do NOT edit ~/.claude canon.
 
+- **A capacity bound proven at the top aggregation level proves nothing for its sub-pools — re-check it at
+  every level it must hold.** The ember plan's "cumulative fits the pool" fact was true for the province
+  (161k ≤ 182k) yet false inside the drilled Cape Town build (132k > 106k, its own smaller pool); the gate
+  has to run per pool, not once globally. (?)
+
 - *(context, already canon — not new candidates)* the **Loom pattern** — *a continuous interactive world
   grounded in a deterministic/mathematical core, beauty emerging from structure* (recurring across Loom / 2B
   / this — possibly worth a sharper canonical line if it recurs again); "grounded expert / deterministic

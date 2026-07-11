@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointField } from './engine/PointField.js';
-import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor } from './layouts/capeTown.js';
+import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor, UNBORN } from './layouts/capeTown.js';
 
 /*
  * THE APP — a Western Cape crime field you drill into Cape Town from. (Was the single-region Cape Town app
@@ -153,6 +153,13 @@ let playing = true;
 // roost). Layouts are built lazily per crime by the provider (see capeTown.js monthly()).
 let pulseMode = false, mi = 0, pulseData = null, monthLabels = null;
 const PULSE_MS = 480, PULSE_HOLD = 70; // month crossing + hold → ~1.8 months/sec, full sweep ≈ 33s (maker-tuned: calmer)
+// ---- the EMBER field (pulse sub-mode, E) — the pulse gains memory ----------------------------------
+// Every event is born white-hot in its report month, cools amber → deep red, and settles as dark ash
+// that never leaves the field. Positions are STATIC (one permanent dot per event); playback only slides
+// the engine's fractional age clock — zero re-uploads, pure GPU.
+let emberMode = false, emberData = null, emberRewind = 0;         // rewind = the once-per-loop ash fade at wrap
+let emberFlipping = false, emberFlipStart = 0;                    // crime flip: 1s age-tint-off crossfade
+const EMBER_REWIND_MS = 1600, EMBER_FLIP_MS = 1000;
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const fmtMonth = (label) => { const [y, m] = label.split('-'); return `${MONTH_NAMES[+m - 1]} ${y}`; };
 let morphStart = -1;
@@ -200,7 +207,9 @@ let _lastHint = null;
 function refreshHint() {
   if (!hintEl || drilling) return;
   const txt = terrainMode ? 'T or tap → flat map'
-    : pulseMode ? '←→ month · space play/pause · N or M → years'
+    : pulseMode ? (emberMode
+      ? (emberRewind ? 'rewinding 5 years…' : '←→ scrub · space play/pause · E → pulse · N or M → years')
+      : '←→ month · space play/pause · E embers · N or M → years')
       : (pieMode || triPieMode) ? 'press M for the map'
         : region !== 'wc' ? 'N months · T terrain · click empty space (or M) to zoom out'
           : 'N months · T terrain · click any area to zoom in';
@@ -424,7 +433,7 @@ function startTerrainTransition(toLayout) {
 // coincident band, rise band → relief; on the way back, sink to band, then tick swaps the outline back.
 function toggleTerrain() {
   const d = regionData[region];
-  if (!d || !d.terrain || !d.terrain.elev || pieMode || triPieMode || drilling) return; // any region WITH a DEM
+  if (!d || !d.terrain || !d.terrain.elev || pieMode || triPieMode || drilling || emberMode) return; // any region WITH a DEM (embers stay flat)
   terrainMode = !terrainMode;
   if (terrainMode) {
     structField.points.visible = false;
@@ -517,6 +526,7 @@ function enterPulse() {
 }
 function exitPulse() {
   if (!pulseMode) return;
+  if (emberMode) teardownEmber();
   pulseMode = false;
   playing = false;
   landRegion();   // re-seed the yearly pair cleanly, at rest
@@ -525,7 +535,61 @@ function exitPulse() {
 }
 function stepMonth(dir) {
   playing = false;
+  if (emberMode) { // scrub = set the age clock; embers unlight/relight exactly to the digit
+    if (emberRewind || emberFlipping) return;
+    mi = ((mi + dir) % monthLabels.length + monthLabels.length) % monthLabels.length;
+    field.setMonth(mi);
+    refreshHud();
+    return;
+  }
   setMonthPair(mi + dir);
+}
+
+// Ember helpers. RAW mode only (an ember is one reported EVENT; a rate-dot has no birth), and only in
+// regions whose pool holds every crime's 5-year pile-up — Cape Town's detail pool can't (robbery alone
+// outgrows it), so E no-ops there, exactly like T without a DEM. The build asserts as the backstop.
+function emberLayout() { return region === 'wc' ? emberData.layout : lift(region, emberData.layout); }
+function emberBirths() { // births need the same lift as positions: the rest of the field never ignites
+  if (region === 'wc') return emberData.births;
+  const full = new Float32Array(COUNT).fill(UNBORN);
+  full.set(emberData.births, slices[region][0]);
+  return full;
+}
+function buildEmber() {
+  const d = providers[region].raw.cumulativeMonthly(crimeType); // lazy + cached, one crime resident
+  if (d) emberData = d;
+  return !!d;
+}
+function seedEmber() { // positions set ONCE (source = target); playback is only the age clock
+  const L = emberLayout();
+  field.setSource(L); field.setTarget(L); field.setT(0); t = 0;
+  field.setBirths(emberBirths());
+  field.setMonth(mi);
+  field.setAgeMode(true);
+  morphStart = -1; holdUntil = performance.now();
+  refreshHud();
+}
+function teardownEmber() { // shared by E-off, pulse exit and the drill — the age tint must never leak out
+  emberMode = false; emberRewind = 0; emberFlipping = false;
+  field.setAgeMode(false);
+  field.setOpacity(1);
+}
+function toggleEmber() {
+  if (!pulseMode || drilling || emberFlipping) return;
+  if (!emberMode) {
+    if (dataMode !== 'raw' || terrainMode) return;        // events only, flat map only
+    if (!providers[region].raw.cumulativeFits) return;    // this region's pool can't hold the pile-up
+    if (!buildEmber()) return;
+    emberMode = true;
+    seedEmber();
+  } else {
+    teardownEmber();
+    buildPulse();                                         // months may be stale if the crime flipped in ember
+    setMonthPair(mi);                                     // restore month-pair morphing at the same month
+    morphStart = -1; holdUntil = performance.now();
+  }
+  updateFlag();
+  refreshHud();
 }
 
 // ---- year-scrub control -----------------------------------------------------
@@ -571,10 +635,25 @@ function stepYear(dir) {
 
 // Flip to another crime (dir cycles the list): morph between crimes at the current year, then resume.
 function flipCrime(dir) {
-  if (flipping || crimeTypes.length < 2) return;
+  if (flipping || emberFlipping || crimeTypes.length < 2) return;
   const i = crimeTypes.indexOf(crimeType);
   const next = crimeTypes[(i + dir + crimeTypes.length) % crimeTypes.length];
   if (next === crimeType) return;
+  if (emberMode) { // ember: rebuild the pile-up (evicts the old crime's), crossfade with the age tint OFF
+    if (emberRewind) return;
+    const from = emberLayout();
+    crimeType = next;
+    layouts = layoutsByType[crimeType];
+    buildEmber();
+    const to = emberLayout();
+    field.setAgeMode(false); // the 1s bridge reads density — both ends' 5-year heat (honest, simple)
+    field.setSource(from);
+    field.setTarget(to);
+    field.setStagger(0.6);
+    t = 0; emberFlipStart = performance.now(); emberFlipping = true; // completion re-seeds via seedEmber()
+    refreshHud();
+    return;
+  }
   if (pulseMode) { // pulse: cross-fade this month, old crime → new crime (lazy build evicts the old months)
     const from = region === 'wc' ? pulseData.layouts[mi] : lift(region, pulseData.layouts[mi]);
     crimeType = next;
@@ -624,7 +703,13 @@ function refreshHud(type = crimeType) {
   if (pulseMode) {
     if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + (rate ? ' · per 100k' : '');
     if (yearEl) yearEl.textContent = fmtMonth(monthLabels[mi]);
-    if (countEl) countEl.textContent = ((pulseData && pulseData.totals[mi]) || 0).toLocaleString();
+    if (countEl) {
+      if (emberMode && emberData) { // the ash count IS the running total — say so
+        const cum = emberData.totals[mi] || 0;
+        const add = cum - (mi ? emberData.totals[mi - 1] : 0);
+        countEl.textContent = `this month +${add.toLocaleString()} · total since ${fmtMonth(monthLabels[0])}: ${cum.toLocaleString()}`;
+      } else countEl.textContent = ((pulseData && pulseData.totals[mi]) || 0).toLocaleString();
+    }
     return;
   }
   if (yearEl) yearEl.textContent = yearLabels[yi];
@@ -637,6 +722,7 @@ function updateFlag() {
   if (!flagEl || !yearLabels.length) return;
   const span = pulseMode
     ? `${fmtMonth(monthLabels[0])}–${fmtMonth(monthLabels.at(-1))} monthly (SAPS quarterlies, unaudited)`
+      + (emberMode ? ' · embers: age-coloured, ash persists' : '') // the declared encoding — age, not density
     : `${yearLabels[0]}–${yearLabels.at(-1)}` + (dataMode === 'percapita' ? '' : ' (25/26 unaudited)');
   flagEl.textContent = dataMode === 'percapita'
     ? `◆ crime: SAPS (DataFirst + saps.gov.za) · population: WorldPop 2020 · ${span}`
@@ -699,7 +785,7 @@ function toggleTriPie() {
 // Toggle raw ⇄ per-capita ('C'). The DATA field morphs to the same view in the new mode — dense
 // townships shrink, low-population hotspots swell, because rate ≠ count. Works in every view + region.
 function toggleMode() {
-  if (!field) return;
+  if (!field || emberMode) return; // an ember is a raw EVENT — no rate mode inside the ember field
   const newMode = dataMode === 'raw' ? 'percapita' : 'raw';
   const oldMapLayout = layoutsByType[crimeType][yi];
   applyMode(newMode);
@@ -781,7 +867,7 @@ function goToMap() {
 // crime that genuinely has no detail to zoom into; the lens never moves.
 function startDrill(to) {
   if (drilling || to === region || pieMode || triPieMode) return;
-  if (pulseMode) { pulseMode = false; playing = false; updateFlag(); } // drill flies on the YEARLY field (liveMap below); land re-seeds yearly
+  if (pulseMode) { if (emberMode) teardownEmber(); pulseMode = false; playing = false; updateFlag(); } // drill flies on the YEARLY field (liveMap below); land re-seeds yearly
   if (terrainMode) { // never drill mid-relief — snap flat first (normal input exits terrain before this)
     terrainMode = false; zScaleCur = 0; tiltCur = 0; fieldGroup.rotation.x = 0; trProg = 1;
     if (terrainField) terrainField.points.visible = false;
@@ -805,15 +891,16 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (drilling) return; // input is quiet mid-transition
-  if (pulseMode) { // the pulse has its own clock: arrows step months, N/M return to years
+  if (pulseMode) { // the pulse has its own clock: arrows step months, E embers, N/M return to years
     if (e.code === 'KeyN' || e.code === 'KeyM') { e.preventDefault(); exitPulse(); }
+    else if (e.code === 'KeyE') { e.preventDefault(); toggleEmber(); }
     else if (e.code === 'Space') { e.preventDefault(); playing = !playing; if (playing) { holdUntil = performance.now(); morphStart = -1; } }
     else if (e.code === 'ArrowRight') { e.preventDefault(); stepMonth(1); }
     else if (e.code === 'ArrowLeft') { e.preventDefault(); stepMonth(-1); }
     else if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
     else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
-    else if (e.code === 'KeyC') { e.preventDefault(); toggleMode(); }
-    else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); }
+    else if (e.code === 'KeyC') { e.preventDefault(); toggleMode(); }    // no-op in ember (guarded inside)
+    else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); } // no-op in ember (guarded inside)
     return;
   }
   if (e.code === 'KeyN') { e.preventDefault(); enterPulse(); return; }
@@ -882,6 +969,16 @@ window.__viz = {
     if (!pulseMode) enterPulse();
     if (m !== undefined && monthLabels) { const i = monthLabels.indexOf(m); if (i >= 0) { playing = false; setMonthPair(i); } }
     return { pulseMode, month: monthLabels && monthLabels[mi], total: pulseData && pulseData.totals[mi] };
+  },
+  ember: (m) => { // debug: enter the ember field (optionally at a 'YYYY-MM'), or exit if already in it
+    if (emberMode && m === undefined) { toggleEmber(); return 'exited'; }
+    if (!pulseMode) enterPulse();
+    if (pulseMode && !emberMode) toggleEmber();
+    if (emberMode && m !== undefined && monthLabels) {
+      const i = monthLabels.indexOf(m);
+      if (i >= 0) { playing = false; mi = i; field.setMonth(mi); refreshHud(); }
+    }
+    return { emberMode, month: monthLabels && monthLabels[mi], cumulative: emberMode && emberData ? emberData.totals[mi] : null };
   },
   t: (v) => { playing = false; t = v; },
   flip: () => flipCrime(1),
@@ -997,7 +1094,12 @@ function updateTooltip() {
     ? ((s.monthly && s.monthly[ct] && s.monthly[ct][mi]) || 0)
     : ((s.crimes[ct] && s.crimes[ct][years[yi]]) || 0);
   const rate = s.pop ? Math.round((n / s.pop) * 100000) : 0;
-  const val = dataMode === 'percapita' ? `${rate.toLocaleString()} per 100k` : `${n.toLocaleString()} reported`;
+  let val = dataMode === 'percapita' ? `${rate.toLocaleString()} per 100k` : `${n.toLocaleString()} reported`;
+  if (pulseMode && emberMode) { // embers: this month's ignitions + the station's whole pile-up so far
+    let cum = 0; const arr = s.monthly && s.monthly[ct];
+    if (arr) for (let k = 0; k <= mi; k++) cum += arr[k] || 0;
+    val = `+${n.toLocaleString()} this month · ${cum.toLocaleString()} since ${fmtMonth(monthLabels[0])}`;
+  }
   tip.innerHTML = `${s.name} · ${crimeLabels[ct] || ct} · ${pulseMode ? fmtMonth(monthLabels[mi]) : yearLabels[yi]}` +
     `<br><span style="color:#9fb0c8">${val}</span>`;
   tip.style.left = mouseX + 'px';
@@ -1172,6 +1274,10 @@ function tick() {
       pieMorphing = false;
       if (!pieMode && !triPieMode) (pulseMode ? setMonthPair(mi) : setYearPair(yi)); // re-anchor the scrub pair on the flat map
     }
+  } else if (emberFlipping) {
+    const p = Math.min((now - emberFlipStart) / EMBER_FLIP_MS, 1);
+    t = swarmEase(p);
+    if (p >= 1) { emberFlipping = false; seedEmber(); }   // age tint back ON, clock re-anchored
   } else if (flipping) {
     const p = Math.min((now - flipStart) / FLIP_MS, 1);
     t = easeInOut(p);
@@ -1182,6 +1288,26 @@ function tick() {
       setYearPair(yi);
       morphStart = -1;
       holdUntil = now + HOLD_MS;
+    }
+  } else if (playing && emberMode) {
+    // THE EMBER CLOCK — no layout morphs; playback only slides the fractional age clock, so each
+    // month's dots ignite one by one through the crossing (zero uploads, pure GPU). At the wrap the
+    // whole field of ash fades out ONCE — the declared "rewinding 5 years" — and the loop relights.
+    if (emberRewind) {
+      const p = Math.min((now - emberRewind) / EMBER_REWIND_MS, 1);
+      field.setOpacity(p < 0.5 ? 1 - p * 2 : p * 2 - 1);
+      if (p >= 0.5 && mi !== 0) { mi = 0; field.setMonth(0); refreshHud(); }
+      if (p >= 1) { emberRewind = 0; field.setOpacity(1); holdUntil = now + PULSE_HOLD; refreshHud(); }
+    } else {
+      if (morphStart < 0 && now >= holdUntil) {
+        if (mi + 1 >= monthLabels.length) { emberRewind = now; refreshHud(); }
+        else morphStart = now;
+      }
+      if (morphStart >= 0) {
+        const p = Math.min((now - morphStart) / PULSE_MS, 1);
+        field.setMonth(mi + p);                            // fractional — the ignition sweep
+        if (p >= 1) { morphStart = -1; holdUntil = now + PULSE_HOLD; mi += 1; refreshHud(); }
+      }
     }
   } else if (playing) {
     const MS = pulseMode ? PULSE_MS : YEAR_MS, HOLD = pulseMode ? PULSE_HOLD : HOLD_MS;
