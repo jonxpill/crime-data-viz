@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointField } from './engine/PointField.js';
-import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor } from './layouts/capeTown.js';
+import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor, personGridLayout, suburbCaptionLine } from './layouts/capeTown.js';
 
 /*
  * THE APP — a Western Cape crime field you drill into Cape Town from. (Was the single-region Cape Town app
@@ -165,6 +165,12 @@ const FOCUS_DIM = 0.12;                     // every OTHER station's density ×0
 let focusScratch = null, focusPing = 0;     // two COUNT-sized density buffers (a door write needs src+tgt)
 let beaconField = null;                     // small structure-voiced ring marking the focused station
 const BEACON_N = 420;
+// "One in Forty-Three" — the focused precinct's POPULATION stands up as a rough grey grid among the
+// year's crime dots. 1 grey dot = 100 residents, DECLARED on screen (the caption); STRUCTURE-voiced
+// (matte, no glow — people are scale, never crime). Auto-shown on focus; J hides it if it fights the eye.
+let peopleField = null, peopleOn = true, PEOPLE_N = 0;
+const PEOPLE_PER_DOT = 100;
+let plStart = 0, plProg = 1;                // the stand-up morph's clock (collapsed → grid)
 let morphStart = -1;
 const YEAR_MS = 2200, HOLD_MS = 450;
 let holdUntil = 0;
@@ -407,6 +413,20 @@ async function init() {
   beaconField.setShimmerSpeed(2.4);
   beaconField.points.visible = false;
   fieldGroup.add(beaconField.points);
+
+  // People pool — sized once to the most populous precinct (Mitchells Plain ≈ 243k → ~2.4k dots at
+  // 1:100); every focus fills round(pop/100) of it and parks the rest. All 300 baked station records
+  // are drawn from these same 150 stations, so the province list bounds every region's needs.
+  const maxPop = Math.max(...stationsByRegion.wc.map((s) => s.pop || 0));
+  PEOPLE_N = Math.round(maxPop / PEOPLE_PER_DOT);
+  peopleField = new PointField(PEOPLE_N, { glow: false, size: 1.3, matte: '#566d78' });
+  peopleField.setPixelRatio(renderer.getPixelRatio());
+  peopleField.setDrift(0.0);
+  peopleField.setMaxSize(7);
+  peopleField.setShimmer(0.3);      // barely breathing — a standing crowd, not a twinkle
+  peopleField.setShimmerSpeed(0.6);
+  peopleField.points.visible = false;
+  fieldGroup.add(peopleField.points);
 
   applyMode('raw');
   frameUnion(wcRaw.meta.box, ctRaw.meta.box);
@@ -655,6 +675,7 @@ function refreshHud(type = crimeType) {
   const focusS = focusMode && focusStation >= 0 ? activeStations()[focusStation] : null;
   if (regionEl) regionEl.textContent = focusS ? focusS.name : (REGION_META[region] || REGION_META.wc).name;
   refreshHint();
+  updateCaption(); // the One-in-N line rides every HUD refresh (year scrubs, crime flips, focus moves)
   if (triPieMode) {
     if (crimeEl) crimeEl.textContent = `all ${crimeTypes.length} crimes` + (rate ? ' · per capita' : '');
     if (yearEl) yearEl.textContent = yearLabels[yi];
@@ -844,12 +865,14 @@ function enterFocus(si) {
   if (focusMode) exitFocus(false);   // refocus = clean slate; the write below re-dims for the new station
   playing = false;
   focusStation = si;
+  peopleOn = true;                   // the residents auto-show on each fresh focus (J hides them)
   const dim = focusLayout(layouts[yi], si);
   setDataPair(layouts[yi], dim);     // flag still false → the door passes both through untouched
   focusMode = true;
   field.setStagger(0.55);
   t = 0; pieMorphStart = performance.now(); pieMorphing = true;
   seedBeacon();
+  seedPeople();
   refreshHud();
 }
 function exitFocus(animate = true) {
@@ -857,6 +880,7 @@ function exitFocus(animate = true) {
   const dim = focusLayout(layouts[yi]);  // the dimmed pose, composed while the flag is still on
   focusMode = false; focusStation = -1;
   if (beaconField) beaconField.points.visible = false;
+  hidePeople();
   if (animate) {                     // fade back up; completion re-anchors the undimmed year pair.
     setDataPair(dim, layouts[yi]);   // animate:false = a boundary caller (drill/pulse/pie) immediately
     field.setStagger(0.55);          //   rewrites the whole pair itself, so no write here.
@@ -864,6 +888,55 @@ function exitFocus(animate = true) {
   }
   refreshHud();
 }
+// ---- One in Forty-Three: the people stand up --------------------------------------------------------
+function seedPeople() {
+  if (!peopleField || focusStation < 0) return;
+  const s = activeStations()[focusStation];
+  const n = Math.round((s.pop || 0) / PEOPLE_PER_DOT);   // 1 grey dot = 100 residents, exactly
+  const grid = personGridLayout({ x: s.x, y: s.y, r: Math.max(8, s.r) }, n, PEOPLE_N);
+  // They RISE: same dots huddled dark at the centre → the standing grid (dot count never lies).
+  const from = { positions: new Float32Array(PEOPLE_N * 2), density: new Float32Array(PEOPLE_N) };
+  for (let i = 0; i < PEOPLE_N; i++) {
+    from.positions[i * 2] = s.x + (grid.positions[i * 2] - s.x) * 0.12;
+    from.positions[i * 2 + 1] = s.y + (grid.positions[i * 2 + 1] - s.y) * 0.12;
+  }
+  peopleField.setSource(from);
+  peopleField.setTarget(grid);
+  peopleField.setStagger(0.6);
+  plStart = performance.now(); plProg = 0;
+  peopleField.points.visible = true;
+  updateCaption();
+}
+function hidePeople() {
+  if (peopleField) peopleField.points.visible = false;
+  updateCaption();
+}
+function togglePeople() { // J — only meaningful while focused
+  if (!focusMode) return;
+  peopleOn = !peopleOn;
+  if (peopleOn) seedPeople(); else hidePeople();
+}
+
+// The caption — the money line, with its own honesty attached: the 1:100 scale, the population
+// source, and 'reported' (these are reports that reached a station, not victims).
+const captionEl = document.createElement('div');
+captionEl.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:10;' +
+  'max-width:min(92vw,640px);text-align:center;font:12px/1.6 ui-monospace,"SF Mono",Menlo,monospace;' +
+  'color:#a8b2c6;padding:7px 14px;border-radius:8px;background:rgba(6,8,13,.66);' +
+  'border:1px solid rgba(140,170,210,.10);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);' +
+  'pointer-events:none;user-select:none;opacity:0;transition:opacity .4s';
+document.body.appendChild(captionEl);
+function updateCaption() {
+  const on = focusMode && peopleOn && focusStation >= 0;
+  captionEl.style.opacity = on ? '1' : '0';
+  if (!on) return;
+  const s = activeStations()[focusStation];
+  const n = (s.crimes[crimeType] && s.crimes[crimeType][years[yi]]) || 0;
+  const line = suburbCaptionLine(s.pop, n, crimeLabels[crimeType] || crimeType, yearLabels[yi]);
+  captionEl.innerHTML = line.replace(/^([\d,]+ residents)/, '<b style="color:#d4dcef">$1</b>') +
+    '<br><span style="color:#77839a;font-size:10.5px">each grey dot ≈ 100 residents · WorldPop 2020 · reported crimes only</span>';
+}
+
 // The beacon ring sits just outside the precinct's jitter radius; the shimmer is its pulse.
 function seedBeacon() {
   const s = activeStations()[focusStation];
@@ -992,6 +1065,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
   else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
   else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); } // Cape Town relief (no-op in the province)
+  else if (e.code === 'KeyJ') { e.preventDefault(); togglePeople(); } // hide/show the residents (focus only)
   else if (e.code === 'Escape') { if (focusMode) { e.preventDefault(); exitFocus(); } }
 });
 
@@ -1091,6 +1165,16 @@ window.__viz = {
   hideData: (hide = true) => { if (field) field.points.visible = !hide; },
   region: (r) => { if (REGION_META[r]) startDrill(r); return region; }, // debug: force a drill into any region
   terrain: () => { toggleTerrain(); return { terrainMode, region }; },            // debug: toggle the current region's relief
+  suburb: (name) => { // debug: focus a precinct by name (no name while focused = exit) — headless testing
+    if (name === undefined) { if (focusMode) { exitFocus(); return 'exited'; } return 'not focused'; }
+    const si = matchStation(String(name));
+    if (si < 0) return 'not found';
+    enterFocus(si);
+    const s = activeStations()[si];
+    const n = (s.crimes[crimeType] && s.crimes[crimeType][years[yi]]) || 0;
+    return { station: s.name, pop: s.pop, personDots: Math.round(s.pop / PEOPLE_PER_DOT), n,
+      caption: suburbCaptionLine(s.pop, n, crimeLabels[crimeType] || crimeType, yearLabels[yi]) };
+  },
 };
 
 // ---- hover readout — "Nyanga · 2,300 robbery · 2019/20" (works in map AND pie), region-aware ----
@@ -1368,6 +1452,10 @@ function tick() {
     structField.setTime(time);
   }
   if (beaconField) beaconField.setTime(time); // the beacon's pulse IS the shimmer breath
+  if (peopleField) {
+    if (plProg < 1) { plProg = Math.min((now - plStart) / 1100, 1); peopleField.setT(swarmEase(plProg)); }
+    peopleField.setTime(time);
+  }
   // Terrain (Cape Town only): ease the land up/down + the view tilt, advance the band⇄relief swarm, and
   // lift the crime with it. In the province zScaleCur stays 0 (T is a no-op there), so it renders flat.
   if (terrainField) {
