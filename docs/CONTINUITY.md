@@ -279,3 +279,8 @@ specific instruments (deferred) · where it lives / distribution · a name.
   in the parent; showing it separately needs geometry you don't have. And check whether the child recorded
   separately BEFORE your snapshot's end (Samora Machel since 2018/19) — if so, backfill its history too, or
   the series has a hole exactly where the fold begins. (?)
+- **Before changing a generator, run it UNCHANGED and diff against the committed artifact.** A byte-identical
+  baseline (same inputs + same code → same bytes) turns every later "did my change drift anything?" into a
+  one-line proof: rerun, diff the trust lines, hash the untouched outputs, deep-diff the touched ones for
+  exactly the intended delta (+600 lng/lat fields, zero other changes). Without the baseline you can't tell
+  your drift from input drift. (?)
