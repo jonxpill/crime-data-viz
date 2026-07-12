@@ -206,7 +206,7 @@ function refreshHint() {
   if (!hintEl || drilling) return;
   const txt = terrainMode ? 'T or tap → flat map'
     : pulseMode ? '←→ month · space play/pause · N or M → years'
-      : forensicsMode ? '↑↓ crime · hover a column · X or M → map'
+      : forensicsMode ? 'colour + width = statistical liveliness (D), not volume · ↑↓ crime · hover · X or M → map'
         : (pieMode || triPieMode) ? 'press M for the map'
           : region !== 'wc' ? 'N months · T terrain · click empty space (or M) to zoom out'
             : 'N months · T terrain · click any area to zoom in';
@@ -847,6 +847,7 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'Escape') { e.preventDefault(); toggleAbout(false); }
     return;
   }
+  if (e.key === '?' || e.code === 'Slash') { e.preventDefault(); toggleAbout(); return; } // ? opens the card from ANY state
   if (drilling) return; // input is quiet mid-transition
   if (pulseMode) { // the pulse has its own clock: arrows step months, N/M return to years
     if (e.code === 'KeyN' || e.code === 'KeyM') { e.preventDefault(); exitPulse(); }

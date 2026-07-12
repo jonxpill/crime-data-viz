@@ -443,7 +443,7 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
     const x0 = (-(ncol + GAP) * dx) / 2;
     const colX = (r) => x0 + (r + 0.5 + (r >= tested.length ? GAP : 0)) * dx;
     const nM = (stations[0] && stations[0].monthly && stations[0].monthly[type] || []).length;
-    const JIT = 0.42;                                       // 3σ of wobble stays inside the column
+    const JIT = 0.5;                                        // base wobble width (a D≈1 tally)
     const UNTESTED_D = 0.10;                                // flat, dim — excluded means excluded
 
     const positions = new Float32Array(COUNT * 2);
@@ -457,12 +457,17 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
       const si = ordered[r], sl = slots[si], st = stats[si];
       const x = colX(r);
       columns.push({ si, x, D: st.D, testable: st.testable });
+      // Width IS the verdict: the z-scores are σ-normalized, which ERASES per-station variance by
+      // construction (every ribbon came out the same width — the strip read as uniform). Scale the
+      // wobble back by √D: a tally (D≈1) keeps the base width, Bishop Lavis (D≈13) visibly
+      // thrashes across its neighbours, an under-dispersed row draws a tight plumb line.
+      const gw = st.testable ? Math.min(3.6, Math.sqrt(Math.max(st.D, 0.2))) : 0.7;
       const n = Math.min(sl.K, nM);                         // every station's K ≥ 193 ≥ 60, so n = 60 in practice
       for (let j = 0; j < sl.K; j++) {
         const p = sl.base + j;
         if (j < n) {
           const zc = Math.max(-3, Math.min(3, st.z[j]));    // clamp the rare wild month to the column edge
-          const px = x + (zc / 3) * dx * JIT;
+          const px = x + (zc / 3) * dx * JIT * gw;
           const py = -H / 2 + ((j + 0.5) / nM) * H;
           positions[p * 2] = px; positions[p * 2 + 1] = py;
           activeXY.push(px, py); activeIdx.push(p); activeTested.push(st.testable);
@@ -474,12 +479,21 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
     // density = local crowding, ONE gMax across the whole strip (a crystalline plumb line stacks
     // tight → glows hot; an honest wobble spreads → stays cool). The untested group is HELD at a
     // flat dim value instead: we refused to test it, so its tightness must not glow "look closer".
-    const raw = neighbourCounts(Float32Array.from(activeXY), DENSITY_CELL);
-    let gMax = 1; for (let k = 0; k < raw.length; k++) if (raw[k] > gMax) gMax = raw[k];
-    for (let k = 0; k < activeIdx.length; k++) {
-      density[activeIdx[k]] = activeTested[k]
-        ? ACTIVE_FLOOR + (1 - ACTIVE_FLOOR) * Math.pow(Math.min(raw[k] / gMax, 1), 0.55)
-        : UNTESTED_D;
+    // Colour IS the verdict too — not local crowding (whose differences were invisible at 150
+    // columns). Each ribbon takes ONE colour from log-D through the existing cool→molten ramp:
+    // tally-like sits calm blue; batching-noisy climbs to molten at the right edge. DECLARED in
+    // the hint (colour = statistical liveliness, never crime volume). Untested stays flat-dim.
+    const dLo = Math.log(0.55), dHi = Math.log(14);
+    const dOf = (D) => {
+      const v = (Math.log(Math.max(D, 0.3)) - dLo) / (dHi - dLo);
+      return 0.16 + 0.8 * Math.pow(Math.max(0, Math.min(1, v)), 0.85);
+    };
+    let k2 = 0;
+    for (let r2 = 0; r2 < ordered.length; r2++) {
+      const st2 = stats[ordered[r2]];
+      const v2 = st2.testable ? dOf(st2.D) : UNTESTED_D;
+      const nDots = Math.min(slots[ordered[r2]].K, nM);
+      for (let j2 = 0; j2 < nDots; j2++) density[activeIdx[k2++]] = v2;
     }
     // The frame spec (grey skeleton + captions downstream): zone extents, the boundary seams, and
     // the D = 1 reference tick interpolated into the sorted ranks (clamped to an edge when every
