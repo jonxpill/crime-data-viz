@@ -45,6 +45,17 @@
       .hud button:hover { background: rgba(140, 170, 210, 0.12); }
       .hud button:active { background: rgba(140, 170, 210, 0.24); }
       .hud button.arr { padding: 1px 3px; }
+      /* Grouped row: TIME │ LENS │ VIEWS │ meta. Invalid-in-this-state chips DIM but hold their
+         ground (stable geometry beats a reflowing row). */
+      .grp { display: inline-flex; align-items: center; gap: 1px; }
+      .glabel { margin: 0 3px 0 1px; }
+      .gsep { color: #3a4456; margin: 0 7px; user-select: none; }
+      .hud button.off { opacity: 0.28; pointer-events: none; }
+      /* CINEMA — after a few idle seconds the chrome bows out; any input brings it back.
+         (body.quiet is driven from wcExplore; the About card pins the chrome awake.) */
+      .hud, #brand, #fps { transition: opacity 1.1s ease; }
+      body.quiet .hud, body.quiet #brand, body.quiet #fps { opacity: 0; }
+      body.quiet .hud button { pointer-events: none; }
       @media (pointer: coarse) {
         .hud { line-height: 2.05; }
         .hud button { padding: 5px 7px; }   /* real tap targets on touch */
@@ -131,19 +142,21 @@
     <div class="hud">
       <div><b id="region">Western Cape</b> — <span id="crime">robbery</span> &nbsp;·&nbsp; <span id="year">—</span> &nbsp;·&nbsp; <span id="count" style="color:#8792a6;"></span></div>
       <div id="hint" class="hint" style="margin-top:2px;">click Cape Town to zoom in</div>
-      <div>
-        <button data-act="play"><span class="hint">space</span> play</button>&thinsp;·&thinsp;<button
+      <!-- The toolkit, grouped: TIME · LENS · VIEWS · meta. Chips DIM (never vanish — a moving row is
+           worse than a grey chip) when invalid in the current state; refreshChips() owns that. -->
+      <div id="controls">
+        <span class="grp"><button data-act="play"><span class="hint">space</span> play</button><button
           data-act="yearPrev" class="arr"><span class="hint">&larr;</span></button><button
-          data-act="yearNext" class="arr"><span class="hint">&rarr;</span></button> year&thinsp;·&thinsp;<button
-          data-act="crimeUp" class="arr"><span class="hint">&uarr;</span></button><button
-          data-act="crimeDown" class="arr"><span class="hint">&darr;</span></button> crime&thinsp;·&thinsp;<button
-          data-act="map"><span class="hint">M</span> map</button>&thinsp;·&thinsp;<button
-          data-act="pie"><span class="hint">P</span> pie</button>&thinsp;·&thinsp;<button
-          data-act="compare"><span class="hint">3</span> compare</button>&thinsp;·&thinsp;<button
-          data-act="percapita"><span class="hint">C</span> per-capita</button>&thinsp;·&thinsp;<button
-          data-act="terrain"><span class="hint">T</span> terrain</button>&thinsp;·&thinsp;<button
-          data-act="months"><span class="hint">N</span> months</button>&thinsp;·&thinsp;<button
-          data-act="about"><span class="hint">?</span> about</button><span class="passive">&thinsp;·&thinsp;<span class="hint">scroll</span> zoom&thinsp;·&thinsp;<span class="hint">drag</span> pan</span>
+          data-act="yearNext" class="arr"><span class="hint">&rarr;</span></button><span class="glabel">year</span><button
+          data-act="months"><span class="hint">N</span> months</button></span><span class="gsep">│</span><span
+        class="grp"><button data-act="crimeUp" class="arr"><span class="hint">&uarr;</span></button><button
+          data-act="crimeDown" class="arr"><span class="hint">&darr;</span></button><span class="glabel">crime</span><button
+          data-act="percapita"><span class="hint">C</span> per-capita</button></span><span class="gsep">│</span><span
+        class="grp"><button data-act="map"><span class="hint">M</span> map</button><button
+          data-act="pie"><span class="hint">P</span> pie</button><button
+          data-act="compare"><span class="hint">3</span> compare</button><button
+          data-act="terrain"><span class="hint">T</span> terrain</button></span><span class="gsep">│</span><span
+        class="grp"><button data-act="about"><span class="hint">?</span> about</button></span><span class="passive">&thinsp;<span class="hint">scroll</span> zoom&thinsp;·&thinsp;<span class="hint">drag</span> pan</span>
       </div>
       <div id="flag" style="color:#5e6a52; margin-top:4px;">◆ real SAPS robbery</div>
     </div>

@@ -617,6 +617,7 @@ function refreshHud(type = crimeType) {
   const rate = dataMode === 'percapita';
   if (regionEl) regionEl.textContent = (REGION_META[region] || REGION_META.wc).name;
   refreshHint();
+  refreshChips();
   if (triPieMode) {
     if (crimeEl) crimeEl.textContent = `all ${crimeTypes.length} crimes` + (rate ? ' · per capita' : '');
     if (yearEl) yearEl.textContent = yearLabels[yi];
@@ -795,6 +796,7 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'Escape') { e.preventDefault(); toggleAbout(false); }
     return;
   }
+  if (e.key === '?' || e.code === 'Slash') { e.preventDefault(); toggleAbout(); return; } // ? opens the card from ANY state
   if (drilling) return; // input is quiet mid-transition
   if (pulseMode) { // the pulse has its own clock: arrows step months, N/M return to years
     if (e.code === 'KeyN' || e.code === 'KeyM') { e.preventDefault(); exitPulse(); }
@@ -852,11 +854,40 @@ function toggleAbout(show) {
 }
 document.getElementById('about-close')?.addEventListener('click', () => toggleAbout(false));
 aboutEl?.addEventListener('click', (e) => { if (e.target === aboutEl) toggleAbout(false); });
+
+// CINEMA -- after a few idle seconds the chrome (HUD, brand, fps) bows out and the field stands
+// alone; any pointer/key/wheel/touch brings it back. The About card pins the chrome awake.
+const CHROME_IDLE_MS = 6000;
+let chromeLastActive = performance.now();
+const wakeChrome = () => { chromeLastActive = performance.now(); document.body.classList.remove('quiet'); };
+for (const ev of ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart']) {
+  window.addEventListener(ev, wakeChrome, { passive: true });
+}
+setInterval(() => {
+  const asleep = performance.now() - chromeLastActive > CHROME_IDLE_MS
+    && !(aboutEl && aboutEl.classList.contains('open'));
+  document.body.classList.toggle('quiet', asleep);
+}, 500);
+const chipEls = {};
 for (const el of document.querySelectorAll('.hud [data-act]')) {
+  chipEls[el.dataset.act] = el;
   el.addEventListener('click', () => {
     if (!drilling) { const f = CHIP_ACTIONS[el.dataset.act]; if (f) f(); }
     el.blur();
   });
+}
+
+// Contextual chips: a chip that would no-op in the current state DIMS instead of lying. Geometry
+// stays put (dimming, never hiding -- a reflowing row is worse than a grey chip). Mirrors the
+// keydown guards exactly; called from refreshHud so every state change repaints it.
+function refreshChips() {
+  const off = (act, is) => { const el = chipEls[act]; if (el) el.classList.toggle('off', !!is); };
+  off('play', triPieMode);
+  off('months', pieMode || triPieMode || !monthLabels);
+  off('crimeUp', triPieMode); off('crimeDown', triPieMode);
+  off('pie', triPieMode || pulseMode);
+  off('compare', pulseMode);
+  off('terrain', pieMode || triPieMode || !(regionData[region] && regionData[region].terrain && regionData[region].terrain.elev));
 }
 
 // Debug hook (region-aware).
