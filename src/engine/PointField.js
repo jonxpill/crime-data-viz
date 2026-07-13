@@ -52,6 +52,11 @@ export class PointField {
     geometry.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
     // Per-point terrain height (0 for flat fields; the terrain field fills it).
     geometry.setAttribute('aZ', new THREE.BufferAttribute(new Float32Array(count), 1));
+    // Per-point ORDERED SPIN (0 = still). A signed angular rate + a per-point onset time turn a
+    // SETTLED target field into a slow orrery: once a dot has landed, its target rotates about
+    // uSpinCentre by rate·(uSpinTime − onset). Off by default; the engine knows nothing of why.
+    geometry.setAttribute('aSpinRate', new THREE.BufferAttribute(new Float32Array(count), 1));
+    geometry.setAttribute('aSpinOnset', new THREE.BufferAttribute(new Float32Array(count), 1));
     // BufferGeometry needs *some* `position`; we drive xy ourselves, keep z=0.
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
     geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1e6);
@@ -84,6 +89,12 @@ export class PointField {
         // frame breathes like faint stars. Data has its own twinkle; these are ignored there.
         uShimmer: { value: 0.9 },      // amplitude (0 = still; ~0.3 gentle, ~0.45 present, ~0.9 dramatic)
         uShimmerSpeed: { value: 0.8 }, // how fast the breath cycles (slow = calm)
+        // Ordered spin — a real-time clock (uSpinTime, seconds) + the centre to rotate targets
+        // about; per-point aSpinRate/aSpinOnset carry the sign + start. uSpinOn gates the whole
+        // feature off (0) so no other view pays for it.
+        uSpinTime: { value: 0 },
+        uSpinCentre: { value: new THREE.Vector2(0, 0) },
+        uSpinOn: { value: 0 },
         uZScale: { value: 0 }, // terrain vertical scale (0 = flat map; raised = relief)
         uOpacity: { value: 1 }, // global fade — cross-fades map structure ↔ terrain relief
         uRampCool: { value: ramp[0] },
@@ -149,6 +160,24 @@ export class PointField {
     a.copyArray(seeds);
     a.needsUpdate = true;
   }
+  /** Ordered per-point SPIN: a LANDED dot's target slowly rotates about uSpinCentre by
+   *  sign·rate·(uSpinTime − onset), gated to only bite near lt≈1 — the inbound morph stays a clean
+   *  path and the rotation is pure about the centre, so each dot's RADIUS is preserved (it implies
+   *  nothing). `rates` are signed (opposite signs = counter-rotating groups); `onsets` (seconds)
+   *  start each dot from angle 0 at its own settle. Generic: any caller can turn a settled target
+   *  field into an orrery. Pair with setSpinCentre/setSpinTime and setSpinOn(true). */
+  setSpin(rates, onsets) {
+    const g = this.points.geometry;
+    g.getAttribute('aSpinRate').copyArray(rates).needsUpdate = true;
+    g.getAttribute('aSpinOnset').copyArray(onsets).needsUpdate = true;
+  }
+  /** Advance the spin's REAL-time clock (seconds) — independent of the morph's uT, so a settled
+   *  field keeps turning even when the morph is paused. */
+  setSpinTime(s) { this.material.uniforms.uSpinTime.value = s; }
+  /** The point that targets rotate about (radius from here is the invariant). */
+  setSpinCentre(x, y) { this.material.uniforms.uSpinCentre.value.set(x, y); }
+  /** Master gate — false (default) = no spin anywhere; true = ordered spin per aSpinRate/aSpinOnset. */
+  setSpinOn(on) { this.material.uniforms.uSpinOn.value = on ? 1 : 0; }
   /** DATA per-dot brightness curve: floor (lone-ember glow) + gain (density dependence; low = tamer cores). */
   setDataFloor(v) { this.material.uniforms.uDataFloor.value = v; }
   setDataGain(v) { this.material.uniforms.uDataGain.value = v; }
@@ -179,6 +208,9 @@ const VERT = /* glsl */ `
   uniform float uShimmerSpeed;
   uniform float uZScale;
   uniform float uMaxSize;
+  uniform float uSpinTime;
+  uniform vec2 uSpinCentre;
+  uniform float uSpinOn;
 
   attribute vec2 aSource;
   attribute vec2 aTarget;
@@ -186,6 +218,8 @@ const VERT = /* glsl */ `
   attribute float aTargetDensity;
   attribute float aSeed;
   attribute float aZ;
+  attribute float aSpinRate;
+  attribute float aSpinOnset;
 
   varying float vDensity;
   varying float vTwinkle;
@@ -200,7 +234,21 @@ const VERT = /* glsl */ `
     // of a few 1e-4 are legitimate (thousands of ordered dots crossing one at a time).
     float w = max(uStagger, 1.0e-4);
     float lt = clamp((uT - seed01 * (1.0 - w)) / w, 0.0, 1.0);
-    vec2 pos = mix(aSource, aTarget, lt);
+
+    // Ordered spin — a LANDED dot's target rotates about uSpinCentre on a real-time clock. gate ≈ 0
+    // until lt≈1, so a still-inbound dot keeps its clean path (the spiral pour is untouched); the
+    // angle grows from ZERO at the dot's own onset (max(0, …)), so a ring eases into motion with no
+    // jerk and keeps turning while the morph is paused. Pure rotation → radius is preserved exactly.
+    vec2 tgt = aTarget;
+    if (uSpinOn > 0.5) {
+      float gate = smoothstep(0.86, 1.0, lt);
+      float ang = aSpinRate * max(0.0, uSpinTime - aSpinOnset) * gate;
+      float cs = cos(ang), sn = sin(ang);
+      vec2 d = aTarget - uSpinCentre;
+      tgt = uSpinCentre + vec2(d.x * cs - d.y * sn, d.x * sn + d.y * cs);
+    }
+
+    vec2 pos = mix(aSource, tgt, lt);
     float density = mix(aSourceDensity, aTargetDensity, lt);
     vDensity = density;
 
