@@ -495,6 +495,153 @@ export function triPieFrameLayout(n, { centers = [], R = 120, boundaries = [], f
 }
 
 /**
+ * THE TOLL — data endpoints for the 18-year murder accumulation ceremony (docs/plans/toll.md).
+ * Every recorded murder EVENT (station, year, index-within-year) gets its OWN pool dot, allocated
+ * GLOBALLY in chronological order: dot k = the k-th murder, oldest year first, stations SHUFFLED
+ * within each year (seeded, so no station always pours first). The murder-map layouts reuse one
+ * station slot across years, so eighteen years at once need this fresh allocation. Honesty:
+ * counts to the digit (M = Σ murder[y], asserted loudly); micro-position jittered with the map
+ * builder's own statistics (volume real, street addresses not).
+ *
+ * SOURCE = the event's precinct on the map, DIM (waiting, not yet counted). DISC = its slot in
+ * the year stratum: equal AREA per dot (r ∝ √k, density-honest like the pie), so each year is an
+ * annulus whose THICKNESS is its count — growth rings of loss, year one innermost. Dots the toll
+ * doesn't use sit at the caller's `park` pose in BOTH endpoints (invisible, still).
+ *
+ * @returns {{ source, disc, M:number, perYear:number[], cum:number[], seamRadii:number[],
+ *             R:number, cx:number, cy:number } | null} null (loudly) if the pool can't hold M.
+ */
+export function tollLayouts(stations, { years, count, park = null, cx = 0, cy = 0, R = 240 } = {}) {
+  const rng = mulberry32(0x70115eed);
+  const perYear = years.map((y) => stations.reduce((a, s) => a + ((s.crimes.murder && s.crimes.murder[y]) || 0), 0));
+  const cum = [0];
+  for (const n of perYear) cum.push(cum[cum.length - 1] + n);
+  const M = cum[cum.length - 1];
+  console.info(`[toll] M = ${M.toLocaleString()} recorded murders · ${years[0]}–${years[years.length - 1]} · pool ${count.toLocaleString()}`);
+  if (M > count) { console.error('[toll] the pool cannot hold the toll', { M, count }); return null; }
+
+  const source = { positions: new Float32Array(count * 2), density: new Float32Array(count) };
+  const disc = { positions: new Float32Array(count * 2), density: new Float32Array(count) };
+  if (park) { source.positions.set(park); disc.positions.set(park); }
+
+  // Event k → its station, year-major, Fisher–Yates within each year.
+  const order = new Int32Array(M);
+  let k0 = 0;
+  for (const y of years) {
+    let m = 0;
+    for (let si = 0; si < stations.length; si++) {
+      const n = (stations[si].crimes.murder && stations[si].crimes.murder[y]) || 0;
+      for (let j = 0; j < n; j++) order[k0 + m++] = si;
+    }
+    for (let i = m - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      const tmp = order[k0 + i]; order[k0 + i] = order[k0 + j]; order[k0 + j] = tmp;
+    }
+    k0 += m;
+  }
+
+  for (let k = 0; k < M; k++) {
+    const s = stations[order[k]];
+    // SOURCE — the event's own precinct (gaussian falloff, half the precinct radius — the map
+    // builder's jitter statistics). Dim: waiting, not yet counted.
+    const ang = rng() * TAU;
+    const rad = Math.abs(gauss(rng)) * 0.5 * s.r;
+    source.positions[k * 2] = s.x + Math.cos(ang) * rad;
+    source.positions[k * 2 + 1] = s.y + Math.sin(ang) * rad;
+    source.density[k] = 0.06;
+    // DISC — equal area per dot: r ∝ √(k/M) keeps areal density uniform, so the strata read by
+    // thickness alone (the honest channel). The +rng() jitter even-fills WITHIN dot k's annulus,
+    // so a year never leaks past its seam.
+    const dr = R * Math.sqrt((k + rng()) / M);
+    const da = rng() * TAU;
+    disc.positions[k * 2] = cx + Math.cos(da) * dr;
+    disc.positions[k * 2 + 1] = cy + Math.sin(da) * dr;
+    disc.density[k] = 0.85;
+  }
+  const seamRadii = [];
+  for (let y = 1; y < years.length; y++) seamRadii.push(R * Math.sqrt(cum[y] / M));
+  return { source, disc, M, perYear, cum, seamRadii, R, cx, cy };
+}
+
+/**
+ * Structure frame for the toll: the YEAR-DIAL — outer ring, 18 calendar ticks (2008/09 at
+ * twelve, clockwise), faint stratum seams where each year's annulus will end, and a HAND whose
+ * slice the caller rewrites as the sweep advances (`hand: { start, count }` indexes this same
+ * pool; tollHandLayout builds one pose of it). pieFrameLayout's contract: only `frameDots` draw
+ * the skeleton, the surplus parks off-screen (invisible, no pile-up).
+ */
+export function tollFrameLayout(n, { cx = 0, cy = 0, R = 240, dialR = 278, ticks = 18, seamRadii = [], frameDots = 200000, thin = 0.22, handN = 600 } = {}) {
+  const positions = new Float32Array(n * 2), density = new Float32Array(n), z = new Float32Array(n);
+  const rng = mulberry32(0x5eed1e);
+  const used = Math.min(n, frameDots);
+  const RING = Math.floor(used * 0.42);
+  const TICK = Math.floor(used * 0.08);
+  const SEAM = Math.floor(used * 0.22);
+  const HAND = Math.min(handN, Math.max(0, used - RING - TICK - SEAM));
+  let k = 0;
+  for (; k < RING; k++) {                            // the dial ring — a thin crisp circle
+    const a = rng() * TAU, r = dialR + gauss(rng) * thin;
+    positions[k * 2] = cx + Math.cos(a) * r;
+    positions[k * 2 + 1] = cy + Math.sin(a) * r;
+    density[k] = 0.5;
+  }
+  const tickEnd = k + TICK;                          // 18 short radial dashes crossing the ring
+  for (; k < tickEnd; k++) {
+    const i = (k - RING) % ticks;
+    const a = (i / ticks) * TAU;                     // 0 = twelve, clockwise (the hand's arc)
+    const r = dialR * (0.965 + rng() * 0.07);
+    const off = gauss(rng) * thin;
+    positions[k * 2] = cx + Math.sin(a) * r + Math.cos(a) * off;
+    positions[k * 2 + 1] = cy + Math.cos(a) * r - Math.sin(a) * off;
+    density[k] = 0.55;
+  }
+  // Faint stratum seams — dots per seam ∝ its radius, so the line weight stays even.
+  const seamEnd = RING + TICK + SEAM;
+  const seamTotal = seamRadii.reduce((a, r) => a + r, 0) || 1;
+  for (const sr of seamRadii) {
+    const end = Math.min(k + Math.round(SEAM * (sr / seamTotal)), seamEnd);
+    for (; k < end; k++) {
+      const a = rng() * TAU, r = sr + gauss(rng) * thin * 1.6;
+      positions[k * 2] = cx + Math.cos(a) * r;
+      positions[k * 2 + 1] = cy + Math.sin(a) * r;
+      density[k] = 0.16;                             // a whisper under the data
+    }
+  }
+  const hand = { start: k, count: HAND };
+  const h = tollHandLayout(HAND, { cx, cy, R, dialR, angle: 0, thin });
+  positions.set(h.positions, k * 2);
+  density.set(h.density, k);
+  k += HAND;
+  for (; k < n; k++) {                               // surplus → off-screen roost, invisible
+    const a = rng() * TAU, r = 900 * (0.8 + rng() * 0.5);
+    positions[k * 2] = cx + Math.cos(a) * r;
+    positions[k * 2 + 1] = cy + Math.sin(a) * r;
+    density[k] = 0;
+  }
+  return { positions, density, z, hand };
+}
+
+/**
+ * One pose of the toll's HAND — a short radial pointer OUTSIDE the disc (structure must never
+ * cross the data), from the disc's edge to the dial ring at `angle` (0 = twelve, clockwise).
+ * Seeded rng: every pose jitters identically, so the hand turns as one solid thing.
+ */
+export function tollHandLayout(count, { cx = 0, cy = 0, R = 240, dialR = 278, angle = 0, thin = 0.22 } = {}) {
+  const positions = new Float32Array(count * 2), density = new Float32Array(count);
+  const rng = mulberry32(0xd1a1);
+  const r0 = R * 1.02, r1 = dialR * 0.995;
+  const sa = Math.sin(angle), ca = Math.cos(angle);
+  for (let k = 0; k < count; k++) {
+    const r = r0 + (k / count) * (r1 - r0) + (rng() - 0.5) * 0.8;
+    const off = gauss(rng) * thin * 0.9;
+    positions[k * 2] = cx + sa * r + ca * off;
+    positions[k * 2 + 1] = cy + ca * r - sa * off;
+    density[k] = 0.7;
+  }
+  return { positions, density };
+}
+
+/**
  * Terrain relief: a FIXED dot budget (GX×GY) laid out to fill a rect (map-local cx,cy ± hw,hh),
  * each dot sampling the baked DEM at its own world position for height + brightness. Called with
  * the whole box → the static landform. Ocean dots are REDIRECTED onto the land (rejection sample),
