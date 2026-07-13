@@ -258,9 +258,9 @@ session reads all four.
 ## Stage — Round two: four more branches (planned 2026-07-11, GO given)
 Build-first-then-chop round (the maker: "more visualisations first, then chop the weakest").
 Branched from post-door-fix main; plans in docs/plans/:
-- `feat/flock` — [Release the Field](plans/flock.md) · weekend · province-only play state
+- `feat/flock` — [Release the Field](plans/flock.md) · weekend · province-only play state · **KEEP (maker, 2026-07-12)** — now the ATTRACT state (opens released; surge easing)
 - `feat/loom` — [The Loom Bridges](plans/loom.md) · weekend · S chorale + G voice-scrub, own module · **DROPPED (maker, 2026-07-11)** — branch parked, never merged
-- `feat/suburb` — [Stand In Your Suburb](plans/suburb.md) · weekend-plus · bake gains lng/lat, merge last
+- `feat/suburb` — [Stand In Your Suburb](plans/suburb.md) · weekend-plus · bake gains lng/lat, merge last · **KEEP (maker, 2026-07-12)**
 - `feat/forensics` — [The Forensics Strip](plans/forensics.md) · weekend-plus · wording is a merge gate
 Round-one verdicts (maker, 2026-07-11, mid-gallery): **canyon KEEP** · **unlit KEEP** (kept for
 importance — the honesty counterweight — rather than visual novelty) · **reading MAYBE** (pending
