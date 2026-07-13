@@ -267,3 +267,11 @@ importance — the honesty counterweight — rather than visual novelty) · **re
 another look) · **ember DROPPED** — too similar to the existing pulse; the branch stays parked in git
 (its generic age-tint engine capability may serve later), never merged. Survivors merge after the
 round-two cull, reconciled with the setDataPair door (they forked pre-fix).
+
+## Stage — The Toll (planned 2026-07-12, GO: land Western Cape first)
+`feat/toll` — [plan](plans/toll.md). The Reading's concept at 18-year scale: a year-dial sweeps
+~75s while every recorded murder pours out of the map into a stratum disc (growth rings of loss);
+press-and-hold = 1:1 (the Reading's soul as a gesture); scrub the dial both ways. Reuses feat/reading's
+ordered-seed mechanism (setSeeds replicated identically). Whether it REPLACES the Reading is decided
+after the maker sees it. National variant (~430–470k dots, needs a national murder-totals bake) is
+explicitly deferred until the WC version has been felt.
