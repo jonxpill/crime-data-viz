@@ -557,11 +557,12 @@ let tollData = null;                                 // { source, disc, M, perYe
 let tollFrame = null, tollHand = null;               // the dial structure layout + its hand slice
 let tollSeeds = null, tollSeedsSaved = null;         // ordered seeds of dot k + the randoms restored on exit
 let tollCount = -1, tollYearShown = -1, tollDone = false;
-let tollPhaseStart = 0, tollLastNow = 0, tollDrainFrom = 0, tollHandAngle = -1;
+let tollPhaseStart = 0, tollLastNow = 0, tollDrainFrom = 0, tollHandAngle = -1, tollSpinStart = 0;
 let tollHoldTimer = 0;
 const TOLL_SWEEP_MS = 75000, TOLL_GATHER_MS = 2400, TOLL_DRAIN_MS = 1400, TOLL_HOME_MS = 2000;
 const TOLL_FLIGHT_S = 1.2;                           // one dot's map→disc flight at sweep speed
 const TOLL_HOLD_MS = 350;                            // press-and-hold threshold on the disc
+let TOLL_SPIN_RATE = 0.028;                          // settled-ring spin (rad/s) ≈ 1 rev / 3.7 min — very slow, tune by eye
 // Per-dot stagger window: at sweep speed (uT/s = 1000/TOLL_SWEEP_MS) a window w is a w·75 s flight.
 const tollW = () => Math.min(0.95, TOLL_FLIGHT_S / (TOLL_SWEEP_MS / 1000));
 
@@ -667,9 +668,30 @@ function beginTollClock(now) {
   field.setSource(tollData.source);
   field.setTarget(tollData.disc);
   field.setStagger(tollW());
+  bakeTollSpin();                                     // the settled rings will turn (a real-time clock)
+  field.setSpinTime(0); field.setSpinOn(true); tollSpinStart = now;
   tollPhase = 'toll';
   tollT = 0; tollLastNow = now; t = 0;
   refreshHud();
+}
+
+// Bake the ORDERED SPIN: once a year's ring has settled it turns VERY slowly, and ADJACENT rings
+// turn OPPOSITE ways (parity by year index) — a nested orrery. Onset = when dot k lands at the
+// DEFAULT sweep speed, so each ring eases from angle 0 the instant it settles; the engine gates
+// the spin by landed-ness, so scrubbing back lifts dots and stops them cleanly. Radius-preserving,
+// so it changes no year/count — ambient living-motion, like the idle drift.
+function bakeTollSpin() {
+  if (!tollData) return;
+  const M = tollData.M, rates = new Float32Array(COUNT), onsets = new Float32Array(COUNT);
+  const sweepS = TOLL_SWEEP_MS / 1000, w = tollW();
+  let yy = 0;
+  for (let k = 0; k < M; k++) {
+    while (yy < years.length - 1 && k >= tollData.cum[yy + 1]) yy++;
+    onsets[k] = ((k / M) * (1 - w) + w) * sweepS;     // seconds until this dot lands at sweep speed
+    rates[k] = TOLL_SPIN_RATE * ((yy & 1) ? -1 : 1);  // adjacent rings counter-rotate
+  }
+  field.setSpin(rates, onsets);
+  field.setSpinCentre(tollData.cx, tollData.cy);       // rotate about the DISC centre → radius invariant
 }
 
 // K/M/Esc/tap outside the dial: the pour REVERSES — a fast eased drain back into the dimmed map,
@@ -689,6 +711,7 @@ function exitToll() {
 function beginTollHome() {
   // At uT = 0 the pose IS the source, so restoring the random seeds is invisible here.
   if (tollSeedsSaved) { field.setSeeds(tollSeedsSaved); tollSeedsSaved = null; }
+  field.setSpinOn(false);                            // stop the orrery BEFORE the map target lands (never spin the map)
   field.setTarget(layouts[yi]);                      // the truthful map (current crime, year yi)
   field.setStagger(0.55);
   t = 0; tollT = 0; tollPhase = 'home'; tollPhaseStart = performance.now();
@@ -1237,7 +1260,11 @@ window.__viz = {
     }
     const counting = tollPhase === 'toll' || tollPhase === 'drain';
     return { phase: tollPhase, M: tollData.M, count: counting ? tollCountAt(tollT) : 0,
-      tollT, year: yearLabels[tollYearFrac(counting ? tollT : 0).y], paused: tollPaused };
+      tollT, year: yearLabels[tollYearFrac(counting ? tollT : 0).y], paused: tollPaused, spinRate: TOLL_SPIN_RATE };
+  },
+  tollSpin: (rate) => { // debug: live-tune the settled-ring spin rate (rad/s); re-bakes if tolling
+    if (typeof rate === 'number') { TOLL_SPIN_RATE = rate; if (tollMode && tollData) bakeTollSpin(); }
+    return { spinRate: TOLL_SPIN_RATE, revSeconds: TOLL_SPIN_RATE ? (2 * Math.PI / Math.abs(TOLL_SPIN_RATE)).toFixed(0) : Infinity };
   },
   flip: () => flipCrime(1),
   drift: (px) => field && field.setDrift(px),
@@ -1546,6 +1573,7 @@ function tick() {
     } else if (tollPhase === 'toll') {               // the dial clock: sweep rate, or the 1:1 drip on hold
       const dt = (now - tollLastNow) / 1000;
       tollLastNow = now;
+      field.setSpinTime((now - tollSpinStart) / 1000); // real time — the settled disc turns even when paused/complete
       if (!tollPaused && !tollScrubbing && tollT < 1) {
         const rate = (tollHoldPtr || tollHoldKey)
           ? (1 - tollW()) / tollData.M               // exactly one landing per second (seed spacing)
@@ -1557,6 +1585,7 @@ function tick() {
       updateTollHand(tollT);
     } else if (tollPhase === 'drain') {              // the pour reverses — fast, eased, ordered seeds still on
       const p = Math.min((now - tollPhaseStart) / TOLL_DRAIN_MS, 1);
+      field.setSpinTime((now - tollSpinStart) / 1000); // still-landed dots keep turning; lifting dots stop (gate)
       tollT = tollDrainFrom * (1 - drillEase(p));
       t = tollT;
       updateTollHud();
