@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointField } from './engine/PointField.js';
-import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor, tollLayouts, tollFrameLayout, tollHandLayout } from './layouts/capeTown.js';
+import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor, tollLayouts, tollFrameLayout, tollHandLayout, textLayout } from './layouts/capeTown.js';
 
 /*
  * THE APP — a Western Cape crime field you drill into Cape Town from. (Was the single-region Cape Town app
@@ -110,6 +110,7 @@ function render() {
 // ---- the ONE data pool + ONE structure pool ---------------------------------
 let field = null;          // DATA (glow). Province = all 150; a district view = its own contiguous SLICE of the field.
 let structField = null;    // STRUCTURE (grey matte). Province outline ⇄ the active district's outline. One conserved pool.
+let wordField = null; const WORD_N = 22000; // the toll's memorial WORD — a dim structure backdrop BEHIND the disc
 let COUNT = 0;             // total data slots. Field is ordered BY DISTRICT (Cape Town first); each district a slice.
 let awayAll = null;        // ALL province dots pushed out ×2.5 (density 0) — the base a district's lift() overwrites.
 let structN = 0;           // structure dot budget (the province outline's) — the shared pool's size.
@@ -359,6 +360,17 @@ async function init() {
   structField.setMaxSize(7);
   fieldGroup.add(structField.points);
 
+  // The toll's memorial WORD: a structure pool (grey, matte, NO glow — a word is a LABEL, never a data
+  // claim) that renders BEHIND everything (renderOrder -2) so the glowing disc always sits in front of
+  // it — "sent backwards", not dimmed into submission. Hidden except during the toll ceremony.
+  wordField = new PointField(WORD_N, { glow: false, size: 1.4, matte: '#3a4656' });
+  wordField.setPixelRatio(renderer.getPixelRatio());
+  wordField.setDrift(0.0);
+  wordField.setMaxSize(6);
+  wordField.points.renderOrder = -2;
+  wordField.points.visible = false;
+  fieldGroup.add(wordField.points);
+
   // Per-dot relief height on the DATA field, filled per region by fillAZ() when terrain is on (0 at rest).
   field.points.geometry.setAttribute('aZ', new THREE.BufferAttribute(new Float32Array(COUNT), 1));
 
@@ -574,6 +586,25 @@ function tollGeom() {
   return { cx: 0, cy: -box.h * 0.06, R, dialR: R * 1.16 };
 }
 
+// The memorial WORD behind the toll. Grey structure, no glow, renderOrder -2 → the disc sits in front.
+// Centred a touch ABOVE the disc (yFrac of box.h); all params live-tunable via __viz.word() by eye.
+let tollWord = 'MURDER';
+let tollWordOpts = { fontFrac: 0.14, jitter: 0.8, weight: 800, yFrac: 0.41, spanFrac: 0.46 }; // "title above" — the word crowns the dial, its base just dipping into the outer ring
+function showTollWord() {
+  if (!wordField) return;
+  if (!tollWord) { wordField.points.visible = false; return; }
+  const box = regionData.wc.meta.box;
+  const { cy } = tollGeom();
+  const o = tollWordOpts;
+  const lay = textLayout(tollWord, WORD_N, box, {
+    fontFrac: o.fontFrac, jitter: o.jitter, weight: o.weight, spanFrac: o.spanFrac,
+    cx: 0, cy: cy + o.yFrac * box.h,
+  });
+  wordField.setSource(lay); wordField.setTarget(lay); wordField.setT(1);
+  wordField.points.visible = true;
+}
+function hideTollWord() { if (wordField) wordField.points.visible = false; }
+
 // Bake the field's CURRENT on-screen pose (the vertex shader's per-dot staggered mix, minus the
 // cosmetic drift) into a plain layout, so a new morph can begin from EXACTLY what the eye sees —
 // mid-transition, any seeds, any stagger. Mirrors the shader: fract(aSeed/2π), epsilon floor, and
@@ -651,6 +682,7 @@ function enterToll() {
   tollHand = tollFrame.hand;
   structField.setSize(PIE_LINE_SIZE);
   startStructTransition(tollFrame, TOLL_GATHER_MS, 0.6);
+  showTollWord();                                    // the memorial word appears behind the ceremony
   refreshHud();
 }
 
@@ -712,6 +744,7 @@ function beginTollHome() {
   // At uT = 0 the pose IS the source, so restoring the random seeds is invisible here.
   if (tollSeedsSaved) { field.setSeeds(tollSeedsSaved); tollSeedsSaved = null; }
   field.setSpinOn(false);                            // stop the orrery BEFORE the map target lands (never spin the map)
+  hideTollWord();                                    // the memorial word leaves with the disc
   field.setTarget(layouts[yi]);                      // the truthful map (current crime, year yi)
   field.setStagger(0.55);
   t = 0; tollT = 0; tollPhase = 'home'; tollPhaseStart = performance.now();
@@ -1265,6 +1298,13 @@ window.__viz = {
   tollSpin: (rate) => { // debug: live-tune the settled-ring spin rate (rad/s); re-bakes if tolling
     if (typeof rate === 'number') { TOLL_SPIN_RATE = rate; if (tollMode && tollData) bakeTollSpin(); }
     return { spinRate: TOLL_SPIN_RATE, revSeconds: TOLL_SPIN_RATE ? (2 * Math.PI / Math.abs(TOLL_SPIN_RATE)).toFixed(0) : Infinity };
+  },
+  word: (w, opts) => { // live-tune the toll's memorial backdrop word. word('') hides; opts: {fontFrac,jitter,weight,yFrac,spanFrac}
+    if (typeof w === 'string') tollWord = w;
+    if (opts) Object.assign(tollWordOpts, opts);
+    if (tollMode) showTollWord();
+    if (wordField && (opts && opts.matte)) wordField.material.uniforms.uMatte.value.set(opts.matte);
+    return { word: tollWord, ...tollWordOpts, matte: '#' + (wordField ? wordField.material.uniforms.uMatte.value.getHexString() : '') };
   },
   flip: () => flipCrime(1),
   drift: (px) => field && field.setDrift(px),

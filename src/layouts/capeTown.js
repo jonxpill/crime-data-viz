@@ -738,3 +738,43 @@ function gauss(rng) {
   while (v === 0) v = rng();
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v);
 }
+
+/**
+ * textLayout(word, count, box) — STRUCTURE-role arrangement that spells `word` in dots. The word is
+ * rendered to an offscreen canvas, its filled pixels sampled, and each dot handed one (jittered) as
+ * its target — so the field can morph into typography. Used ONLY in the structure substance (grey,
+ * matte, non-glow): a word is a LABEL/title, never a data claim. Honest by role, not by position.
+ * `cx,cy` shift the word's centre in world units (default: origin); `aspect` lets a caller pre-shape
+ * the sampling box independent of the map box (so "MURDER" isn't stretched by a tall province box).
+ */
+export function textLayout(word, count, box, { fontFrac = 0.5, jitter = 0.9, weight = 800, seed = 0x7057, cx = 0, cy = 0, spanFrac = 0.9 } = {}) {
+  const { w: W, h: H } = box;
+  const CW = 1024, CH = Math.max(64, Math.round(CW * H / W));
+  const cvs = (typeof OffscreenCanvas !== 'undefined')
+    ? new OffscreenCanvas(CW, CH)
+    : Object.assign(document.createElement('canvas'), { width: CW, height: CH });
+  const ctx = cvs.getContext('2d', { willReadFrequently: true });
+  ctx.clearRect(0, 0, CW, CH);
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  let fs = Math.round(CH * fontFrac);
+  const setFont = () => { ctx.font = `${weight} ${fs}px ui-monospace, "SF Mono", Menlo, monospace`; };
+  setFont();
+  while (ctx.measureText(word).width > CW * spanFrac && fs > 8) { fs -= 4; setFont(); }
+  ctx.fillText(word, CW / 2, CH / 2);
+  const data = ctx.getImageData(0, 0, CW, CH).data;
+  const on = [];
+  for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++) if (data[(y * CW + x) * 4 + 3] > 128) { on.push(x, y); }
+  const nOn = on.length / 2;
+  const rng = mulberry32(seed);
+  const positions = new Float32Array(count * 2), density = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    if (!nOn) { positions[i * 2] = cx; positions[i * 2 + 1] = cy; density[i] = 0; continue; }
+    const k = Math.floor(rng() * nOn) * 2;
+    positions[i * 2] = cx + (on[k] / CW - 0.5) * W + (rng() - 0.5) * 2 * jitter;
+    positions[i * 2 + 1] = cy + (0.5 - on[k + 1] / CH) * H + (rng() - 0.5) * 2 * jitter;
+    density[i] = 0.4;
+  }
+  return { positions, density };
+}
