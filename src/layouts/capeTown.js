@@ -636,7 +636,7 @@ export function tollHandLayout(count, { cx = 0, cy = 0, R = 240, dialR = 278, an
     const off = gauss(rng) * thin * 0.9;
     positions[k * 2] = cx + sa * r + ca * off;
     positions[k * 2 + 1] = cy + ca * r - sa * off;
-    density[k] = 0.7;
+    density[k] = 0.9;                                // brighter than ring (0.5) + ticks (0.55) — it must READ
   }
   return { positions, density };
 }

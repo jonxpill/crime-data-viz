@@ -722,7 +722,7 @@ function updateTollHud(force = false) {
     if (!tollDone) { tollDone = true; refreshHud(); } // the hand rests; the hint flips once
   } else {
     const inYear = Math.max(0, n - tollData.cum[y]); // landings lag the hand — never more than the year holds
-    countEl.textContent = `${yearLabels[y]} · ${inYear.toLocaleString()} this year · ${n.toLocaleString()} recorded murders so far`;
+    countEl.textContent = `${inYear.toLocaleString()} this year · ${n.toLocaleString()} recorded murders so far`;
     if (tollDone) { tollDone = false; refreshHud(); } // scrubbed back below complete
   }
 }
