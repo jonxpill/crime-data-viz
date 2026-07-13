@@ -745,6 +745,7 @@ function beginTollHome() {
   if (tollSeedsSaved) { field.setSeeds(tollSeedsSaved); tollSeedsSaved = null; }
   field.setSpinOn(false);                            // stop the orrery BEFORE the map target lands (never spin the map)
   hideTollWord();                                    // the memorial word leaves with the disc
+  hideTollRoll();                                    // and the ring caption goes with it
   field.setTarget(layouts[yi]);                      // the truthful map (current crime, year yi)
   field.setStagger(0.55);
   t = 0; tollT = 0; tollPhase = 'home'; tollPhaseStart = performance.now();
@@ -804,38 +805,37 @@ function updateTollHand(uT) {
   structField.setTarget(slice, tollHand.start);
 }
 
-// Sparse calendar labels around the dial (the caption-div pattern): 2008 · 2013 · 2018 · 2023 ·
-// the end year at its own tick. Structure-voiced — grey, small, pointer-transparent.
-const tollLabels = [];
-function ensureTollLabels(n) {
-  while (tollLabels.length < n) {
-    const d = document.createElement('div');
-    d.style.cssText = 'position:fixed;pointer-events:none;z-index:19;color:#8b98ac;' +
+// Ring rollover: hover a year-stratum to name its year + that year's murder count. Structure-voiced —
+// grey, small, pointer-transparent; a memorial caption that follows the pointer over the disc.
+let tollRollEl = null;
+function tollRoll() {
+  if (!tollRollEl) {
+    tollRollEl = document.createElement('div');
+    tollRollEl.style.cssText = 'position:fixed;pointer-events:none;z-index:20;color:#8b98ac;' +
       'font:12px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em;' +
-      'opacity:0;transition:opacity .4s;transform:translate(-50%,-50%)';
-    app.appendChild(d);
-    tollLabels.push(d);
+      'opacity:0;transition:opacity .25s';
+    app.appendChild(tollRollEl);
   }
+  return tollRollEl;
 }
-function updateTollLabels() {
-  const show = tollMode && tollPhase !== 'home' && strProg >= 1;
-  if (!show) { for (const d of tollLabels) d.style.opacity = '0'; return; }
-  const specs = [0, 5, 10, 15].map((i) => ({ i, text: String(years[i]) }))
-    .concat([{ i: years.length - 1, text: yearLabels[years.length - 1] }]);
-  ensureTollLabels(specs.length);
-  const { cx, cy, dialR } = tollGeom();
-  const rect = renderer.domElement.getBoundingClientRect();
-  fieldGroup.updateWorldMatrix(true, false);
-  specs.forEach((sp, li) => {
-    const d = tollLabels[li];
-    const a = (sp.i / years.length) * Math.PI * 2;
-    _hv.set(cx + Math.sin(a) * dialR * 1.13, cy + Math.cos(a) * dialR * 1.13, 0);
-    fieldGroup.localToWorld(_hv); _hv.project(camera);
-    d.style.left = ((_hv.x * 0.5 + 0.5) * rect.width) + 'px';
-    d.style.top = ((-_hv.y * 0.5 + 0.5) * rect.height) + 'px';
-    d.textContent = sp.text;
-    d.style.opacity = '1';
-  });
+function hideTollRoll() { if (tollRollEl) tollRollEl.style.opacity = '0'; }
+function updateTollRollover(clientX, clientY) {
+  // Only while the disc exists (not gather/home), and never mid-scrub — rollover is pure hover.
+  if (!tollMode || tollPhase === 'gather' || tollPhase === 'home' || tollScrubbing || !tollData) {
+    hideTollRoll(); return;
+  }
+  const { cx, cy } = tollGeom();                       // fieldGroup local == world here (same as the pointer grammar)
+  const p = tollWorldAt(clientX, clientY);
+  const r = Math.hypot(p.x - cx, p.y - cy);
+  if (r < tollData.r0 || r > tollData.R) { hideTollRoll(); return; }  // off the disc band → nothing to name
+  let y = 0;                                           // radius → year; the orrery spin preserves radius, so it's unaffected
+  while (y < tollData.seamRadii.length && r >= tollData.seamRadii[y]) y++;
+  const el = tollRoll();
+  el.textContent = `${yearLabels[y]} · ${tollData.perYear[y].toLocaleString()} recorded`;
+  el.style.opacity = '1';
+  const w = el.offsetWidth, h = el.offsetHeight;       // clamp so the caption never runs off the viewport edge
+  el.style.left = Math.max(8, Math.min(clientX + 14, window.innerWidth - w - 8)) + 'px';
+  el.style.top = Math.max(8, Math.min(clientY - 10, window.innerHeight - h - 8)) + 'px';
 }
 
 // ---- the dial's pointer grammar: drag the ring scrubs, hold the disc drips 1:1, tap outside exits ----
@@ -874,6 +874,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
 });
 window.addEventListener('pointermove', (e) => {
   if (tollScrubbing) tollScrubTo(e.clientX, e.clientY);
+  updateTollRollover(e.clientX, e.clientY);           // pure hover — name the ring under the pointer
 });
 window.addEventListener('pointerup', (e) => {
   if (!tollMode) return;
@@ -1688,7 +1689,6 @@ function tick() {
   updateTooltip();
   updateLabels();
   updateTriLabels();
-  updateTollLabels();
 
   render();
 
