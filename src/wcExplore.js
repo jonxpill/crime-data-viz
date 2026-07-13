@@ -635,7 +635,7 @@ function enterToll() {
   // Province-only full-pool CEREMONY: the pool IS the province (sliceStart() = 0), and tollLayouts
   // returns full COUNT-sized endpoints by construction — full-buffer writes at offset 0 are the
   // correct door here (startDrill is the precedent). Raw murder counts, whatever the display mode.
-  tollData = tollLayouts(stationsByRegion.wc, { years, count: COUNT, park: awayAll.positions, cx, cy, R });
+  tollData = tollLayouts(stationsByRegion.wc, { years, count: COUNT, park: awayAll.positions, cx, cy, R, dialR });
   if (!tollData) return;                             // tollLayouts asserted loudly (M > pool)
   playing = false; morphStart = -1;
   tollMode = true; tollPhase = 'gather'; tollPaused = false; tollDone = false;

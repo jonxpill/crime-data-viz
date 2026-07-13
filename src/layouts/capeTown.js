@@ -496,71 +496,73 @@ export function triPieFrameLayout(n, { centers = [], R = 120, boundaries = [], f
 
 /**
  * THE TOLL — data endpoints for the 18-year murder accumulation ceremony (docs/plans/toll.md).
- * Every recorded murder EVENT (station, year, index-within-year) gets its OWN pool dot, allocated
- * GLOBALLY in chronological order: dot k = the k-th murder, oldest year first, stations SHUFFLED
- * within each year (seeded, so no station always pours first). The murder-map layouts reuse one
+ * Every recorded murder EVENT gets its OWN pool dot, allocated GLOBALLY in chronological order:
+ * dot k = the k-th murder, oldest year first (year-major). The murder-map layouts reuse one
  * station slot across years, so eighteen years at once need this fresh allocation. Honesty:
- * counts to the digit (M = Σ murder[y], asserted loudly); micro-position jittered with the map
- * builder's own statistics (volume real, street addresses not).
+ * counts to the digit (M = Σ murder[y], asserted loudly); one dot per recorded murder throughout.
  *
- * SOURCE = the event's precinct on the map, DIM (waiting, not yet counted). DISC = its slot in
- * the year stratum: equal AREA per dot (r ∝ √k, density-honest like the pie), so each year is an
- * annulus whose THICKNESS is its count — growth rings of loss, year one innermost. Dots the toll
- * doesn't use sit at the caller's `park` pose in BOTH endpoints (invisible, still).
+ * BORN FROM TIME, NOT PLACE. There is no map source — during the sweep there is no dimmed province
+ * and no leftover cluster. SOURCE = born on the dial RING inside the event's OWN YEAR'S arc (0 =
+ * 2008/09 at twelve, clockwise, 360/Y per year), density 0 (invisible until time launches it), so
+ * as the hand sweeps past a year's tick, that year's dead EMERGE from its arc and stream inward.
+ *
+ * DISC = a RADIAL CUMULATIVE of the dead: radius ∝ running total, so each year adds a BAND whose
+ * THICKNESS is that year's toll (a heavy year sits visibly wider than a light one) and the outer
+ * radius IS all M — growth rings of loss, year one at the core, and it never resets. A thin dark
+ * SEAM gaps each ring so they're countable. This trades the pie's equal-AREA fill for
+ * equal-THICKNESS-per-death — the honest channel the eye can actually read (see docs/CONTINUITY).
+ * A monotone AGE tint (cool/deep core → warm/bright rim) shows the mass ageing; it says only AGE.
+ * Target angle is UNIFORM over 360° so each year's arc-block FANS from its birth arc into its ring.
+ * Dots the toll doesn't use sit at the caller's `park` pose in BOTH endpoints (invisible, still).
  *
  * @returns {{ source, disc, M:number, perYear:number[], cum:number[], seamRadii:number[],
- *             R:number, cx:number, cy:number } | null} null (loudly) if the pool can't hold M.
+ *             r0:number, R:number, cx:number, cy:number } | null} null (loudly) if pool < M.
  */
-export function tollLayouts(stations, { years, count, park = null, cx = 0, cy = 0, R = 240 } = {}) {
+export function tollLayouts(stations, { years, count, park = null, cx = 0, cy = 0, R = 240, dialR = 278 } = {}) {
   const rng = mulberry32(0x70115eed);
+  const Y = years.length, arc = TAU / Y;
   const perYear = years.map((y) => stations.reduce((a, s) => a + ((s.crimes.murder && s.crimes.murder[y]) || 0), 0));
   const cum = [0];
   for (const n of perYear) cum.push(cum[cum.length - 1] + n);
   const M = cum[cum.length - 1];
-  console.info(`[toll] M = ${M.toLocaleString()} recorded murders · ${years[0]}–${years[years.length - 1]} · pool ${count.toLocaleString()}`);
+  console.info(`[toll] M = ${M.toLocaleString()} recorded murders · ${years[0]}–${years[Y - 1]} · pool ${count.toLocaleString()}`);
   if (M > count) { console.error('[toll] the pool cannot hold the toll', { M, count }); return null; }
+
+  const r0 = R * 0.05;                                // small inner offset — no singular pile-up at the centre
+  const GAP = 2.0;                                    // dark seam between rings (err visible; tune by eye)
+  // Age tint: ONE monotone gradient across the Y rings — oldest cooler+deeper at the core, newest
+  // warmer+brighter at the rim (density drives the ramp cool→molten). It declares nothing but AGE.
+  const yearDensity = years.map((_, y) => 0.42 + 0.5 * (Y > 1 ? y / (Y - 1) : 0));
 
   const source = { positions: new Float32Array(count * 2), density: new Float32Array(count) };
   const disc = { positions: new Float32Array(count * 2), density: new Float32Array(count) };
   if (park) { source.positions.set(park); disc.positions.set(park); }
 
-  // Event k → its station, year-major, Fisher–Yates within each year.
-  const order = new Int32Array(M);
-  let k0 = 0;
-  for (const y of years) {
-    let m = 0;
-    for (let si = 0; si < stations.length; si++) {
-      const n = (stations[si].crimes.murder && stations[si].crimes.murder[y]) || 0;
-      for (let j = 0; j < n; j++) order[k0 + m++] = si;
-    }
-    for (let i = m - 1; i > 0; i--) {
-      const j = Math.floor(rng() * (i + 1));
-      const tmp = order[k0 + i]; order[k0 + i] = order[k0 + j]; order[k0 + j] = tmp;
-    }
-    k0 += m;
-  }
-
+  // Event k = the k-th murder, year-major (chronological). Track the year as k crosses the cum's.
+  let yy = 0;
   for (let k = 0; k < M; k++) {
-    const s = stations[order[k]];
-    // SOURCE — the event's own precinct (gaussian falloff, half the precinct radius — the map
-    // builder's jitter statistics). Dim: waiting, not yet counted.
-    const ang = rng() * TAU;
-    const rad = Math.abs(gauss(rng)) * 0.5 * s.r;
-    source.positions[k * 2] = s.x + Math.cos(ang) * rad;
-    source.positions[k * 2 + 1] = s.y + Math.sin(ang) * rad;
-    source.density[k] = 0.06;
-    // DISC — equal area per dot: r ∝ √(k/M) keeps areal density uniform, so the strata read by
-    // thickness alone (the honest channel). The +rng() jitter even-fills WITHIN dot k's annulus,
-    // so a year never leaks past its seam.
-    const dr = R * Math.sqrt((k + rng()) / M);
+    while (yy < Y - 1 && k >= cum[yy + 1]) yy++;
+    // SOURCE — born ON THE DIAL RING within year yy's arc (same sin/cos convention as the hand +
+    // ticks: angle 0 = twelve, clockwise). Density 0 → invisible until its window opens under the
+    // sweeping hand, then it ignites inward. Time sheds the dead; place is gone.
+    const aBirth = (yy + 0.5) * arc + (rng() - 0.5) * arc * 0.9;   // within its own arc (±~half-arc)
+    const rBirth = dialR * (0.985 + rng() * 0.03);                  // on the ring, just outside the disc
+    source.positions[k * 2] = cx + Math.sin(aBirth) * rBirth;
+    source.positions[k * 2 + 1] = cy + Math.cos(aBirth) * rBirth;
+    source.density[k] = 0;
+    // DISC — the year's band by cumulative toll (thickness ∝ this year's count), inset by the seam
+    // gap so the ring is countable; target angle uniform 360° (the fan). Warm by age.
+    const rIn = r0 + (R - r0) * (cum[yy] / M), rOut = r0 + (R - r0) * (cum[yy + 1] / M);
+    const frac = (k - cum[yy] + rng()) / perYear[yy];               // position within the year's band
+    const dr = (rIn + GAP * 0.5) + frac * Math.max(0, rOut - rIn - GAP);
     const da = rng() * TAU;
     disc.positions[k * 2] = cx + Math.cos(da) * dr;
     disc.positions[k * 2 + 1] = cy + Math.sin(da) * dr;
-    disc.density[k] = 0.85;
+    disc.density[k] = yearDensity[yy];
   }
   const seamRadii = [];
-  for (let y = 1; y < years.length; y++) seamRadii.push(R * Math.sqrt(cum[y] / M));
-  return { source, disc, M, perYear, cum, seamRadii, R, cx, cy };
+  for (let y = 1; y < Y; y++) seamRadii.push(r0 + (R - r0) * (cum[y] / M));
+  return { source, disc, M, perYear, cum, seamRadii, r0, R, cx, cy };
 }
 
 /**
@@ -574,9 +576,9 @@ export function tollFrameLayout(n, { cx = 0, cy = 0, R = 240, dialR = 278, ticks
   const positions = new Float32Array(n * 2), density = new Float32Array(n), z = new Float32Array(n);
   const rng = mulberry32(0x5eed1e);
   const used = Math.min(n, frameDots);
-  const RING = Math.floor(used * 0.42);
-  const TICK = Math.floor(used * 0.08);
-  const SEAM = Math.floor(used * 0.22);
+  const RING = Math.floor(used * 0.30);
+  const TICK = Math.floor(used * 0.07);
+  const SEAM = Math.floor(used * 0.42);              // the year seams carry the countability — budget them well
   const HAND = Math.min(handN, Math.max(0, used - RING - TICK - SEAM));
   let k = 0;
   for (; k < RING; k++) {                            // the dial ring — a thin crisp circle
@@ -595,16 +597,18 @@ export function tollFrameLayout(n, { cx = 0, cy = 0, R = 240, dialR = 278, ticks
     positions[k * 2 + 1] = cy + Math.cos(a) * r - Math.sin(a) * off;
     density[k] = 0.55;
   }
-  // Faint stratum seams — dots per seam ∝ its radius, so the line weight stays even.
+  // Stratum seams — a crisp grey ring line sitting IN each dark data-gap (structure isn't bloomed,
+  // so it stays sharp where the glowing bands bleed). Dots per seam ∝ its radius → even line weight.
+  // These are what you COUNT: one line per year boundary. Grey, matte, recessive, but legible.
   const seamEnd = RING + TICK + SEAM;
   const seamTotal = seamRadii.reduce((a, r) => a + r, 0) || 1;
   for (const sr of seamRadii) {
     const end = Math.min(k + Math.round(SEAM * (sr / seamTotal)), seamEnd);
     for (; k < end; k++) {
-      const a = rng() * TAU, r = sr + gauss(rng) * thin * 1.6;
+      const a = rng() * TAU, r = sr + gauss(rng) * thin * 1.1;
       positions[k * 2] = cx + Math.cos(a) * r;
       positions[k * 2 + 1] = cy + Math.sin(a) * r;
-      density[k] = 0.16;                             // a whisper under the data
+      density[k] = 0.34;                             // reads as a grey ring in the gap (not a whisper)
     }
   }
   const hand = { start: k, count: HAND };
