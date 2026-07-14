@@ -36,6 +36,16 @@ const norm = (key) => String(key).toUpperCase().replace(/[^A-Z]/g, '');
 
 // Province registry: dc_mn values as they appear in SAPACR + the display/workbook names.
 const PROVINCES = {
+  wc: {
+    label: 'Western Cape', wbName: 'Western Cape',
+    dcs: new Set(['city of cape town', 'west coast', 'cape winelands', 'garden route', 'overberg', 'central karoo']),
+    legacyName: 'Western Cape',
+    // No renames/fixes needed: the WC pipeline (bake-wc.mjs + parse-saps.mjs) validated its overlap exactly.
+    // NB the explorer FOLDS Samora Machel→Philippi + Makhaza→Harare for its map polygons; the place-free
+    // toll keeps them as their own rows — the SUM is identical either way, and this bake's M must equal
+    // the explorer's M (61,383) to the digit (cross-validation of both pipelines).
+    renames: {},
+  },
   gauteng: {
     label: 'Gauteng', wbName: 'Gauteng',
     dcs: new Set(['city of johannesburg', 'city of tshwane', 'ekurhuleni', 'sedibeng', 'west rand']),
@@ -50,11 +60,19 @@ const PROVINCES = {
     pre2015Fixes: ['KWATHEMA'],
   },
   kzn: {
-    label: 'KwaZulu-Natal', wbName: 'Kwazulu/Natal', // VERIFY at bake time — the script lists distinct names if zero rows match
+    label: 'KwaZulu-Natal', wbName: 'KwaZulu-Natal', // verified 2026-07-14: the workbook's exact Province string (7,293 station-rows); quarterlies identical
     dcs: new Set(['amajuba', 'ethekwini', 'harry gwala', 'ilembe', 'king cetshwayo', 'ugu', 'umgungundlovu', 'umkhanyakude', 'umzinyathi', 'uthukela', 'zululand']),
     legacyName: 'Kwazulu/Natal',
-    renames: {}, // NB before baking: SAPACR's blank-dc "kwamashu" (1,582 murders 08–22) is ABSENT from the
-                 // workbook under that name — find its workbook identity numerically first (Protea precedent).
+    // SAPACR's blank-dc "kwamashu" (1,582 murders 08–22) is the workbook's "Kwamashu E" — norm() drops the
+    // section letter (KWAMASHUE ≠ KWAMASHU), which is why every name match failed. Numeric identity proven
+    // 2026-07-14: workbook 2015–22 = 128,129,123,96,115,94,159,191 — SAPACR identical all 8 years; legacy
+    // "Kwamashu E" 2008–15 = 0,0,78,114,120,128,107,128 — SAPACR identical all 8 years (opened ~2010).
+    renames: { KWAMASHUE: 'KWAMASHU' },
+    // Pre-2015 sweep (2026-07-14, Σ|diff|>15 vs legacy across all 186 stations): ONE candidate, Melmoth
+    // (Σ61; SAPACR 23,22,21,21,19,25,18 vs legacy 31,30,29,30,29,17,28) — both series continuous and
+    // plausible, no collapse, no borrowed-series pattern → revision noise, NOT a proven shear. The audited
+    // SAPACR keeps precedence: no fixes. (Contrast Gauteng's Kwa Thema, which WAS proven.)
+    pre2015Fixes: [],
   },
 };
 
