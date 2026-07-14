@@ -765,7 +765,12 @@ export function textLayout(word, count, box, { fontFrac = 0.5, jitter = 0.9, wei
   ctx.fillText(word, CW / 2, CH / 2);
   const data = ctx.getImageData(0, 0, CW, CH).data;
   const on = [];
-  for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++) if (data[(y * CW + x) * 4 + 3] > 128) { on.push(x, y); }
+  let minX = CW, maxX = 0, minY = CH, maxY = 0;        // the word's true INK extent (for callers that flank it)
+  for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++) if (data[(y * CW + x) * 4 + 3] > 128) {
+    on.push(x, y);
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+  }
   const nOn = on.length / 2;
   const rng = mulberry32(seed);
   const positions = new Float32Array(count * 2), density = new Float32Array(count);
@@ -776,5 +781,11 @@ export function textLayout(word, count, box, { fontFrac = 0.5, jitter = 0.9, wei
     positions[i * 2 + 1] = cy + (0.5 - on[k + 1] / CH) * H + (rng() - 0.5) * 2 * jitter;
     density[i] = 0.4;
   }
-  return { positions, density };
+  // bounds: the rendered word's WORLD-space box (centre + size), from the actual sampled ink. Extra prop —
+  // the engine's {positions, density} contract is untouched; flanking captions project this to the screen.
+  const bounds = nOn
+    ? { cx: cx + (((minX + maxX) / 2) / CW - 0.5) * W, cy: cy + (0.5 - ((minY + maxY) / 2) / CH) * H,
+        w: ((maxX - minX) / CW) * W, h: ((maxY - minY) / CH) * H }
+    : { cx, cy, w: 0, h: 0 };
+  return { positions, density, bounds };
 }

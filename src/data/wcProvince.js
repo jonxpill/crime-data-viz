@@ -35,7 +35,7 @@ export async function loadWcProvince() {
     stations: wc.stations, box: wc.meta.box, years, yearLabels, COUNT, structN,
     outline, park, layouts: murder, totals: built.totals.murder,   // real per-YEAR SAPS murder counts (not the pool size)
     restingPose: () => murder[restYi],
-    idleViewKey: 'murderMap',
+    idleViewKey: null,   // STANDALONE Toll page: no idle map to return to — the toll stands alone (§UI redesign)
     has: (f) => f === 'toll',
     _raw: wc,   // kept for the toll view (tollLayouts needs the station objects)
   };

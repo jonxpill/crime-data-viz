@@ -22,6 +22,10 @@ import { tollLayouts, tollFrameLayout, tollHandLayout, textLayout } from '../lay
 export function createTollView(ctx) {
   const { years, yearLabels } = ctx.data;
   const _hv = new ctx.THREE.Vector3();                 // view-owned unproject scratch (was borrowed L1365)
+  // STANDALONE page (no idle map): you LAND in the toll — it auto-pours, stands, and there is no "return to
+  // the map". The reading figures flank the word (the honesty channel), the chrome hides by default, and K
+  // REPLAYS instead of exiting. The explorer (later re-integration) sets idleViewKey, taking the map path.
+  const standalone = ctx.data.idleViewKey == null;
 
   // ---- constants (parity: wcExplore L574–592) -------------------------------
   const TOLL_SWEEP_MS = 75000, TOLL_GATHER_MS = 2400, TOLL_DRAIN_MS = 1400, TOLL_HOME_MS = 2000;
@@ -48,8 +52,10 @@ export function createTollView(ctx) {
   let wordField = null, roll = null;                   // owned pools/primitives, built lazily, kept across K
   let _downX = 0, _downY = 0;                          // OWN tap-exit down-point (plan §1)
 
-  // The counter is the toll's honesty channel → pin the chrome awake while active (registered once).
-  ctx.hud.pinAwake(() => active);
+  // In the EXPLORER the on-screen HUD counter is the toll's honesty channel, so it pins the chrome awake.
+  // On the STANDALONE page the flanking FIGURES carry the count (always visible), so the chrome is free to
+  // hide by default — don't pin.
+  if (!standalone) ctx.hud.pinAwake(() => active);
 
   // ---- ceremony geometry, in the province map frame (parity: tollGeom L583–587) --------------------
   function tollGeom() {
@@ -59,17 +65,34 @@ export function createTollView(ctx) {
   }
 
   // ---- the memorial WORD behind the disc (grey structure, no glow, renderOrder -2) -----------------
+  let wordBounds = null;                               // the rendered word's world box — the figures flank it
   function showWord() {
     if (!wordField) return;
-    if (!tollWord) { wordField.points.visible = false; return; }
+    if (!tollWord) { wordField.points.visible = false; wordBounds = null; return; }
     const box = ctx.data.box, { cy } = tollGeom(), o = tollWordOpts;
     const lay = textLayout(tollWord, WORD_N, box, {
       fontFrac: o.fontFrac, jitter: o.jitter, weight: o.weight, spanFrac: o.spanFrac, cx: 0, cy: cy + o.yFrac * box.h,
     });
     wordField.setSource(lay); wordField.setTarget(lay); wordField.setT(1);
     wordField.points.visible = true;
+    wordBounds = lay.bounds;
   }
-  function hideWord() { if (wordField) wordField.points.visible = false; }
+  function hideWord() { if (wordField) wordField.points.visible = false; wordBounds = null; }
+
+  // Pin the flanking figures to the WORD's actual screen position (projected every frame, so they hold
+  // their place — vertically centred on the word, a fixed clearance beyond its widest ink — at any window
+  // aspect, zoom, or resize; CSS % broke the moment the browser wasn't the dev window's shape).
+  function placeFigures() {
+    if (!standalone || !wordBounds || !ctx.hud.figures) return;
+    const rect = ctx.dom.getBoundingClientRect();
+    const half = wordBounds.w / 2 + wordBounds.h * 0.85;   // clearance ∝ the word's own height
+    _hv.set(wordBounds.cx, wordBounds.cy, 0).project(ctx.camera);
+    const px = rect.left + (_hv.x * 0.5 + 0.5) * rect.width;
+    const py = rect.top + (-_hv.y * 0.5 + 0.5) * rect.height;
+    _hv.set(wordBounds.cx + half, wordBounds.cy, 0).project(ctx.camera);
+    const gap = Math.abs(rect.left + (_hv.x * 0.5 + 0.5) * rect.width - px);
+    ctx.hud.figures.place(px, py, gap);
+  }
 
   // ---- bake the field's LIVE on-screen pose into a plain layout (parity: bakeFieldPose L612–628) ----
   function bakeFieldPose() {
@@ -140,6 +163,18 @@ export function createTollView(ctx) {
     const { y } = tollYearFrac(counting ? tollT : 0);
     if (!force && n === tollCount && y === tollYearShown) return;
     tollCount = n; tollYearShown = y;
+
+    if (standalone) {                                    // the two figures flank MURDER — left resets per year, right cumulates
+      const inYear = Math.max(0, n - tollData.cum[y]);
+      const complete = n >= M;
+      ctx.hud.figures.set(
+        (complete ? tollData.perYear[y] : inYear).toLocaleString(),  // left: this year's toll (resets per year)
+        n.toLocaleString(),                                          // right: the running total
+      );
+      if (complete !== done) { done = complete; syncHud(); }
+      return;
+    }
+
     const total = M.toLocaleString();
     let count;
     if (phase === 'gather') {
@@ -158,11 +193,11 @@ export function createTollView(ctx) {
   // Hint + chip dimming, on state changes (parity: refreshHint toll branch L203–209 + refreshChips).
   function hintText() {
     if (phase === 'gather') return 'the years are gathering…';
-    if (phase === 'drain' || phase === 'home') return 'the murders return to the map…';
-    if (done) return 'the toll stands · scrub the dial back · K returns them to the map';
+    if (phase === 'drain' || phase === 'home') return standalone ? 'replaying the toll…' : 'the murders return to the map…';
+    if (done) return standalone ? 'the toll stands · drag the dial to scrub · K replays' : 'the toll stands · scrub the dial back · K returns them to the map';
     if (holdPtr || holdKey) return 'one recorded murder per second — release to resume the sweep';
-    if (paused) return 'paused — space resumes · drag the dial · K ends the toll';
-    return 'drag the dial to scrub · hold the disc (or 1) for one per second · space pauses · K ends the toll';
+    if (paused) return standalone ? 'paused — space resumes · drag the dial to scrub' : 'paused — space resumes · drag the dial · K ends the toll';
+    return standalone ? 'drag the dial to scrub · hold the disc for one per second · space pauses' : 'drag the dial to scrub · hold the disc (or 1) for one per second · space pauses · K ends the toll';
   }
   function syncHud() { ctx.hud.setHint(hintText()); ctx.hud.chips.refresh(); }
 
@@ -241,6 +276,7 @@ export function createTollView(ctx) {
     if (holdPtr) { holdPtr = false; syncHud(); }
     scrubbing = false;
     if (wasHolding || wasScrubbing) return;
+    if (standalone) return;                                              // no map to tap back to
     if (Math.hypot(e.clientX - _downX, e.clientY - _downY) > 6) return;   // a drag, not a tap
     const { cx, cy, dialR } = tollGeom();
     const p = worldAt(e.clientX, e.clientY);
@@ -250,7 +286,10 @@ export function createTollView(ctx) {
     if (ctx.hud.about.isOpen) return;                 // About gets first dibs (plan §1)
     if (e.code === 'Space') { e.preventDefault(); pauseToggle(); }
     else if (e.code === 'Digit1') { e.preventDefault(); if (!holdKey) { holdKey = true; syncHud(); } }
-    else if (e.code === 'KeyK' || e.code === 'KeyM' || e.code === 'Escape') { e.preventDefault(); leave(); }
+    else if (e.code === 'KeyK' || e.code === 'KeyM' || e.code === 'Escape') {
+      if (standalone) { if (e.code !== 'Escape') { e.preventDefault(); replay(); } } // K/M replay; Escape is About's
+      else { e.preventDefault(); leave(); }
+    }
   }
   function onKeyUp(e) { if (e.code === 'Digit1' && holdKey) { holdKey = false; syncHud(); } }
 
@@ -290,6 +329,14 @@ export function createTollView(ctx) {
     syncHud();
   }
   function pauseToggle() { if (phase !== 'toll') return; paused = !paused; syncHud(); }
+  // STANDALONE: K re-pours from the top (no map to leave to). The ordered seeds stay; resetting uT un-pours,
+  // the sweep re-runs, and the orrery restarts from spinStart.
+  function replay() {
+    if (phase !== 'toll') return;
+    done = false; tollT = 0; t = 0; lastNow = performance.now();
+    spinStart = performance.now(); ctx.field.setSpinTime(0);
+    updateHud(true); syncHud();
+  }
 
   // ---- the per-frame phase machine (parity: the tick toll branch L1609–1644) ----------------------
   // Returns TRUE when it triggered the frozen return (view already swapped — do not write pools after).
@@ -361,11 +408,22 @@ export function createTollView(ctx) {
       phase = 'gather'; paused = false; done = false;
       t = 0; tollT = 0; tollCount = -1; tollYearShown = -1; handAngle = -1;
       holdKey = holdPtr = scrubbing = false;
-      ctx.controls.enabled = false;                    // the dial owns the pointer while tolling
-      ctx.field.setSource(bakeFieldPose());            // from exactly what the eye sees (any year, mid-morph)
-      ctx.field.setTarget(tollData.source);
-      ctx.field.setStagger(0.55);
-      ctx.field.setT(0);                               // no stale-t frame before the first update lands
+      if (standalone) {
+        // You LAND in the toll: no map to gather from, so HOLD on the born-from-time source while the dial
+        // comes up, then pour. Scroll still zooms (natural movement); drag scrubs the dial (pan off so it
+        // never fights the scrub).
+        ctx.controls.enabled = true; ctx.controls.enablePan = false; ctx.controls.enableZoom = true;
+        ctx.field.setSource(tollData.source);
+        ctx.field.setTarget(tollData.source);
+        ctx.field.setStagger(0.55);
+        ctx.field.setT(1);
+      } else {
+        ctx.controls.enabled = false;                  // the dial owns the pointer while tolling
+        ctx.field.setSource(bakeFieldPose());          // from exactly what the eye sees (any year, mid-morph)
+        ctx.field.setTarget(tollData.source);
+        ctx.field.setStagger(0.55);
+        ctx.field.setT(0);                             // no stale-t frame before the first update lands
+      }
       phaseStart = performance.now();
       tollFrame = tollFrameLayout(ctx.data.structN, { cx, cy, R, dialR, ticks: years.length, seamRadii: tollData.seamRadii, frameDots: TOLL_FRAME_DOTS, thin: TOLL_THIN });
       tollHand = tollFrame.hand;
@@ -373,9 +431,14 @@ export function createTollView(ctx) {
       ctx.struct.startTo(tollFrame, TOLL_GATHER_MS, 0.6);
       showWord();                                       // the memorial word appears behind the ceremony
 
-      ctx.hud.setCaption({ region: 'Western Cape', lens: 'murder · the toll', time: yearLabels[0], count: '' });
-      ctx.hud.chips.setActions({ toll: () => leave() }); // the toll chip now ENDS the toll (about stays HUD-wired)
-      ctx.hud.chips.setDimRule(() => false);            // both trimmed chips stay live during the ceremony
+      if (standalone) {
+        ctx.hud.setCitation('◆ SAPS crime records · DataFirst + saps.gov.za');
+        ctx.hud.figures.show(true);                     // the two flanking figures are the reading here
+      } else {
+        ctx.hud.setCaption({ region: 'Western Cape', lens: 'murder · the toll', time: yearLabels[0], count: '' });
+        ctx.hud.chips.setActions({ toll: () => leave() }); // the toll chip ENDS the toll (about stays HUD-wired)
+        ctx.hud.chips.setDimRule(() => false);
+      }
       updateHud(true); syncHud();
 
       window.addEventListener('keydown', onKeyDown);
@@ -392,6 +455,7 @@ export function createTollView(ctx) {
       ctx.field.setT(t);
       ctx.field.setTime(elapsed);
       ctx.struct.tick(now, elapsed);
+      placeFigures();                                   // figures track the word through zoom/resize
     },
 
     // HARD teardown: remove listeners + NEUTRALISE the shared pools (restore every perturbed uniform) WITHOUT
@@ -407,6 +471,7 @@ export function createTollView(ctx) {
       clearTimeout(holdTimer); holdPtr = holdKey = scrubbing = false;
       if (roll) roll.hide();
       hideWord();
+      if (ctx.hud.figures) ctx.hud.figures.show(false);
       if (tollSeedsSaved) { ctx.field.setSeeds(tollSeedsSaved); tollSeedsSaved = null; }
       ctx.field.setSpinOn(false);
       ctx.field.setStagger(0.55);

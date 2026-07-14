@@ -60,21 +60,23 @@ export function createHud() {
     refresh() { for (const [act, el] of Object.entries(chipEls)) el.classList.toggle('off', dimRule ? !!dimRule(act) : false); },
   };
 
-  // ---- cinema idle-fade — after a few idle seconds the chrome bows out; any input wakes it -----------
-  // (parity: wcExplore L1230–1243). About-open pins it awake; views register extra keep-awake predicates
-  // via pinAwake (the Toll pins `() => active` — the counter is its honesty channel).
-  const CHROME_IDLE_MS = 6000;
+  // ---- cinema, INVERTED — the chrome is HIDDEN by default and reveals on movement, then bows back out.
+  // (The explorer fades chrome only after 6 s idle; the standalone Toll wants it gone unless you reach for it
+  // — the figures + the disc are the piece.) About-open pins it awake; views add keep-awake predicates via
+  // pinAwake. The two flanking FIGURES are NOT chrome — they live outside .quiet and always show.
+  const CHROME_IDLE_MS = 2600;                         // reveal, then re-hide after a short idle
   const pins = [];
-  let lastActive = performance.now();
+  let lastActive = 0;                                  // 0 → starts hidden until the first movement
   function wake() { lastActive = performance.now(); document.body.classList.remove('quiet'); }
   function pinAwake(fn) { if (typeof fn === 'function') pins.push(fn); }
   for (const ev of ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart']) {
     window.addEventListener(ev, wake, { passive: true });
   }
+  document.body.classList.add('quiet');                // hidden on load
   setInterval(() => {
     const pinned = about.isOpen || pins.some((fn) => { try { return !!fn(); } catch { return false; } });
     document.body.classList.toggle('quiet', performance.now() - lastActive > CHROME_IDLE_MS && !pinned);
-  }, 500);
+  }, 400);
 
   // ---- `?` opens About / Esc closes it; About gets FIRST DIBS on keys (plan §1 key routing) ----------
   // When the card is open the HUD SWALLOWS the event (stopImmediatePropagation) so the active view's own
@@ -125,5 +127,28 @@ export function createHud() {
     };
   }
 
-  return { setCaption, setHint, setCitation, chips, about, pinAwake, floatingCaption };
+  // ---- the two flanking FIGURES — the reading beside the word. ALWAYS-ON (not hideable chrome): left is the
+  // year's toll (resets per year), right the cumulative total. Positioned by CSS to flank the centred word.
+  const figLeftEl = $('fig-left'), figRightEl = $('fig-right');
+  const figures = {
+    // Just the bare numbers — left = the year's toll (resets per year), right = the running total. No labels:
+    // which-is-which is self-evident (one resets, one only grows) and the ring rollover names the years.
+    set(leftNum, rightNum) {
+      if (figLeftEl) figLeftEl.textContent = leftNum;
+      if (figRightEl) figRightEl.textContent = rightNum;
+    },
+    // Pin the figures to the word's ACTUAL screen position (x = word centre, y = word centre, gap = px out to
+    // each side). Projected by the view — so they stay flanking + vertically centred at ANY window aspect,
+    // unlike CSS %. left figure's right edge sits gap px left of centre; right figure's left edge gap px right.
+    place(x, y, gap) {
+      if (figLeftEl) { figLeftEl.style.right = (window.innerWidth - x + gap) + 'px'; figLeftEl.style.top = y + 'px'; }
+      if (figRightEl) { figRightEl.style.left = (x + gap) + 'px'; figRightEl.style.top = y + 'px'; }
+    },
+    show(v) {
+      if (figLeftEl) figLeftEl.style.opacity = v ? '1' : '0';
+      if (figRightEl) figRightEl.style.opacity = v ? '1' : '0';
+    },
+  };
+
+  return { setCaption, setHint, setCitation, chips, about, pinAwake, floatingCaption, figures };
 }
