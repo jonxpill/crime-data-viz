@@ -127,6 +127,28 @@ export function createHud() {
     };
   }
 
+  // ---- makeFigure — ADDITIVE factory for view-owned reading elements (the diptych's per-disc figures +
+  // names; any view needing N readings instead of the fixed #fig-* trio). HUD owns the div creation (like
+  // floatingCaption); the VIEW drives content/position/size — set(text), place(x,y in CSS px), show(v).
+  // Base look matches the single pages' figures: 14px ui-monospace, #5a6377, tabular-nums, always-on (not
+  // .quiet chrome). `cssText` appends AFTER the base so callers override transform/alignment/colour.
+  // Does NOT touch `hud.figures` below — the single-province pages keep their fixed trio untouched.
+  function makeFigure(cssText) {
+    const el = document.createElement('div');
+    el.style.cssText =
+      'position:fixed;z-index:8;transform:translate(-50%,-50%);' +
+      'font:400 14px/1.02 ui-monospace,"SF Mono",Menlo,monospace;letter-spacing:0.04em;color:#5a6377;' +
+      'font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;user-select:none;' +
+      'opacity:0;transition:opacity 0.8s ease;' + (cssText || '');
+    (app || document.body).appendChild(el);
+    return {
+      el,
+      set(text) { if (el.textContent !== text) el.textContent = text; },
+      place(x, y) { el.style.left = x + 'px'; el.style.top = y + 'px'; },
+      show(v) { el.style.opacity = v ? '1' : '0'; },
+    };
+  }
+
   // ---- the two flanking FIGURES — the reading beside the word. ALWAYS-ON (not hideable chrome): left is the
   // year's toll (resets per year), right the cumulative total. Positioned by CSS to flank the centred word.
   const figLeftEl = $('fig-left'), figRightEl = $('fig-right'), figTitleEl = $('fig-title');
@@ -168,5 +190,5 @@ export function createHud() {
     },
   };
 
-  return { setCaption, setHint, setCitation, chips, about, pinAwake, floatingCaption, figures };
+  return { setCaption, setHint, setCitation, chips, about, pinAwake, floatingCaption, makeFigure, figures };
 }
