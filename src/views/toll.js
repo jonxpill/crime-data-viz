@@ -66,6 +66,7 @@ export function createTollView(ctx) {
 
   // ---- the memorial WORD behind the disc (grey structure, no glow, renderOrder -2) -----------------
   let wordBounds = null;                               // the rendered word's world box — the figures flank it
+  let figPxRest = 0;                                   // px-per-world at the opening framing — the type's 1:1 reference
   function showWord() {
     if (!wordField) return;
     if (!tollWord) { wordField.points.visible = false; wordBounds = null; return; }
@@ -95,7 +96,10 @@ export function createTollView(ctx) {
     _hv.set(wordBounds.cx - wordBounds.w / 2, wordBounds.cy + wordBounds.h * 0.62, 0).project(ctx.camera);
     const tx = rect.left + (_hv.x * 0.5 + 0.5) * rect.width;
     const ty = rect.top + (-_hv.y * 0.5 + 0.5) * rect.height;
-    ctx.hud.figures.place(px, py, gap, tx, ty);
+    // Type scales WITH the zoom (px-per-world ÷ the opening framing's) — the reading is part of the object.
+    const ppw = gap / half;
+    if (!figPxRest) figPxRest = ppw;
+    ctx.hud.figures.place(px, py, gap, tx, ty, ppw / figPxRest);
   }
 
   // ---- bake the field's LIVE on-screen pose into a plain layout (parity: bakeFieldPose L612–628) ----
@@ -412,6 +416,7 @@ export function createTollView(ctx) {
       phase = 'gather'; paused = false; done = false;
       t = 0; tollT = 0; tollCount = -1; tollYearShown = -1; handAngle = -1;
       holdKey = holdPtr = scrubbing = false;
+      figPxRest = 0;                                   // re-reference the type scale to this mount's framing
       if (standalone) {
         // You LAND in the toll: no map to gather from, so HOLD on the born-from-time source while the dial
         // comes up, then pour. Scroll still zooms (natural movement); drag scrubs the dial (pan off so it

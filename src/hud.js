@@ -141,10 +141,13 @@ export function createHud() {
     // Pin the figures to the word's ACTUAL screen position (x = word centre, y = word centre, gap = px out to
     // each side; tx/ty = the title's anchor — the word's first letter's left edge, just above the ink).
     // Projected by the view — so everything holds its place at ANY window aspect/zoom, unlike CSS %.
-    place(x, y, gap, tx, ty) {
+    // `scale` (px-per-world now ÷ at the opening framing) sizes the type WITH the zoom: the reading is part
+    // of the object, not chrome floating over it.
+    place(x, y, gap, tx, ty, scale) {
       if (figLeftEl) { figLeftEl.style.right = (window.innerWidth - x + gap) + 'px'; figLeftEl.style.top = y + 'px'; }
       if (figRightEl) { figRightEl.style.left = (x + gap) + 'px'; figRightEl.style.top = y + 'px'; }
       if (figTitleEl && tx != null) { figTitleEl.style.left = tx + 'px'; figTitleEl.style.top = ty + 'px'; }
+      if (scale != null) document.documentElement.style.setProperty('--fig-scale', scale.toFixed(4));
     },
     show(v) {
       const o = v ? '1' : '0';

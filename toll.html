@@ -107,10 +107,16 @@
          toll (resets per year), right = the running total. No labels — one resets, one only grows, and the
          ring rollover names the years. POSITION comes from JS each frame (the word's projected screen box),
          so they stay vertically centred on the word and clear of its widest ink at any window shape/zoom. */
+      /* --fig-scale is set by JS each frame from the camera's zoom, so the reading (name + figures) scales
+         WITH the word — one object, not fixed chrome detaching from it as you zoom. */
+      :root { --fig-fs: 14px; --fig-scale: 1; }
+      @media (max-width: 720px) { :root { --fig-fs: 10px; } }
       #fig-left, #fig-right, #fig-title {
         position: fixed; z-index: 8;
         transform: translateY(-50%);
-        font: 400 14px/1.02 ui-monospace, "SF Mono", Menlo, monospace;
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-weight: 400; line-height: 1.02;
+        font-size: calc(var(--fig-fs) * var(--fig-scale));
         letter-spacing: 0.04em; color: #5a6377;   /* a whisper — near the word's own grey, not competing with the data */
         font-variant-numeric: tabular-nums;
         pointer-events: none; user-select: none;
@@ -118,7 +124,6 @@
       }
       #fig-left  { text-align: right; }
       #fig-right, #fig-title { text-align: left; }
-      @media (max-width: 720px) { #fig-left, #fig-right, #fig-title { font-size: 10px; } }
     </style>
   </head>
   <body>
