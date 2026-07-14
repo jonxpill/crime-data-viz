@@ -45,12 +45,13 @@ export function createTollDiptychView(ctx) {
     R_REF: 230,            // reference disc radius (≈ the single page's 0.32·min(box)); anchors max-M province
     dialFrac: 1.16,        // dialR = R × dialFrac (matches tollGeom)
     size: 'same',          // DEFAULT sizing mode: 'same' | 'area' | 'radius'
-    words: 'shared',       // DEFAULT word mode: 'shared' | 'each'
+    words: 'each',         // DEFAULT word mode (maker's pick 2026-07-14): a word over EACH disc
     sharedWord: { fontFrac: 0.22, jitter: 0.8, weight: 800, yFrac: 0.46, spanFrac: 0.36, cx: 0 },  // narrow — clears the names
     eachWord: { fontFrac: 0.14, jitter: 0.8, weight: 800, yFrac: 0.41, spanFrac: 0.28 },
     figPx: 14,             // base figure type size (px at the opening framing; scales with zoom)
     namePx: 13,            // base name size in 'shared' mode (px; scales with zoom)
     figClearFrac: 0.85,    // 'each': figure clearance beyond the word's half-width, ∝ word height (single-page parity)
+    figHFrac: 0.30,        // 'each': figure font ∝ its word's ink height (the single page's proportion) — fixed-px read too LARGE here
     nameSpanFrac: 0.29,    // 'each': name width as a fraction of its word's ink width (single-page parity)
     readingBelow: 34,      // 'shared': the pair sits UNDER its disc (flanking figures collided mid-frame + clipped at the edges)
     pairGap: 24,           // 'shared': half-gap between the pair's numbers at the disc's centreline
@@ -263,21 +264,27 @@ export function createTollDiptychView(ctx) {
     const figFs = (OPT.figPx * scale).toFixed(2) + 'px';
     discs.forEach((d, i) => {
       const rd = reading[i];
-      rd.year.el.style.fontSize = figFs;
-      rd.total.el.style.fontSize = figFs;
-      // The pair sits UNDER its own disc in BOTH word modes (year · total about the centreline) —
-      // flanking placements put the two inner figures on top of each other mid-frame and pushed the
-      // outer ones off the edge. Only the NAME moves with the word mode.
-      const yB = d.cy - d.dialR - OPT.readingBelow;
-      const L = project(d.cx - OPT.pairGap, yB);
-      const R = project(d.cx + OPT.pairGap, yB);
-      rd.year.place(L.x, L.y); rd.total.place(R.x, R.y);
       if (wordsMode === 'each' && wordBounds && wordBounds[i]) {
+        // Single-page grammar, per disc: the numbers FLANK the word, sized ∝ its ink height (maker's
+        // pick — the fixed-size under-disc pair read too large). At this proportion the inner figures
+        // clear each other mid-frame.
         const wb = wordBounds[i];
+        const fs = (wb.h * ppw * OPT.figHFrac).toFixed(2) + 'px';
+        rd.year.el.style.fontSize = fs;
+        rd.total.el.style.fontSize = fs;
+        const half = wb.w / 2 + wb.h * OPT.figClearFrac;
+        const L = project(wb.cx - half, wb.cy), R = project(wb.cx + half, wb.cy);
+        rd.year.place(L.x, L.y); rd.total.place(R.x, R.y);
         const nx = project(wb.cx - wb.w / 2, wb.cy + wb.h * 0.62);
         rd.name.place(nx.x, nx.y);                     // seated just above the ink, on the first letter
         if (rd.nameUnit) rd.name.el.style.fontSize = ((wb.w * ppw * OPT.nameSpanFrac) / rd.nameUnit).toFixed(2) + 'px';
       } else {
+        rd.year.el.style.fontSize = figFs;
+        rd.total.el.style.fontSize = figFs;
+        const yB = d.cy - d.dialR - OPT.readingBelow;  // 'shared': the pair under its disc (flanks collided)
+        const L = project(d.cx - OPT.pairGap, yB);
+        const R = project(d.cx + OPT.pairGap, yB);
+        rd.year.place(L.x, L.y); rd.total.place(R.x, R.y);
         const nx = project(d.cx, d.cy + d.dialR + OPT.nameAbove);
         rd.name.place(nx.x, nx.y);                     // seated above the disc
         rd.name.el.style.fontSize = (OPT.namePx * scale).toFixed(2) + 'px';
