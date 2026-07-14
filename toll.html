@@ -107,7 +107,7 @@
          toll (resets per year), right = the running total. No labels — one resets, one only grows, and the
          ring rollover names the years. POSITION comes from JS each frame (the word's projected screen box),
          so they stay vertically centred on the word and clear of its widest ink at any window shape/zoom. */
-      #fig-left, #fig-right {
+      #fig-left, #fig-right, #fig-title {
         position: fixed; z-index: 8;
         transform: translateY(-50%);
         font: 400 14px/1.02 ui-monospace, "SF Mono", Menlo, monospace;
@@ -117,8 +117,8 @@
         opacity: 0; transition: opacity 0.8s ease;
       }
       #fig-left  { text-align: right; }
-      #fig-right { text-align: left; }
-      @media (max-width: 720px) { #fig-left, #fig-right { font-size: 10px; } }
+      #fig-right, #fig-title { text-align: left; }
+      @media (max-width: 720px) { #fig-left, #fig-right, #fig-title { font-size: 10px; } }
     </style>
   </head>
   <body>
@@ -146,9 +146,11 @@
           points, every view a pure layout function. By Jonx Pillemer.</p>
       </div>
     </div>
-    <!-- THE READING — two figures flanking MURDER (JS fills them). Always visible; the honesty channel. -->
+    <!-- THE READING — two figures flanking MURDER + the place-name seated on its first letter (JS fills
+         and positions them). Always visible; the honesty channel. -->
     <div id="fig-left"></div>
     <div id="fig-right"></div>
+    <div id="fig-title"></div>
     <!-- Everything else is HIDEABLE chrome — gone by default, revealed on movement: a whisper of a hint, a '?', a credit. -->
     <div class="hud">
       <div id="hint" class="hint">drag the dial to scrub · space pauses</div>

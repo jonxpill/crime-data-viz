@@ -91,7 +91,11 @@ export function createTollView(ctx) {
     const py = rect.top + (-_hv.y * 0.5 + 0.5) * rect.height;
     _hv.set(wordBounds.cx + half, wordBounds.cy, 0).project(ctx.camera);
     const gap = Math.abs(rect.left + (_hv.x * 0.5 + 0.5) * rect.width - px);
-    ctx.hud.figures.place(px, py, gap);
+    // The place-name sits just above the word, its left edge on the first letter's left edge (the M).
+    _hv.set(wordBounds.cx - wordBounds.w / 2, wordBounds.cy + wordBounds.h * 0.95, 0).project(ctx.camera);
+    const tx = rect.left + (_hv.x * 0.5 + 0.5) * rect.width;
+    const ty = rect.top + (-_hv.y * 0.5 + 0.5) * rect.height;
+    ctx.hud.figures.place(px, py, gap, tx, ty);
   }
 
   // ---- bake the field's LIVE on-screen pose into a plain layout (parity: bakeFieldPose L612–628) ----
@@ -433,6 +437,7 @@ export function createTollView(ctx) {
 
       if (standalone) {
         ctx.hud.setCitation('◆ SAPS crime records · DataFirst + saps.gov.za');
+        ctx.hud.figures.setTitle(ctx.data.label);       // the place-name, seated on the word's first letter
         ctx.hud.figures.show(true);                     // the two flanking figures are the reading here
       } else {
         ctx.hud.setCaption({ region: 'Western Cape', lens: 'murder · the toll', time: yearLabels[0], count: '' });

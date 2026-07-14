@@ -129,7 +129,7 @@ export function createHud() {
 
   // ---- the two flanking FIGURES — the reading beside the word. ALWAYS-ON (not hideable chrome): left is the
   // year's toll (resets per year), right the cumulative total. Positioned by CSS to flank the centred word.
-  const figLeftEl = $('fig-left'), figRightEl = $('fig-right');
+  const figLeftEl = $('fig-left'), figRightEl = $('fig-right'), figTitleEl = $('fig-title');
   const figures = {
     // Just the bare numbers — left = the year's toll (resets per year), right = the running total. No labels:
     // which-is-which is self-evident (one resets, one only grows) and the ring rollover names the years.
@@ -137,16 +137,20 @@ export function createHud() {
       if (figLeftEl) figLeftEl.textContent = leftNum;
       if (figRightEl) figRightEl.textContent = rightNum;
     },
+    setTitle(text) { if (figTitleEl) figTitleEl.textContent = text || ''; },
     // Pin the figures to the word's ACTUAL screen position (x = word centre, y = word centre, gap = px out to
-    // each side). Projected by the view — so they stay flanking + vertically centred at ANY window aspect,
-    // unlike CSS %. left figure's right edge sits gap px left of centre; right figure's left edge gap px right.
-    place(x, y, gap) {
+    // each side; tx/ty = the title's anchor — the word's first letter's left edge, just above the ink).
+    // Projected by the view — so everything holds its place at ANY window aspect/zoom, unlike CSS %.
+    place(x, y, gap, tx, ty) {
       if (figLeftEl) { figLeftEl.style.right = (window.innerWidth - x + gap) + 'px'; figLeftEl.style.top = y + 'px'; }
       if (figRightEl) { figRightEl.style.left = (x + gap) + 'px'; figRightEl.style.top = y + 'px'; }
+      if (figTitleEl && tx != null) { figTitleEl.style.left = tx + 'px'; figTitleEl.style.top = ty + 'px'; }
     },
     show(v) {
-      if (figLeftEl) figLeftEl.style.opacity = v ? '1' : '0';
-      if (figRightEl) figRightEl.style.opacity = v ? '1' : '0';
+      const o = v ? '1' : '0';
+      if (figLeftEl) figLeftEl.style.opacity = o;
+      if (figRightEl) figRightEl.style.opacity = o;
+      if (figTitleEl) figTitleEl.style.opacity = o;
     },
   };
 

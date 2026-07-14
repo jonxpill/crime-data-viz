@@ -32,6 +32,7 @@ export async function loadWcProvince() {
   if (M > COUNT) console.error('[toll-data] BLOCKER 1 REGRESSION: murder total exceeds pool — the toll will return null');
 
   return {
+    label: 'Western Cape',   // the display name — the toll seats it above the word (a triptych names each disc)
     stations: wc.stations, box: wc.meta.box, years, yearLabels, COUNT, structN,
     outline, park, layouts: murder, totals: built.totals.murder,   // real per-YEAR SAPS murder counts (not the pool size)
     restingPose: () => murder[restYi],
