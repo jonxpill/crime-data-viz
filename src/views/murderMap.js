@@ -1,30 +1,57 @@
-// murderMap — the standalone Toll page's IDLE view: the Western Cape murder map at rest, from which K
-// gathers into the ceremony. See docs/plans/standalone-shell.md §3.
+// murderMap — the standalone Toll page's IDLE view: the Western Cape murder map, from which K gathers into
+// the ceremony. See docs/plans/standalone-shell.md §3,§4.
 //
-// S2 (now): STATIC resting map — proves the stage + pipeline + data bundle render the field identically to
-// the explorer. S4 adds the ctx.playback year-loop; S5 wires K → the Toll view (and the frozen return).
+// It drives ctx.playback over the 18 murder-year layouts (the caption tracks the year), and routes K → the
+// Toll view. FROZEN-RETURN rule (plan §4): re-entered from the toll it must be PAUSED at the settled pose —
+// enter({paused:true}) seeds the current year statically and does NOT auto-resume the loop, matching the
+// explorer, which leaves the map frozen after the ceremony. A fresh entry auto-plays the year loop.
 export function createMurderMapView(ctx) {
+  let lastYi = -1, onKey = null;
+
+  function paintCaption() {
+    const yi = ctx.playback.yi;
+    if (yi === lastYi) return;
+    lastYi = yi;
+    ctx.hud.setCaption({
+      region: 'Western Cape', lens: 'murder',
+      time: ctx.data.yearLabels[yi],
+      count: (ctx.data.totals[yi] || 0).toLocaleString() + ' recorded',
+    });
+  }
+
   return {
     meta: { key: 'murderMap', label: 'Western Cape · murder', chipText: '' },
 
-    enter() {
+    enter(opts = {}) {
       ctx.frameTo(ctx.data.box);                 // camera framed ONCE to the province box, static
-      const rest = ctx.data.restingPose();
-      // Single-writer: this view owns the pools while active. Seed both at rest, t=1.
-      ctx.field.setSource(rest); ctx.field.setTarget(rest); ctx.field.setT(1);
-      ctx.structField.setSource(ctx.data.outline); ctx.structField.setTarget(ctx.data.outline); ctx.structField.setT(1);
-      const yl = ctx.data.yearLabels[ctx.data.years.length - 1];
-      ctx.hud.setCaption({ region: 'Western Cape', lens: 'murder', time: yl, count: '' });
+      // Seed the struct pool at the resting outline (current=outline, so the toll's gather sources from it).
+      ctx.struct.rest(ctx.data.outline);
+      // Seed the data pair. On a frozen return we hold the year the toll left us on; on a fresh entry we
+      // open on the latest year, then play forward. seedPair writes source/target/t — single-writer.
+      const startYi = opts.paused ? ctx.playback.yi : ctx.data.years.length - 1;
+      ctx.playback.seedPair(ctx.data.layouts, startYi);
+      if (opts.paused) ctx.playback.pause(); else ctx.playback.play();
+      lastYi = -1; paintCaption();
+
       ctx.hud.setHint('press K for the toll');
       ctx.hud.setCitation('◆ SAPS crime records · DataFirst + saps.gov.za');
+      ctx.hud.chips.setActions({ toll: () => ctx.setView('toll') });
+      ctx.hud.chips.setDimRule(() => false);     // nothing dims on the idle map (toll + about always live)
+      ctx.hud.chips.refresh();
+
+      onKey = (e) => {
+        if (ctx.hud.about.isOpen) return;        // About gets first dibs on keys (plan §1)
+        if (e.code === 'KeyK') { e.preventDefault(); ctx.setView('toll'); }
+      };
+      window.addEventListener('keydown', onKey);
     },
 
-    update(now, dt, elapsed) {                   // static pose; drift/shimmer still breathe via setTime
-      ctx.field.setTime(elapsed);
-      ctx.structField.setTime(elapsed);
+    update(now, dt, elapsed) {                   // playback advances the year loop + drift breath; struct breathes
+      if (ctx.playback.tick(now, elapsed)) paintCaption();
+      ctx.struct.tick(now, elapsed);
     },
 
-    exit() {},        // nothing perturbed yet (S5 owns the toll's neutralise-on-exit)
+    exit() { if (onKey) { window.removeEventListener('keydown', onKey); onKey = null; } },
     dispose() {},
   };
 }

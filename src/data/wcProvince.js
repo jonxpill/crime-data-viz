@@ -33,7 +33,7 @@ export async function loadWcProvince() {
 
   return {
     stations: wc.stations, box: wc.meta.box, years, yearLabels, COUNT, structN,
-    outline, park, layouts: murder, totals: murder.map((L) => L.positions.length / 2),
+    outline, park, layouts: murder, totals: built.totals.murder,   // real per-YEAR SAPS murder counts (not the pool size)
     restingPose: () => murder[restYi],
     idleViewKey: 'murderMap',
     has: (f) => f === 'toll',

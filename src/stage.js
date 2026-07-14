@@ -16,6 +16,8 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointField } from './engine/PointField.js';
+import { createStructTransition } from './engine/transition.js';
+import { createPlayback } from './playback.js';
 
 export const BLOOM_LAYER = 1;
 const DARK = new THREE.Color('#05060a');
@@ -199,12 +201,14 @@ export function createStage() {
   async function boot({ loadData, hud, views: viewList = [], initial }) {
     const data = await loadData();
     makeConservedPools(data.COUNT, data.structN);
+    const struct = createStructTransition(structField);   // generic staggered struct-swarm on structField
+    const playback = createPlayback(field);               // year/month idle-loop driver on field
     ctx = {
       THREE, scene, camera, controls, fieldGroup, renderer, dom: renderer.domElement,
       frameTo, onResize, BLOOM_LAYER,
       field, structField, makePool,
-      struct: null,                                     // real StructTransition lands in S4
-      playback: null,                                   // real playback driver lands in S4
+      struct,
+      playback,
       data,
       hud,                                              // real HUD (src/hud.js) passed in by the page entry
       setView, get previousViewKey() { return previousViewKey; }, viz,
