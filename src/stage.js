@@ -203,10 +203,10 @@ export function createStage() {
       THREE, scene, camera, controls, fieldGroup, renderer, dom: renderer.domElement,
       frameTo, onResize, BLOOM_LAYER,
       field, structField, makePool,
-      struct: hud && hud.struct ? hud.struct : null,   // real StructTransition lands in S4
+      struct: null,                                     // real StructTransition lands in S4
       playback: null,                                   // real playback driver lands in S4
       data,
-      hud: hud || stubHud(),
+      hud,                                              // real HUD (src/hud.js) passed in by the page entry
       setView, get previousViewKey() { return previousViewKey; }, viz,
     };
     for (const f of viewList) { registerView(f); const v = f(ctx); views.set(v.meta.key, v); }
@@ -216,20 +216,4 @@ export function createStage() {
   }
 
   return { boot, registerView, frameTo, makePool, onResize, get ctx() { return ctx; }, get field() { return field; }, get structField() { return structField; } };
-}
-
-// Minimal HUD stub so views can drive slots before the real src/hud.js lands (S3). Writes the caption spans
-// directly; everything else is a no-op that the real HUD replaces.
-function stubHud() {
-  const $ = (id) => document.getElementById(id);
-  const set = (id, v) => { const el = $(id); if (el != null && v != null) el.textContent = v; };
-  return {
-    setCaption: ({ region, lens, time, count } = {}) => { set('region', region); set('crime', lens); set('year', time); set('count', count); },
-    setHint: (t) => set('hint', t),
-    setCitation: (t) => set('flag', t),
-    chips: { setActions() {}, setDimRule() {}, refresh() {} },
-    about: { setBody() {}, open() {}, close() {}, get isOpen() { return false; } },
-    pinAwake() {},
-    floatingCaption: () => ({ show() {}, hide() {} }),
-  };
 }

@@ -4,12 +4,14 @@
 // (S0 was a bare stage; S1 extracted the shell into stage.js; S2 wires the real data + resting map. The
 // Toll view + K routing land in S5.)
 import { createStage } from './stage.js';
+import { createHud } from './hud.js';
 import { loadWcProvince } from './data/wcProvince.js';
 import { createMurderMapView } from './views/murderMap.js';
 
 const stage = createStage();
 stage.boot({
   loadData: loadWcProvince,
+  hud: createHud(),
   views: [createMurderMapView],
   initial: 'murderMap',
 }).then(() => console.info('[toll] shell up — idle murder map'))
