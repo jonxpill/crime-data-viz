@@ -137,17 +137,28 @@ export function createHud() {
       if (figLeftEl) figLeftEl.textContent = leftNum;
       if (figRightEl) figRightEl.textContent = rightNum;
     },
-    setTitle(text) { if (figTitleEl) figTitleEl.textContent = text || ''; },
+    _titleUnit: 0,                                    // title px width per 1px of font-size (monospace → exact)
+    setTitle(text) {
+      if (!figTitleEl) return;
+      figTitleEl.textContent = text || '';
+      // Measure once per text at a SMALL probe size — a big probe (100px) exceeded the viewport and the
+      // fixed element CLAMPED to it, corrupting the unit. Fractional rect, tiny font → no clamp, exact ratio.
+      figTitleEl.style.fontSize = '10px';
+      this._titleUnit = figTitleEl.getBoundingClientRect().width / 10;
+      figTitleEl.style.fontSize = '';
+    },
     // Pin the figures to the word's ACTUAL screen position (x = word centre, y = word centre, gap = px out to
     // each side; tx/ty = the title's anchor — the word's first letter's left edge, just above the ink).
     // Projected by the view — so everything holds its place at ANY window aspect/zoom, unlike CSS %.
     // `scale` (px-per-world now ÷ at the opening framing) sizes the type WITH the zoom: the reading is part
     // of the object, not chrome floating over it.
-    place(x, y, gap, tx, ty, scale) {
+    place(x, y, gap, tx, ty, scale, titleW) {
       if (figLeftEl) { figLeftEl.style.right = (window.innerWidth - x + gap) + 'px'; figLeftEl.style.top = y + 'px'; }
       if (figRightEl) { figRightEl.style.left = (x + gap) + 'px'; figRightEl.style.top = y + 'px'; }
       if (figTitleEl && tx != null) { figTitleEl.style.left = tx + 'px'; figTitleEl.style.top = ty + 'px'; }
       if (scale != null) document.documentElement.style.setProperty('--fig-scale', scale.toFixed(4));
+      // Title sized to an exact pixel SPAN (the view pins it to the word's own letterforms), not a fixed pt.
+      if (figTitleEl && titleW != null && this._titleUnit) figTitleEl.style.fontSize = (titleW / this._titleUnit).toFixed(2) + 'px';
     },
     show(v) {
       const o = v ? '1' : '0';

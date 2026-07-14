@@ -99,7 +99,10 @@ export function createTollView(ctx) {
     // Type scales WITH the zoom (px-per-world ÷ the opening framing's) — the reading is part of the object.
     const ppw = gap / half;
     if (!figPxRest) figPxRest = ppw;
-    ctx.hud.figures.place(px, py, gap, tx, ty, ppw / figPxRest);
+    // The name spans M's left edge → the inner right edge of MURDER's U (≈29% of the word's ink width),
+    // so its size is pinned to the letterforms themselves and rides the zoom with them.
+    const titleW = wordBounds.w * ppw * 0.29;
+    ctx.hud.figures.place(px, py, gap, tx, ty, ppw / figPxRest, titleW);
   }
 
   // ---- bake the field's LIVE on-screen pose into a plain layout (parity: bakeFieldPose L612–628) ----
