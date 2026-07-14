@@ -306,7 +306,7 @@ export function createTollDiptychView(ctx) {
   // ---- hint (standalone grammar; chips are HUD-owned `about` only on this page) -----------------------
   function hintText() {
     if (phase === 'gather') return 'the years are gathering…';
-    if (done) return 'the toll stands · drag either dial to scrub · K replays';
+    if (done) return `the toll stands · drag either dial to scrub · K replays · S size (${sizeMode}) · W words (${wordsMode})`;
     if (holdPtr || holdKey) return 'one recorded murder per second — release to resume the sweep';
     if (paused) return 'paused — space resumes · drag either dial to scrub';
     return 'drag either dial to scrub · hold a disc for one per second · space pauses';
@@ -402,6 +402,15 @@ export function createTollDiptychView(ctx) {
     if (e.code === 'Space') { e.preventDefault(); pauseToggle(); }
     else if (e.code === 'Digit1') { e.preventDefault(); if (!holdKey) { holdKey = true; syncHud(); } }
     else if (e.code === 'KeyK' || e.code === 'KeyM') { e.preventDefault(); replay(); }
+    else if (e.code === 'KeyS') {                      // cycle the sizing rule BY EYE: same → area → radius
+      e.preventDefault();
+      setSizeMode({ same: 'area', area: 'radius', radius: 'same' }[sizeMode]);
+      syncHud();
+    } else if (e.code === 'KeyW') {                    // flip the word mode BY EYE: shared ⇄ each
+      e.preventDefault();
+      setWordsMode(wordsMode === 'shared' ? 'each' : 'shared');
+      syncHud();
+    }
   }
   function onKeyUp(e) { if (e.code === 'Digit1' && holdKey) { holdKey = false; syncHud(); } }
 
