@@ -7,12 +7,13 @@ import { createStage } from './stage.js';
 import { createHud } from './hud.js';
 import { loadWcProvince } from './data/wcProvince.js';
 import { createMurderMapView } from './views/murderMap.js';
+import { createTollView } from './views/toll.js';
 
 const stage = createStage();
 stage.boot({
   loadData: loadWcProvince,
   hud: createHud(),
-  views: [createMurderMapView],
+  views: [createMurderMapView, createTollView],
   initial: 'murderMap',
 }).then(() => console.info('[toll] shell up — idle murder map'))
   .catch((e) => console.error('[toll] boot failed', e));
