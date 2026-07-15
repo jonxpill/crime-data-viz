@@ -20,5 +20,5 @@ export default defineConfig(({ command }) => ({
 
   build: single
     ? { rollupOptions: { output: { inlineDynamicImports: true, manualChunks: undefined } } }
-    : { rollupOptions: { input: { main: r('index.html'), toll: r('toll.html'), tollGauteng: r('toll-gauteng.html'), tollKzn: r('toll-kzn.html') } } },
+    : { rollupOptions: { input: { main: r('index.html'), toll: r('toll.html'), tollGauteng: r('toll-gauteng.html'), tollKzn: r('toll-kzn.html'), tollTriptych: r('toll-triptych.html') } } },
 }));

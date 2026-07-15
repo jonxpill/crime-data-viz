@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>The Toll · Western Cape × KwaZulu-Natal × Gauteng, 2008–2026</title>
+    <meta name="description" content="The Toll, as a triptych — eighteen years of recorded murders in the Western Cape, KwaZulu-Natal and Gauteng poured side by side on one calendar clock, one dot each, into three growing discs. A memorial in light, on the Misdaadveld point-field engine." />
+    <meta property="og:title" content="The Toll — Western Cape × KwaZulu-Natal × Gauteng, one clock, three discs" />
+    <meta property="og:description" content="Every dot is one recorded murder. Three provinces' eighteen-year accumulations poured in step on one shared calendar, into growing rings of loss that never reset." />
+    <meta property="og:url" content="https://jonxpill.github.io/crime-data-viz/toll-triptych.html" />
+    <meta property="og:type" content="website" />
+    <style>
+      :root { color-scheme: dark; }
+      html, body { margin: 0; height: 100%; background: #05060a; overflow: hidden; }
+      #app { position: fixed; inset: 0; }
+      canvas { display: block; }
+
+      .hud {
+        position: fixed;
+        left: 16px;
+        bottom: 14px;
+        z-index: 10; /* above the place-label layer (z 5) */
+        font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+        color: #8792a6;
+        letter-spacing: 0.02em;
+        pointer-events: none;
+        user-select: none;
+        /* Boxed so the legend stays readable even when glowing dots are behind it on a zoom-in. */
+        padding: 9px 13px;
+        border-radius: 8px;
+        background: rgba(6, 8, 13, 0.66);
+        border: 1px solid rgba(140, 170, 210, 0.10);
+        backdrop-filter: blur(3px);
+        -webkit-backdrop-filter: blur(3px);
+      }
+      .hud b { color: #d4dcef; font-weight: 500; }
+      .hud .hint { color: #ffce86; }
+      /* Control chips: the SAME toolkit the keyboard drives, tappable (touch parity). Buttons opt back
+         into pointer events (the card itself stays click-transparent for the map behind it). */
+      .hud button {
+        pointer-events: auto; appearance: none; background: none; border: 0;
+        padding: 1px 5px; margin: 0 -2px; font: inherit; color: inherit;
+        letter-spacing: inherit; border-radius: 5px; cursor: pointer;
+      }
+      .hud button:hover { background: rgba(140, 170, 210, 0.12); }
+      .hud button:active { background: rgba(140, 170, 210, 0.24); }
+      .hud button.arr { padding: 1px 3px; }
+      /* Grouped row: TIME │ LENS │ VIEWS │ meta. Invalid-in-this-state chips DIM but hold their
+         ground (stable geometry beats a reflowing row). */
+      .grp { display: inline-flex; align-items: center; gap: 1px; }
+      .glabel { margin: 0 3px 0 1px; }
+      .gsep { color: #3a4456; margin: 0 7px; user-select: none; }
+      .hud button.off { opacity: 0.28; pointer-events: none; }
+      /* CINEMA — after a few idle seconds the chrome bows out; any input brings it back.
+         (body.quiet is driven from the shell; the About card pins the chrome awake.) */
+      .hud, #brand, #fps { transition: opacity 1.1s ease; }
+      body.quiet .hud, body.quiet #brand, body.quiet #fps { opacity: 0; }
+      body.quiet .hud button { pointer-events: none; }
+      @media (pointer: coarse) {
+        .hud { line-height: 2.05; }
+        .hud button { padding: 5px 7px; }   /* real tap targets on touch */
+        .passive { display: none; }         /* scroll/drag hints mean nothing on a phone */
+      }
+      @media (max-width: 640px) { .hud { left: 10px; right: 10px; bottom: 10px; font-size: 11px; } }
+      /* The name — quiet, structure-voiced, top-left. It must never compete with the field. */
+      #brand {
+        position: fixed; left: 16px; top: 12px; z-index: 10;
+        font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+        pointer-events: none; user-select: none;
+      }
+      #brand b { display: block; font-weight: 600; font-size: 13px; letter-spacing: 0.3em; color: #cdd6ee; opacity: 0.92; }
+      #brand span { display: block; font-size: 10.5px; letter-spacing: 0.05em; color: #77839a; }
+      @media (max-width: 640px) { #brand span { display: none; } }
+
+      /* About overlay — chip-opened, never automatic. Esc / ✕ / backdrop closes. */
+      #about { position: fixed; inset: 0; z-index: 40; display: none;
+        background: rgba(4, 6, 10, 0.72); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+      #about.open { display: flex; align-items: center; justify-content: center; }
+      #about-card {
+        position: relative; max-width: 580px; max-height: 82vh; overflow-y: auto; margin: 18px;
+        padding: 24px 28px; border-radius: 10px;
+        background: rgba(10, 13, 20, 0.94); border: 1px solid rgba(140, 170, 210, 0.16);
+        font: 12.5px/1.7 ui-monospace, "SF Mono", Menlo, monospace; color: #a8b2c6;
+      }
+      #about-card h2 { margin: 0 0 2px; font-size: 15px; font-weight: 600; letter-spacing: 0.3em; color: #e6ebf5; }
+      #about-card .tag { margin: 0 0 14px; color: #77839a; font-size: 11px; }
+      #about-card p { margin: 0 0 12px; }
+      #about-card .hon { color: #93a0b5; }
+      #about-card .src { color: #77839a; font-size: 11.5px; }
+      #about-card a { color: #ffce86; text-decoration: none; }
+      #about-card a:hover { text-decoration: underline; }
+      #about-close {
+        position: absolute; top: 10px; right: 12px; appearance: none; background: none; border: 0;
+        color: #8792a6; font: 16px ui-monospace, monospace; cursor: pointer; padding: 4px 8px; border-radius: 5px;
+      }
+      #about-close:hover { background: rgba(140, 170, 210, 0.12); color: #d4dcef; }
+
+      #fps {
+        position: fixed; right: 14px; top: 12px; z-index: 10;
+        font: 12px ui-monospace, monospace; color: #6b7689;
+        padding: 4px 9px; border-radius: 6px;
+        background: rgba(6, 8, 13, 0.6);
+        backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+      }
+      /* THE READING here is PER DISC — each province's name + two figures. The view builds its own
+         elements via hud.makeFigure (no fixed #fig-* trio on this page) and positions/sizes them each
+         frame from the discs' projected world anchors. Always-on; the honesty channel. */
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="brand">
+      <b>THE TOLL</b>
+      <span>Western Cape × KwaZulu-Natal × Gauteng · recorded murders, 2008/09 – 2025/26</span>
+    </div>
+    <div id="about">
+      <div id="about-card">
+        <button id="about-close" aria-label="close">✕</button>
+        <h2>THE TOLL</h2>
+        <p class="tag">Western Cape × KwaZulu-Natal × Gauteng · recorded murders · Apr 2008 – Mar 2026</p>
+        <p><b style="color:#d4dcef">Every dot is one recorded murder.</b> Eighteen years of South African
+          Police Service murder records for three provinces, poured side by side into three growing discs —
+          each dot leaving the year it happened, year one at the core, each year adding a ring that never
+          resets. What settles is each province's accumulated toll: <b style="color:#d4dcef">61,561</b> lives
+          in the Western Cape, <b style="color:#d4dcef">83,435</b> in KwaZulu-Natal, <b style="color:#d4dcef">79,060</b> in Gauteng.</p>
+        <p>All three discs pour on <b style="color:#d4dcef">one calendar clock</b> — every year takes the same
+          time on every dial, so a heavy year arrives as a visible burst and the three provinces stay
+          comparable year by year. Drag any dial to scrub them together.</p>
+        <p class="hon"><b style="color:#b9c4d8">Honesty notes.</b> Counts are real, from SAPS records; each
+          disc's radius is that province's running total, so each ring's thickness is that year's loss. At
+          equal disc sizes the busier province simply burns denser — density is this piece's light. 2025/26
+          is the sum of SAPS's quarterly releases and is unaudited. These are <i>recorded</i> murders — what
+          reached a police station.</p>
+        <p class="src">Crime: <a href="https://doi.org/10.25828/5MAW-4H90" target="_blank" rel="noopener">SAPS
+          Annual Crime Records 2008–2023 via DataFirst (CC-BY)</a> + SAPS annual &amp; quarterly releases
+          2023–2026 (saps.gov.za). Built on three.js with a custom GPU point-field engine — one buffer of
+          points, every view a pure layout function. By Jonx Pillemer.</p>
+      </div>
+    </div>
+    <!-- Everything else is HIDEABLE chrome — gone by default, revealed on movement: a whisper of a hint, a '?', a credit. -->
+    <div class="hud">
+      <div id="hint" class="hint">drag either dial to scrub · space pauses</div>
+      <div id="controls"><button data-act="about"><span class="hint">?</span> about</button></div>
+      <div id="flag" style="color:#5e6a52; margin-top:4px;">◆ SAPS crime records · DataFirst + saps.gov.za</div>
+    </div>
+    <div id="fps"></div>
+    <script type="module" src="/src/tollTriptychMain.js"></script>
+  </body>
+</html>

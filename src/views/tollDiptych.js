@@ -1,13 +1,15 @@
-// THE TOLL — DIPTYCH: two provinces' 18-year murder accumulations side by side, as ONE ceremony on the
-// shared shell. Western Cape (left) and Gauteng (right), each a growing disc on its own year-dial, both
-// poured by ONE SHARED CALENDAR CLOCK. Sibling of src/views/toll.js (the single-province ceremony) —
-// same techniques (phase machine, ordered seeds, counter binary-search, dial scrub grammar, ring
-// rollover, memorial word, neutralise-on-exit), remapped onto per-province SLICES of the shared pool.
+// THE TOLL — N-PROVINCE ROW: N provinces' 18-year murder accumulations laid out side by side, as ONE
+// ceremony on the shared shell — each province a growing disc on its own year-dial, all poured by ONE
+// SHARED CALENDAR CLOCK. The view is province-count-generic; two instances exist today: the diptych
+// (N=2, Western Cape × Gauteng) and the triptych (N=3, Western Cape × KwaZulu-Natal × Gauteng) — same
+// code, ctx.data.provinces sets N. Sibling of src/views/toll.js (the single-province ceremony) — same
+// techniques (phase machine, ordered seeds, counter binary-search, dial scrub grammar, ring rollover,
+// memorial word, neutralise-on-exit), remapped onto per-province SLICES of the shared pool.
 //
 // THE CLOCK IS CALENDAR-UNIFORM (deliberately unlike the single toll, which is event-uniform with the
 // hand lingering in heavy years): here each of the 18 years takes EQUAL time, the hands sweep steadily
-// in step on both dials, and a heavy year pours as a visible BURST — so the two discs stay comparable
-// year by year. Per-dot completion target for province p, year y, within-year index j:
+// in step on every dial, and a heavy year pours as a visible BURST — so the discs stay comparable year
+// by year. Per-dot completion target for province p, year y, within-year index j:
 //     t = (y + (j+0.5)/perYear_p[y]) / Y
 // converted to the engine's seed convention exactly as toll.js does (a dot completes at
 // uT = s01·(1−w) + w, so s01 = max(0, (t − w)/(1 − w)), seed = s01/0.1591549431). Seeds are MONOTONE
@@ -15,13 +17,14 @@
 // shader's-formula technique as toll.js, slice-local.
 //
 // THE TOGGLES ARE THE POINT (maker picks by eye later, live via __viz.diptych):
-//   • size: 'same' (both discs R_REF — Gauteng reads denser; density = light is this piece's language)
-//           'area' (R ∝ √M — equal areal density) · 'radius' (R ∝ M — a unit of radius = the same count
-//           on both discs). Switching re-bakes disc layouts + dial frames live (cheap CPU rebuild).
+//   • size: 'same' (every disc R_REF — the busiest province reads denser; density = light is this
+//           piece's language) · 'area' (R ∝ √M — equal areal density) · 'radius' (R ∝ M — a unit of
+//           radius = the same count on every disc). Switching re-bakes disc layouts + dial frames live
+//           (cheap CPU rebuild).
 //   • words: 'shared' (ONE central MURDER spanning the composition) · 'each' (a word over each disc,
 //           like the single pages). Word pool built once via ctx.makePool, kept.
 //
-// NO orrery spin in this view — the engine has a single uSpinCentre; two discs would need two (deferred).
+// NO orrery spin in this view — the engine has a single uSpinCentre; N discs would need N (deferred).
 //
 // INVARIANTS (toll.js parity):
 //  • SINGLE-WRITER per frame: phase machine → field.setT → field.setTime → ctx.struct.tick.
@@ -29,7 +32,7 @@
 //    wiping the live pose. Listeners add on enter(), remove on exit(). Own _downX/_downY.
 //  • Keys guard on !ctx.hud.about.isOpen (About gets first dibs).
 //  • STANDALONE always (idleViewKey null): you land in the ceremony, it auto-pours and stands; K/M
-//    replays; Space pauses; drag EITHER dial scrubs the one shared clock; there is no drain/home.
+//    replays; Space pauses; drag ANY dial scrubs the one shared clock; there is no drain/home.
 import { tollLayouts, tollFrameLayout, tollHandLayout, textLayout } from '../layouts/capeTown.js';
 
 export function createTollDiptychView(ctx) {
@@ -40,7 +43,7 @@ export function createTollDiptychView(ctx) {
 
   // ---- EYE-TUNABLE options — ONE object; the overseer + maker tune positions/sizes by eye ------------
   const OPT = {
-    colX: 370,             // column centres at cx ± colX (box w 1400)
+    colSpacing: 740,       // column CENTRE-TO-CENTRE spacing: cx = (i − (N−1)/2) · colSpacing (N=2 → ±370, same geometry as before)
     cyFrac: -0.06,         // discs' vertical bias, × box.h (matches tollGeom's −0.06)
     R_REF: 230,            // reference disc radius (≈ the single page's 0.32·min(box)); anchors max-M province
     dialFrac: 1.16,        // dialR = R × dialFrac (matches tollGeom)
@@ -63,7 +66,7 @@ export function createTollDiptychView(ctx) {
   const TOLL_FLIGHT_S = 1.2, TOLL_HOLD_MS = 350;
   const TOLL_FRAME_DOTS = 200000, TOLL_THIN = 0.22;
   const PIE_LINE_SIZE = 1.3, STRUCT_DOT_SIZE = 1.6;    // struct dot size during the ceremony / restored on exit
-  const WORD_N = 22000;
+  const WORD_N_TOTAL = 33000;   // 'each'-mode word budget, split across N discs (≈11k ink/word at N=3 — the proven density)
   const tollW = () => Math.min(0.95, TOLL_FLIGHT_S / (TOLL_SWEEP_MS / 1000));
   const swarmEase = (x) => x;                          // constant speed (parity: wcExplore L163)
 
@@ -74,7 +77,7 @@ export function createTollDiptychView(ctx) {
   let t = 0, tollT = 0;                                // t = field morph; tollT = the shared clock's uT
   let paused = false, holdKey = false, holdPtr = false, scrubbing = false;
   let sizeMode = OPT.size, wordsMode = OPT.words;
-  let tollFrame = null;                                // the COMBINED two-dial struct layout
+  let tollFrame = null;                                // the COMBINED per-province struct layout
   let tollSeedsSaved = null;                           // the pool's random seeds, restored on exit
   let lastCounts = null, lastYear = -1, done = false;
   let phaseStart = 0, lastNow = 0, handAngle = -1, holdTimer = 0;
@@ -93,9 +96,9 @@ export function createTollDiptychView(ctx) {
   }));
 
   // ---- geometry: the three sizing modes --------------------------------------------------------------
-  // 'same'   → both discs R_REF (density = light carries the difference — the project's language).
+  // 'same'   → every disc R_REF (density = light carries the difference — the project's language).
   // 'area'   → R ∝ √M: equal areal density (M/(π·0.9975·R²) equal since r0 = 0.05R).
-  // 'radius' → R ∝ M: a unit of radius = the same count on both discs (band mapping is r0 + 0.95R·cum/M).
+  // 'radius' → R ∝ M: a unit of radius = the same count on every disc (band mapping is r0 + 0.95R·cum/M).
   // R_REF anchors the LARGEST M so nothing outgrows the composition box.
   function radiusFor(M, mode) {
     const Mmax = Math.max(...provinces.map((p) => p.M));
@@ -112,7 +115,7 @@ export function createTollDiptychView(ctx) {
     for (let i = 0; i < discs.length; i++) {
       const d = discs[i], p = provinces[i];
       const R = radiusFor(p.M, mode);
-      const cx = (i === 0 ? -1 : 1) * OPT.colX;
+      const cx = (i - (provinces.length - 1) / 2) * OPT.colSpacing;
       const lay = tollLayouts(p.stations, { years, count: p.M, park: null, cx, cy, R, dialR: R * OPT.dialFrac });
       if (!lay) { console.error('[diptych] pool cannot hold the toll — ceremony unavailable', p.label); return false; }
       Object.assign(d, { cx, cy, R, dialR: R * OPT.dialFrac, lay });
@@ -120,8 +123,8 @@ export function createTollDiptychView(ctx) {
     return true;
   }
 
-  // The two dials share ONE struct pool, HALF each: two tollFrameLayout bakes packed into one combined
-  // layout; each dial's hand slice is its frame-local slice shifted by the dial's pack offset.
+  // The N dials share ONE struct pool, an EQUAL SHARE each: N tollFrameLayout bakes packed into one
+  // combined layout; each dial's hand slice is its frame-local slice shifted by the dial's pack offset.
   function bakeFrames() {
     const structN = ctx.data.structN;
     const half = Math.floor(structN / discs.length);
@@ -175,9 +178,9 @@ export function createTollDiptychView(ctx) {
     return lo;
   }
 
-  // Hold-drip: ~one recorded murder per second ACROSS THE PAIR. Calendar-uniform completions in year y
-  // arrive at Y·(Σp perYear_p[y]) per unit uT, so duT/dt = 1/(Y·n_y) lands one per second (the two
-  // provinces' pulses interleave — a slight syncopation around the 1/s average within each year).
+  // Hold-drip: ~one recorded murder per second ACROSS ALL DISCS. Calendar-uniform completions in year y
+  // arrive at Y·(Σp perYear_p[y]) per unit uT, so duT/dt = 1/(Y·n_y) lands one per second (the provinces'
+  // pulses interleave — a slight syncopation around the 1/s average within each year).
   function dripRate() {
     const y = yearFrac(tollT).y;
     const n = discs.reduce((a, d) => a + (d.lay ? d.lay.perYear[y] : 0), 0);
@@ -191,7 +194,7 @@ export function createTollDiptychView(ctx) {
     const box = ctx.data.box, cy = box.h * OPT.cyFrac;
     if (wordsMode === 'shared') {
       const o = OPT.sharedWord;                        // ONE central word spanning the composition
-      const lay = textLayout(tollWord, WORD_N, box, {
+      const lay = textLayout(tollWord, WORD_N_TOTAL, box, {
         fontFrac: o.fontFrac, jitter: o.jitter, weight: o.weight, spanFrac: o.spanFrac,
         cx: o.cx, cy: cy + o.yFrac * box.h,
       });
@@ -199,8 +202,8 @@ export function createTollDiptychView(ctx) {
       wordBounds = null;                               // figures anchor to the DISCS in this mode
     } else {
       const o = OPT.eachWord;                          // a word over each disc, like the single pages
-      const half = Math.floor(WORD_N / discs.length);
-      const positions = new Float32Array(WORD_N * 2), density = new Float32Array(WORD_N);
+      const half = Math.floor(WORD_N_TOTAL / discs.length);
+      const positions = new Float32Array(WORD_N_TOTAL * 2), density = new Float32Array(WORD_N_TOTAL);
       wordBounds = discs.map((d, i) => {
         const lay = textLayout(tollWord, half, box, {
           fontFrac: o.fontFrac, jitter: o.jitter, weight: o.weight, spanFrac: o.spanFrac,
@@ -512,11 +515,11 @@ export function createTollDiptychView(ctx) {
 
     enter() {
       // Owned pools/primitives: built ONCE (lazily), kept across ceremonies, disposed in dispose().
-      if (!wordField) wordField = ctx.makePool({ count: WORD_N, glow: false, size: 1.4, maxSize: 6, matte: '#3a4656', renderOrder: -2 });
+      if (!wordField) wordField = ctx.makePool({ count: WORD_N_TOTAL, glow: false, size: 1.4, maxSize: 6, matte: '#3a4656', renderOrder: -2 });
       if (!roll) roll = ctx.hud.floatingCaption('rollover');
       if (!reading) buildReading();
 
-      if (!bakeDiscs(sizeMode)) return;                // per-province endpoints around the two columns
+      if (!bakeDiscs(sizeMode)) return;                // per-province endpoints around their columns
 
       active = true;
       phase = 'gather'; paused = false; done = false;
@@ -524,9 +527,9 @@ export function createTollDiptychView(ctx) {
       holdKey = holdPtr = scrubbing = false; scrubDisc = null;
       figPxRest = 0;                                   // re-reference the type scale to this mount's framing
 
-      // You LAND in the diptych: frame the camera ONCE to the two-column box (w 1400 outgrows the default
-      // framing), HOLD both slices on their born-from-time sources (invisible — density 0) while the dials
-      // come up, then pour. Scroll zooms; drag scrubs (pan off so it never fights the scrub).
+      // You LAND in the ceremony: frame the camera ONCE to the N-column box (w scales with province count,
+      // outgrows the default framing), HOLD every slice on its born-from-time source (invisible — density
+      // 0) while the dials come up, then pour. Scroll zooms; drag scrubs (pan off so it never fights the scrub).
       ctx.frameTo(ctx.data.box);
       ctx.controls.enabled = true; ctx.controls.enablePan = false; ctx.controls.enableZoom = true;
       for (const d of discs) {

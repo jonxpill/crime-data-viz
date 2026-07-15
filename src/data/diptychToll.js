@@ -1,11 +1,13 @@
-// diptychToll.js — the data bundle for the TWO-PROVINCE Toll (the diptych). One loader, N lean bakes:
-// point it at `toll-<prov>.json` assets from pipeline/bake-toll.mjs (the same format provinceToll.js
-// reads) and it returns ONE `ctx.data` bundle whose glow pool is the CONCATENATION of the provinces'
-// tolls — province p owns the contiguous slice [offset, offset+M). Every dot is one recorded murder;
-// nothing is parked. Each province's M is RE-VERIFIED from its own rows (bake and asset must agree).
+// diptychToll.js — the data bundle for the Toll ROW (N provinces side by side: diptych N=2, triptych
+// N=3). One loader, N lean bakes: point it at `toll-<prov>.json` assets from pipeline/bake-toll.mjs (the
+// same format provinceToll.js reads) and it returns ONE `ctx.data` bundle whose glow pool is the
+// CONCATENATION of the provinces' tolls — province p owns the contiguous slice [offset, offset+M). Every
+// dot is one recorded murder; nothing is parked. Each province's M is RE-VERIFIED from its own rows (bake
+// and asset must agree).
 //
 // The view lays each slice out around its own column centre via tollLayouts(count = M_p) + the engine's
-// setSource/setTarget(layout, offset) slice writes; structN sums the bakes' dial budgets (half per dial).
+// setSource/setTarget(layout, offset) slice writes; structN sums the bakes' dial budgets (an equal share
+// per dial).
 export function loadDiptychToll(sources) {
   return async function load() {
     const bakes = await Promise.all(sources.map(async ({ url }) => {
@@ -23,8 +25,8 @@ export function loadDiptychToll(sources) {
       console.info(`[diptych-data] ${label}: M=${M.toLocaleString()} baked · ${check.toLocaleString()} recomputed · match=${check === M}`);
       if (check !== M) throw new Error(`diptychToll: ${label} station sum ${check} ≠ baked M ${M} — bake and asset disagree`);
       const p = { label, stations, years, yearLabels, M, perYear, offset };
-      offset += M;                        // slice offsets: contiguous, in fetch order (left disc first)
-      structN += j.meta.structN;          // Σ per-province dial budgets → half the struct pool per dial
+      offset += M;                        // slice offsets: contiguous, in fetch order (leftmost disc first)
+      structN += j.meta.structN;          // Σ per-province dial budgets → an equal share of the struct pool per dial
       return p;
     });
 
@@ -36,13 +38,18 @@ export function loadDiptychToll(sources) {
       }
     }
 
+    // Composition box scales with province count: tollDiptych.js's OPT.colSpacing (740) between column
+    // centres + a fixed 330px margin each side of the outermost columns → w = 740·(N−1) + 660.
+    // N=2 → 1400 (unchanged); N=3 → 2140. h is untouched — the row widens, discs never grow taller.
+    const boxW = 740 * (provinces.length - 1) + 660;
+
     return {
       label: provinces.map((p) => p.label).join(' × '),
       provinces,                // per-province { label, stations, years, yearLabels, M, perYear, offset }
       stations: null,           // no single-province station list — the view reads provinces[i].stations
       years: y0, yearLabels: provinces[0].yearLabels,
-      box: { w: 1400, h: 720 }, // the diptych composition box (two columns; view geometry derives from it)
-      COUNT: offset,            // = ΣM — the pool is exactly the two tolls, slice-packed
+      box: { w: boxW, h: 720 }, // the N-province composition box (view geometry derives from it)
+      COUNT: offset,            // = ΣM — the pool is exactly the N tolls, slice-packed
       structN,
       outline: null, park: null, layouts: null, totals: null,
       restingPose: null,        // standalone: no map to rest on…
