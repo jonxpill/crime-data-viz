@@ -20,6 +20,7 @@ import { PointField } from './engine/PointField.js';
 import { createStructTransition } from './engine/transition.js';
 import { createPlayback } from './playback.js';
 import { applyPalette, paletteToast, paletteKey, nextPalette, PALETTE_CYCLE } from './palette.js';
+import { createDitherPass } from './motion.js';
 
 export const BLOOM_LAYER = 1;
 const DARK = new THREE.Color('#05060a');
@@ -71,6 +72,7 @@ export function createStage() {
   finalComposer.addPass(new RenderPass(scene, camera));
   finalComposer.addPass(mixPass);
   finalComposer.addPass(new OutputPass());
+  finalComposer.addPass(createDitherPass()); // D4: ±1 LSB dither after tone map + sRGB → no banding in the halos
 
   function render() {
     scene.background = null;
