@@ -10,8 +10,15 @@
     <meta property="og:url" content="https://jonxpill.github.io/crime-data-viz/" />
     <meta property="og:type" content="website" />
     <style>
-      :root { color-scheme: dark; }
-      html, body { margin: 0; height: 100%; background: #05060a; overflow: hidden; }
+      :root {
+        color-scheme: dark;
+        /* Palette tokens — these defaults ARE today's colours (no flash before JS); the palette door
+           (src/palette.js) overrides them live on :root. Role names, never raw hexes, below. */
+        --bg: #05060a; --hud-text: #8792a6; --hud-strong: #d4dcef; --hud-hint: #ffce86; --hud-dim: #6b7689;
+        --hud-sep: #3a4456; --hud-flag: #5e6a52; --brand: #cdd6ee; --brand-sub: #77839a;
+        --card-text: #a8b2c6; --card-head: #e6ebf5; --card-dim: #93a0b5; --card-strong: #b9c4d8; --fig: #5a6377;
+      }
+      html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
       #app { position: fixed; inset: 0; }
       canvas { display: block; }
 
@@ -21,7 +28,7 @@
         bottom: 14px;
         z-index: 10; /* above the place-label layer (z 5) */
         font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
-        color: #8792a6;
+        color: var(--hud-text);
         letter-spacing: 0.02em;
         pointer-events: none;
         user-select: none;
@@ -33,8 +40,8 @@
         backdrop-filter: blur(3px);
         -webkit-backdrop-filter: blur(3px);
       }
-      .hud b { color: #d4dcef; font-weight: 500; }
-      .hud .hint { color: #ffce86; }
+      .hud b { color: var(--hud-strong); font-weight: 500; }
+      .hud .hint { color: var(--hud-hint); }
       /* Control chips: the SAME toolkit the keyboard drives, tappable (touch parity). Buttons opt back
          into pointer events (the card itself stays click-transparent for the map behind it). */
       .hud button {
@@ -49,7 +56,7 @@
          ground (stable geometry beats a reflowing row). */
       .grp { display: inline-flex; align-items: center; gap: 1px; }
       .glabel { margin: 0 3px 0 1px; }
-      .gsep { color: #3a4456; margin: 0 7px; user-select: none; }
+      .gsep { color: var(--hud-sep); margin: 0 7px; user-select: none; }
       .hud button.off { opacity: 0.28; pointer-events: none; }
       /* CINEMA — after a few idle seconds the chrome bows out; any input brings it back.
          (body.quiet is driven from wcExplore; the About card pins the chrome awake.) */
@@ -68,8 +75,8 @@
         font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
         pointer-events: none; user-select: none;
       }
-      #brand b { display: block; font-weight: 600; font-size: 13px; letter-spacing: 0.3em; color: #cdd6ee; opacity: 0.92; }
-      #brand span { display: block; font-size: 10.5px; letter-spacing: 0.05em; color: #77839a; }
+      #brand b { display: block; font-weight: 600; font-size: 13px; letter-spacing: 0.3em; color: var(--brand); opacity: 0.92; }
+      #brand span { display: block; font-size: 10.5px; letter-spacing: 0.05em; color: var(--brand-sub); }
       @media (max-width: 640px) { #brand span { display: none; } }
 
       /* About overlay — chip-opened, never automatic. Esc / ✕ / backdrop closes. */
@@ -80,20 +87,20 @@
         position: relative; max-width: 580px; max-height: 82vh; overflow-y: auto; margin: 18px;
         padding: 24px 28px; border-radius: 10px;
         background: rgba(10, 13, 20, 0.94); border: 1px solid rgba(140, 170, 210, 0.16);
-        font: 12.5px/1.7 ui-monospace, "SF Mono", Menlo, monospace; color: #a8b2c6;
+        font: 12.5px/1.7 ui-monospace, "SF Mono", Menlo, monospace; color: var(--card-text);
       }
-      #about-card h2 { margin: 0 0 2px; font-size: 15px; font-weight: 600; letter-spacing: 0.3em; color: #e6ebf5; }
-      #about-card .tag { margin: 0 0 14px; color: #77839a; font-size: 11px; }
+      #about-card h2 { margin: 0 0 2px; font-size: 15px; font-weight: 600; letter-spacing: 0.3em; color: var(--card-head); }
+      #about-card .tag { margin: 0 0 14px; color: var(--brand-sub); font-size: 11px; }
       #about-card p { margin: 0 0 12px; }
-      #about-card .hon { color: #93a0b5; }
-      #about-card .src { color: #77839a; font-size: 11.5px; }
-      #about-card a { color: #ffce86; text-decoration: none; }
+      #about-card .hon { color: var(--card-dim); }
+      #about-card .src { color: var(--brand-sub); font-size: 11.5px; }
+      #about-card a { color: var(--hud-hint); text-decoration: none; }
       #about-card a:hover { text-decoration: underline; }
       #about-close, #locate-close {
         position: absolute; top: 10px; right: 12px; appearance: none; background: none; border: 0;
-        color: #8792a6; font: 16px ui-monospace, monospace; cursor: pointer; padding: 4px 8px; border-radius: 5px;
+        color: var(--hud-text); font: 16px ui-monospace, monospace; cursor: pointer; padding: 4px 8px; border-radius: 5px;
       }
-      #about-close:hover, #locate-close:hover { background: rgba(140, 170, 210, 0.12); color: #d4dcef; }
+      #about-close:hover, #locate-close:hover { background: rgba(140, 170, 210, 0.12); color: var(--hud-strong); }
 
       /* Locate overlay (H) — the about card's quieter sibling: one field, one button, one promise. */
       #locate { position: fixed; inset: 0; z-index: 40; display: none;
@@ -102,28 +109,28 @@
       #locate-card {
         position: relative; width: 340px; margin: 18px; padding: 22px 24px; border-radius: 10px;
         background: rgba(10, 13, 20, 0.94); border: 1px solid rgba(140, 170, 210, 0.16);
-        font: 12.5px/1.7 ui-monospace, "SF Mono", Menlo, monospace; color: #a8b2c6;
+        font: 12.5px/1.7 ui-monospace, "SF Mono", Menlo, monospace; color: var(--card-text);
       }
-      #locate-card h2 { margin: 0 0 2px; font-size: 13px; font-weight: 600; letter-spacing: 0.3em; color: #e6ebf5; }
-      #locate-card .tag { margin: 0 0 12px; color: #77839a; font-size: 11px; }
+      #locate-card h2 { margin: 0 0 2px; font-size: 13px; font-weight: 600; letter-spacing: 0.3em; color: var(--card-head); }
+      #locate-card .tag { margin: 0 0 12px; color: var(--brand-sub); font-size: 11px; }
       #locate-input {
         width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px;
         background: rgba(6, 8, 13, 0.8); border: 1px solid rgba(140, 170, 210, 0.22); color: #e4ebf4;
         font: 13px ui-monospace, "SF Mono", Menlo, monospace; outline: none;
       }
       #locate-input:focus { border-color: rgba(255, 206, 134, 0.45); }
-      #locate-match { min-height: 19px; margin: 8px 0 10px; color: #ffce86; font-size: 11.5px; }
+      #locate-match { min-height: 19px; margin: 8px 0 10px; color: var(--hud-hint); font-size: 11.5px; }
       #locate-me {
         appearance: none; width: 100%; padding: 7px 10px; border-radius: 6px; cursor: pointer;
         background: rgba(140, 170, 210, 0.10); border: 1px solid rgba(140, 170, 210, 0.22);
-        color: #d4dcef; font: inherit;
+        color: var(--hud-strong); font: inherit;
       }
       #locate-me:hover { background: rgba(140, 170, 210, 0.18); }
-      #locate-card .priv { margin: 10px 0 0; color: #77839a; font-size: 10.5px; }
+      #locate-card .priv { margin: 10px 0 0; color: var(--brand-sub); font-size: 10.5px; }
 
       #fps {
         position: fixed; right: 14px; top: 12px; z-index: 10;
-        font: 12px ui-monospace, monospace; color: #6b7689;
+        font: 12px ui-monospace, monospace; color: var(--hud-dim);
         padding: 4px 9px; border-radius: 6px;
         background: rgba(6, 8, 13, 0.6);
         backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
@@ -154,27 +161,27 @@
         <button id="about-close" aria-label="close">✕</button>
         <h2>MISDAADVELD</h2>
         <p class="tag">Afrikaans: “crime field” · Western Cape, 2008/09 – 2025/26</p>
-        <p><b style="color:#d4dcef">Every glowing dot is one reported crime.</b> Eighteen years of South African
+        <p><b style="color:var(--hud-strong)">Every glowing dot is one reported crime.</b> Eighteen years of South African
           Police Service records for the Western Cape — robbery, residential burglary, murder, sexual offences,
           commercial crime and carjacking across 150 police precincts — drawn as a single living field of
           ~180,000 points. The province, its districts, the pies, the terrain and the monthly pulse are all the
           same dots rearranging; nothing is ever redrawn, only moved.</p>
         <p>Glow is crime; grey is geography. Colour is local density — cool and sparse through molten and dense.
-          Click a district to bloom into it. <span class="hint" style="color:#ffce86">N</span> breathes month by
-          month, <span style="color:#ffce86">C</span> shows rates per 100k people,
-          <span style="color:#ffce86">T</span> raises the land itself.
-          <span style="color:#ffce86">H</span> stands you in your suburb: the field dims to your precinct and
+          Click a district to bloom into it. <span class="hint" style="color:var(--hud-hint)">N</span> breathes month by
+          month, <span style="color:var(--hud-hint)">C</span> shows rates per 100k people,
+          <span style="color:var(--hud-hint)">T</span> raises the land itself.
+          <span style="color:var(--hud-hint)">H</span> stands you in your suburb: the field dims to your precinct and
           its residents rise as grey dots, one per hundred people — count your neighbours per burglary.</p>
-        <p class="hon"><b style="color:#b9c4d8">Honesty notes.</b> Counts are real; positions are jittered within
+        <p class="hon"><b style="color:var(--card-strong)">Honesty notes.</b> Counts are real; positions are jittered within
           each precinct (volume is true, street addresses are not). Raw counts largely follow population — per-capita
-          (<span style="color:#ffce86">C</span>) is the fairer read (denominators: WorldPop 2020). 2025/26 is the sum
+          (<span style="color:var(--hud-hint)">C</span>) is the fairer read (denominators: WorldPop 2020). 2025/26 is the sum
           of SAPS’s quarterly releases and is unaudited; the monthly series (Apr 2021 – Mar 2026) comes from the same
           quarterlies. Stations opened after 2023 (Samora Machel, Makhaza) are folded into the older precinct
           boundaries that contain them. Carjacking is also a subcategory of aggravated robbery, so it appears inside
           the robbery lens too. And throughout: these are <i>reported</i> crimes — what reaches a police station, not
           all that happens.</p>
-        <p class="hon"><b style="color:#b9c4d8">The unlit field (<span style="color:#ffce86">U</span>).</b> On any map
-          view, <span style="color:#ffce86">U</span> condenses a second population out of the dark: slate-violet dots
+        <p class="hon"><b style="color:var(--card-strong)">The unlit field (<span style="color:var(--hud-hint)">U</span>).</b> On any map
+          view, <span style="color:var(--hud-hint)">U</span> condenses a second population out of the dark: slate-violet dots
           that never glow — an <i>estimate</i> of the crimes that never reached a police station. Per precinct-year it
           draws R×(1−r)/r unlit dots beside the R reported ones, where r is the national reporting rate from Stats SA's
           Governance, Public Safety and Justice Survey (GPSJS 2024/25, cross-checked against 2023/24): housebreaking
@@ -204,7 +211,7 @@
       </div>
     </div>
     <div class="hud">
-      <div><b id="region">Western Cape</b> — <span id="crime">robbery</span> &nbsp;·&nbsp; <span id="year">—</span> &nbsp;·&nbsp; <span id="count" style="color:#8792a6;"></span></div>
+      <div><b id="region">Western Cape</b> — <span id="crime">robbery</span> &nbsp;·&nbsp; <span id="year">—</span> &nbsp;·&nbsp; <span id="count" style="color:var(--hud-text);"></span></div>
       <div id="hint" class="hint" style="margin-top:2px;">click Cape Town to zoom in</div>
       <!-- The toolkit, grouped: TIME · LENS · VIEWS · meta. Chips DIM (never vanish — a moving row is
            worse than a grey chip) when invalid in the current state; refreshChips() owns that. -->
@@ -228,7 +235,7 @@
           data-act="release"><span class="hint">F</span> release</button></span><span class="gsep">│</span><span
         class="grp"><button data-act="about"><span class="hint">?</span> about</button></span><span class="passive">&thinsp;<span class="hint">scroll</span> zoom&thinsp;·&thinsp;<span class="hint">drag</span> pan</span>
       </div>
-      <div id="flag" style="color:#5e6a52; margin-top:4px;">◆ real SAPS robbery</div>
+      <div id="flag" style="color:var(--hud-flag); margin-top:4px;">◆ real SAPS robbery</div>
     </div>
     <div id="unlit-chip"></div>
     <div id="fps"></div>

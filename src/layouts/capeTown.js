@@ -314,11 +314,15 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
    * HONESTY: volume is real across crimes — the murder pie holds ~its true (small) dot count, so it
    * reads much emptier than robbery/burglary. Density is normalised GLOBALLY across all three pies
    * (one gMax), so murder's sparse dots stay cool/dim instead of being warmed up to look busy.
+   *
+   * `crime` (Uint8Array, per dot): the index into `types` of the crime that dot IS in this layout
+   * (255 = parked surplus) — a data fact a caller may paint by (the palette's crime families).
    */
   function triPieLayout(yiArg, { gap = 300, R = 120 } = {}) {
     const y = years[yiArg];
     const positions = new Float32Array(COUNT * 2);
     const density = new Float32Array(COUNT);
+    const crime = new Uint8Array(COUNT).fill(255);
     const rng = mulberry32(0x3c1a5b);
     const dtheta = TAU / slots.length;
     // Up to 3 crimes sit in a row (the classic 3-compare); more wrap into a grid (6 → 2×3) so the
@@ -346,6 +350,7 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
           const px = cx + Math.cos(a) * r, py = cy + Math.sin(a) * r;
           positions[idx * 2] = px; positions[idx * 2 + 1] = py;
           activeXY.push(px, py); activeIdx.push(idx);
+          crime[idx] = ci;
         }
         cursor += n;
       }
@@ -366,7 +371,7 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
     }
     const boundaries = [];
     { let th = -Math.PI / 2; for (let i = 0; i < slots.length; i++) { th += dtheta; boundaries.push(th); } }
-    return { positions, density, centers, boundaries, R };
+    return { positions, density, centers, boundaries, R, crime };
   }
 
   /**
@@ -374,11 +379,13 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
    * they all collapse into it. Uses the SAME slot partition as triPieLayout, so the CLICKED crime's
    * OWN dots consolidate to the centre and grow, while the other two pies' dots fly out. Identity is
    * preserved (the pie you clicked is the pie that stays), so it reads as "focus on this one."
+   * `crime`: the same per-dot crime index as triPieLayout's (flying-out dots keep their own crime).
    */
   function resolvePieLayout(crimeIdx, yiArg, { cx = 0, cy = 0, R = 200 } = {}) {
     const y = years[yiArg];
     const positions = new Float32Array(COUNT * 2);
     const density = new Float32Array(COUNT);
+    const crime = new Uint8Array(COUNT).fill(255);
     const rng = mulberry32(0x9e13a7);
     const boundaries = [];
     const activeXY = [], activeIdx = [];
@@ -390,6 +397,12 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
       let cursor = 0;
       for (let ci = 0; ci < crimeIdx; ci++) cursor += Math.max(0, Math.min(sl.K - cursor, Math.round(valueOf(sl.s, types[ci], y) / PER_POINT)));
       const n = Math.max(0, Math.min(sl.K - cursor, Math.round(valueOf(sl.s, types[crimeIdx], y) / PER_POINT)));
+      // every slot's crime under that SAME partition — the dots that fly out stay what they were
+      for (let ci = 0, c2 = 0; ci < types.length; ci++) {
+        const nn = Math.max(0, Math.min(sl.K - c2, Math.round(valueOf(sl.s, types[ci], y) / PER_POINT)));
+        crime.fill(ci, sl.base + c2, sl.base + c2 + nn);
+        c2 += nn;
+      }
       for (let j = 0; j < sl.K; j++) {
         const idx = sl.base + j;
         if (j >= cursor && j < cursor + n) {           // this crime's own dots → centred wedge (stay)
@@ -413,7 +426,7 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
       const d = Math.pow(Math.min(raw[k] / gMax, 1), 0.55);
       density[activeIdx[k]] = ACTIVE_FLOOR + (1 - ACTIVE_FLOOR) * d;
     }
-    return { positions, density, boundaries, R, cx, cy };
+    return { positions, density, boundaries, R, cx, cy, crime };
   }
 
   /**
