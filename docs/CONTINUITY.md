@@ -328,3 +328,8 @@ specific instruments (deferred) · where it lives / distribution · a name.
   actually lands ≈ `#010717` on the canvas and a candidate's `oklch(0.12 0.02 265)` ≈ `#011024`; comparing
   candidates (or matching page CSS to the canvas) by their authored hex compares the wrong things. Report the
   on-screen value beside the authored one, or author post-transform. (D2 palette door, 2026-09-28) (?)
+- **A channel that already carries meaning can't also carry a cosmetic effect — the eye reads it as the
+  meaning.** The ribbon's part-lit top dot was faded by lowering its density, but in this engine density drives
+  HUE as well as light, so every column grew a cool blue "cap" that read as a second signal. Fade on a free
+  channel, or quantise (whole dots, the exact number in words). Check what else a lever drives before borrowing
+  it. (D5 HUD, 2026-09-28) (?)

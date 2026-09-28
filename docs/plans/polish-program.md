@@ -45,7 +45,7 @@
 | **Palette** | `src/palette.js` | role tokens → PointField uniforms (`uRamp*`, `uMatte`) + CSS vars for HUD type; crime→family map; candidate sets for the eye pass | every pool, HUD |
 | **Address** | `src/address.js` | `#region/crime/year/view[/mode]` ⇄ state; history (Back = go back out); parse/serialise only — views apply | explorer, exhibit script |
 | **Motion** | `src/engine/PointField.js` (+ `src/motion.js` helpers) | path modes (straight · arc · swirl) via one uniform + per-dot arc offset; ordered-stagger helpers (sweep-from-point, by-value, by-axis) on top of existing `setSeeds`; comet streaks (velocity-oriented sprite during transitions, zero at rest); dither in the output pass | every transition |
-| **Input + dock** | `src/input.js` + HUD | ONE keymap table (keys → intents); coarse-pointer dock (one row + "more" sheet, no key glyphs); fps only with `?debug`; the year ribbon (18 grey dot ticks, draggable); breadcrumb | explorer, shell |
+| **Input + dock** (D5: the HUD made of light) | `src/hud/` (+ `src/input.js`, deferred) | the sentence (readout = control, breadcrumb), the views, the engine-drawn year ribbon + compass, the help sheet (every key); ONE keymap table (keys → intents) still to extract; coarse-pointer layout = pass 2 | explorer (pass 1), shell (pass 3) |
 
 ## Packets
 Sizes: S (hours) · M (a day) · L (multi-day). Tier = the agent model for execution (planner does the eye).
@@ -91,7 +91,31 @@ Sizes: S (hours) · M (a day) · L (multi-day). Tier = the agent model for execu
   >   whole outline is role 0 = lace).
 - **D3 Address** M · sonnet.
 - **D4 Motion** L · opus — path modes, meaningful stagger, comet streaks (= [existing: Comet Scrub]), dither.
-- **D5 Input + dock** M · sonnet — incl. year ribbon + breadcrumb; absorbs the Wave-0 chips into groups.
+- **D5 The HUD made of light** (was "Input + dock") L · opus — the chrome rebuilt in the piece's own
+  substance, approved by the maker 2026-09-28 (mockup: a 2D imitation; one correction — the ACTIVE view icon
+  brightens to structure-white, never amber: amber/glow = data only). Three passes:
+  - **pass 1 — the explorer, desktop-first** (`index.html` + `src/wcExplore.js` + `src/hud/`): bottom-left THE
+    SENTENCE `place · crime · year · count  unlit` — the readout IS the control (dotted underline = tappable:
+    place drills out / lists the six districts, crime opens a popover with each crime's number → `flipTo`,
+    year = play/pause, count = reported ⇄ per 100k with rolling numbers, `unlit` = the lens); scene
+    instructions become a transient caption (~4 s, hover re-shows). Bottom-right THE VIEWS as words with 28×20
+    dot icons derived from the real layouts (`more` → my suburb · release). Bottom edge THE YEAR RIBBON drawn by
+    the PointField engine (grey frame pool + glowing data pool on the camera; lit ∝ the place's true series,
+    normalised to its own max; left→right relight wave; 60 months in the pulse; grey in canyon/forensics/toll/
+    flock; click/drag scrubs; ▶ at the left, years | months at the right). Top-right THE COMPASS (engine-drawn,
+    only away from home, tap = home) + `?` → the help sheet (About + every key + Sources). No box — a soft
+    bottom shade drawn in-frame beneath the ribbon; fps only with `?debug`; cinema keeps the brand, ribbon 25 %.
+  - **pass 2 — touch**: a coarse-pointer layout (one-row dock, "more" sheet, bigger targets, the canvas gestures
+    of decision 4). Pass 1 is already pointer-event driven and hover-free, so this is layout, not wiring.
+  - **pass 3 — the Toll pages** (`toll*.html`, `src/stage.js`, `src/hud.js`, `src/views/*`): the same instruments
+    through the shell's HUD.
+  > **Status 2026-09-28:** pass 1 BUILT on `polish/hud` — `src/hud/light.js` (ribbon + compass pools on the camera
+  > at depth 300, where the engine's size law makes uSize = CSS px; the shade quad), `src/hud/dock.js` (the DOM:
+  > sentence, views, ribbon bar, popovers — one `act()` door back into the explorer's action table),
+  > `src/hud/icons.js` (icon points → CSS masks), `tests/hud.test.mjs` in `npm test`. The DOM owns the layout;
+  > the engine draws into the measured rects (resize re-measures). Live eye knobs: `__viz.hud({...})`; honesty
+  > probe: `__viz.hudCheck()`. Deferred: the `src/input.js` keymap table (keys still live in the explorer's
+  > keydown; the dock calls the same action table), the shell. Awaiting the planner's render-and-look.
 - Order: D1 + D2 first (they change the look everything else is judged against); D3/D4/D5 in parallel lanes.
 
 ### Wave 2 — Explorer polish (branch `polish/explorer`)
