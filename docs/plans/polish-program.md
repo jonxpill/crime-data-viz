@@ -91,6 +91,18 @@ Sizes: S (hours) · M (a day) · L (multi-day). Tier = the agent model for execu
   >   whole outline is role 0 = lace).
 - **D3 Address** M · sonnet.
 - **D4 Motion** L · opus — path modes, meaningful stagger, comet streaks (= [existing: Comet Scrub]), dither.
+  > **Status 2026-09-28:** BUILT on `polish/motion` (+ round-2 aerial perspective + sky roosts) — awaiting the
+  > planner's render-and-look + 60 fps check. Engine (`PointField`): `setPath('straight'|'arc'|'swirl', opts)`,
+  > `setOrder(order01|null, offset)` (its own `aOrder` channel — aSeed/twinkle/drift untouched, so switching is
+  > invisible), `setStreak(k, {max, tail, conserve})` + `beginFrame()`/`setViewport()`, `setHaze({far, near,
+  > strength})` + `setFocus(d)`; every term is exactly zero at lt = 0/1 and off by default; invisible dots are
+  > clipped in the vertex stage. Door (`src/motion.js`): the SPEC table `MOTION_TUNE` (flip = arc + densest-first,
+  > pie/compare = swirl ±1, drill = straight + radiate-from-the-district + comets), pure order helpers
+  > (`seedsByValue` / `seedsFromPoint` / `seedsByAxis` / `rankOrder` / `toSeeds`), sessions that end on landing
+  > or on a replaced pair (epoch), haze + focus on the world pools, the output dither pass (explorer + the toll
+  > stage). Sky roosts (`skyRoosts` in capeTown.js): map / pulse / forensics / unlit surplus + compare leftovers +
+  > the Toll's park wait ABOVE the box over their own station; every active dot bit-identical (checked on the real
+  > data). Knobs: `__viz.motion({...})`. Tests: `tests/motion.test.mjs` in `npm test`.
 - **D5 The HUD made of light** (was "Input + dock") L · opus — the chrome rebuilt in the piece's own
   substance, approved by the maker 2026-09-28 (mockup: a 2D imitation; one correction — the ACTIVE view icon
   brightens to structure-white, never amber: amber/glow = data only). Three passes:

@@ -333,3 +333,9 @@ specific instruments (deferred) · where it lives / distribution · a name.
   HUE as well as light, so every column grew a cool blue "cap" that read as a second signal. Fade on a free
   channel, or quantise (whole dots, the exact number in words). Check what else a lever drives before borrowing
   it. (D5 HUD, 2026-09-28) (?)
+- **Tie a transient modifier's lifetime to the identity of the state it decorates, not to completion
+  callbacks.** The Motion door's arcs/orders/comets end when their pair LANDS or when the pair's epoch moves
+  (any new write) — so a flip interrupted by a pie, a drill landing via a re-seed, a year pair after a flip all
+  clean up without a single hook at the dozen completion sites. Same packet: never give one random seed two
+  jobs (stagger order + drift/twinkle phase) — switching one then visibly jolts the other; give the new job
+  its own channel. (D4 motion, 2026-09-28) (?)
