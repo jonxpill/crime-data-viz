@@ -5,7 +5,7 @@
 //    left-drag, for trackpads without a right click — ROTATES (sideways = SPIN about the map's normal, up/down
 //    = TILT) · wheel zooms. Touch: one finger pans · two fingers pinch-zoom + rotate (DOLLY_ROTATE).
 //  • LIMITS. Tilt ≤ maxTilt from top-down, MINUS whatever tilt the field itself carries (terrain/canyon lean
-//    the fieldGroup), so you can never look under the map. Zoom 0.15×–3× of the current scene's HOME distance.
+//    the fieldGroup), so you can never look under the map. Zoom 0.05×–3× of the current scene's HOME distance.
 //    A limit never snaps the camera: if you're already outside it (a cancelled glide, a resize) it widens to
 //    where you are and ratchets back as you return. Damped.
 //  • HOME = "The Frame". `home(box, {dur})` GLIDES target + distance and unwinds spin/tilt to top-down, north
@@ -21,7 +21,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 export const MAX_TILT = (72 * Math.PI) / 180;  // from top-down; a map app's pitch ceiling, never below the horizon
-const ZOOM_IN = 0.15, ZOOM_OUT = 3;             // distance limits, × the current scene's home distance
+const ZOOM_IN = 0.05, ZOOM_OUT = 3;             // distance limits, × the current scene's home distance — zoom in CLOSE (the dense core is the best frame)
 const MARGIN = 0.06;                            // safe-frame side/top margins (fraction of the viewport)
 const PAD = 0.03;                               // default breathing room around a home box (fraction of its w/h)
 export const REHOME_MS = 1100;                  // ⌂ — a hand-invoked return, a touch quicker than a scene change

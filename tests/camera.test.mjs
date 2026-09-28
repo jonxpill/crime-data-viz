@@ -4,7 +4,7 @@
  *  1. The fit is exact: a flat box touches the safe rect on its limiting axis, centred on the slack one; an
  *     off-centre (HUD-aware) rect shifts the target; a tilted, raised box stays inside (perspective-exact).
  *  2. Home = top-down, NORTH UP, EAST RIGHT (up = +Z must not flip the view), at the fitted distance.
- *  3. Limits: tilt clamps at 72° (minus the field's own lean), zoom at 0.15×–3× of the home distance.
+ *  3. Limits: tilt clamps at 72° (minus the field's own lean), zoom at 0.05×–3× of the home distance.
  *  4. A glide lands exactly at home, unwinding spin the SHORT way; a hand ('start') cancels it in place.
  */
 import assert from 'node:assert/strict';
@@ -75,11 +75,11 @@ const deg = MAX_TILT * 180 / Math.PI;
   const top = ndc(0, 314 + 628 * 0.03), bot = ndc(0, -314 - 628 * 0.03);   // PAD = 3% of h per side
   near(top.y, 1 - (2 * inset.top) / 860, 1e-4, 'box top on the safe top');
   near(bot.y, -1 + (2 * inset.bottom) / 860, 1e-4, 'box bottom on the safe bottom');
-  near(s.limits.minDist, s.homeDist * 0.15, 0.1, 'zoom-in limit'); near(s.limits.maxDist, s.homeDist * 3, 0.1, 'zoom-out limit');
+  near(s.limits.minDist, s.homeDist * 0.05, 0.1, 'zoom-in limit'); near(s.limits.maxDist, s.homeDist * 3, 0.1, 'zoom-out limit');
 
   near(cam.orbit({ tilt: 89 }).tiltDeg, deg, 0.01, 'tilt clamps at the max');
   near(cam.orbit({ dist: 1e6 }).dist, s.homeDist * 3, 0.1, 'zoom-out clamps');
-  near(cam.orbit({ dist: 1 }).dist, s.homeDist * 0.15, 0.1, 'zoom-in clamps');
+  near(cam.orbit({ dist: 1 }).dist, s.homeDist * 0.05, 0.1, 'zoom-in clamps');
   cam.orbit({ spin: 90, tilt: 0, dist: s.homeDist });
   const c = ndc(0, 0), n = ndc(0, 100);
   assert.ok(Math.abs(n.x - c.x) > Math.abs(n.y - c.y), 'a 90° spin turns north sideways (spin is about the map normal)');
