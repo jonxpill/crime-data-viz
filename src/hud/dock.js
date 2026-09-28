@@ -4,7 +4,9 @@
 //   bottom-left   THE SENTENCE — `place · crime · year · count  unlit`. The readout IS the control: every
 //                 tappable part carries a dotted underline (the affordance). A transient CAPTION above it
 //                 carries a scene's instructions (~4 s, re-shown on hover).
-//   bottom-right  THE VIEWS — words with 28×20 dot icons (icons.js masks → currentColor), `more` → popover.
+//   bottom-right  THE LIVING DOCK — nine icon-first real-data miniatures (icons.js), label beneath each;
+//                 grey at rest, white when active, alive (gather + family light) on hover, unavailable ones
+//                 FAIL TO FORM (loose scatter, dimmed label, no click).
 //   bottom edge   THE RIBBON BAR — ▶/❚❚ · the invisible hit track over the engine-drawn ribbon · years | months.
 //   top-right     the compass hit area (engine-drawn above it) + `?`.
 //
@@ -12,6 +14,7 @@
 // ONE callback, act(name, arg, el) — the same action table the keys drive. Pointer-event driven throughout;
 // popovers open on tap and close on an outside tap; no function depends on hover (hover only re-shows text).
 import { columnAt } from './light.js';
+import { LivingIcon, hexRgb } from './icons.js';
 
 export const fmtCount = (v) => Math.round(v).toLocaleString();
 /** Per-100k rates: whole numbers from 10 up, one decimal below (a small district's carjacking rate). */
@@ -127,26 +130,65 @@ export function createDock({ doc = document, act, ribbonTip = () => null } = {})
     capTimer = setTimeout(() => capShow(false), Math.max(900, left));
   });
 
-  // ---- the views ------------------------------------------------------------------------------------------
-  const viewEls = {};
+  // ---- the living dock: nine icon cells ------------------------------------------------------------------
+  // Each cell = a 2× canvas (52×36 CSS px) + its label beneath. The canvases animate only while something is
+  // changing (a shape tween, a hover gather, a state fade): one rAF loop that stops itself when all are still.
+  const cells = {};
+  let seed = 1;
   for (const b of el.views.querySelectorAll('.view')) {
-    viewEls[b.dataset.view] = b;
-    b.addEventListener('click', () => fire(b.dataset.view === 'more' ? 'more' : 'view', b.dataset.view, b));
+    const name = b.dataset.view, cv = b.querySelector('canvas');
+    const icon = new LivingIcon(cv, seed++);
+    cells[name] = { b, icon };
+    b.addEventListener('click', () => fire('view', name, b));
+    b.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') { icon.setHover(true, performance.now()); kick(); } });
+    b.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') { icon.setHover(false, performance.now()); kick(); } });
+    b.addEventListener('pointerdown', (e) => {                      // touch: the alive state plays briefly on tap
+      if (e.pointerType === 'mouse') return;
+      icon.setHover(true, performance.now()); kick();
+      clearTimeout(b._t); b._t = setTimeout(() => { icon.setHover(false, performance.now()); kick(); }, 1000);
+    });
   }
+  let colors = null, ramps = null, raf = 0;
+  function readColors() {
+    const cs = getComputedStyle(doc.documentElement);
+    colors = { text: hexRgb(cs.getPropertyValue('--hud-text')), strong: hexRgb(cs.getPropertyValue('--hud-strong')), ramps };
+  }
+  function loop(now) {
+    raf = 0;
+    if (!colors) readColors();
+    let any = false;
+    for (const { icon } of Object.values(cells)) {
+      const anim = icon.tick(now);
+      if (anim || icon.dirty) icon.draw(colors);
+      any = any || anim;
+    }
+    if (any) raf = requestAnimationFrame(loop);
+  }
+  function kick() { if (!raf) raf = requestAnimationFrame(loop); }
   function setViews({ active = '', off = {} } = {}) {
-    for (const [name, b] of Object.entries(viewEls)) {
-      b.classList.toggle('on', name === active);
-      b.classList.toggle('off', !!off[name] && name !== active);
+    const now = performance.now();
+    for (const [name, { b, icon }] of Object.entries(cells)) {
+      const isOn = name === active, isOff = !!off[name] && !isOn;
+      b.classList.toggle('on', isOn);
+      b.classList.toggle('off', isOff);
+      b.setAttribute('aria-disabled', isOff ? 'true' : 'false');
+      icon.setState({ avail: !isOff, active: isOn }, now);
     }
+    kick();
   }
-  function setIcons(urls) {
-    for (const [name, url] of Object.entries(urls)) {
-      const ico = viewEls[name] && viewEls[name].querySelector('.ico');
-      if (!ico || !url || ico._url === url) continue;
-      ico._url = url;
-      ico.style.webkitMaskImage = ico.style.maskImage = `url(${url})`;
-      ico.classList.add('ready');
-    }
+  /** A view's miniature: { frame, data, real } built by the explorer from the real layouts. */
+  function setIconModel(name, model) {
+    const c = cells[name];
+    if (!c || !model) return;
+    c.icon.setShape(model, performance.now());
+    kick();
+  }
+  /** The palette's family ramps ([[cool, mid, warm] hex] by ramp index) + a repaint of every icon. */
+  function setIconPalette(rampHexes) {
+    ramps = rampHexes ? rampHexes.map((r) => r.map(hexRgb)) : null;
+    colors = null;
+    for (const { icon } of Object.values(cells)) icon.dirty = true;
+    kick();
   }
 
   // ---- the ribbon bar: play · the scrub track · years | months --------------------------------------------
@@ -244,7 +286,7 @@ export function createDock({ doc = document, act, ribbonTip = () => null } = {})
   // ---- measurement (the layout truth the engine draws into) -----------------------------------------------
   const rectOf = (node) => { const r = node.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; };
   return {
-    setSentence, setYearText, setCountText, setCaption, setViews, setIcons, setRibbonBar, setPlaying, setCompass,
+    setSentence, setYearText, setCountText, setCaption, setViews, setIconModel, setIconPalette, setRibbonBar, setPlaying, setCompass,
     openPop, closePop, popOpen, hideTip,
     trackRect: () => rectOf(el.track),
     compassRect: () => rectOf(el.compass),

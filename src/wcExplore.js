@@ -161,6 +161,7 @@ function setPalette(name, toast = false) {
   if (!key) return null;
   paletteName = key;
   const P = applyPalette(key, { pools: palettePools(), background: DARK, document }); // DARK mutated in place (render() re-assigns it)
+  dock.setIconPalette(P.ramps);                     // the living dock's family light follows the palette too
   if (toast) paletteToast(P.label);
   return P;
 }
@@ -599,7 +600,6 @@ async function init() {
   enterFlock(true); // the page OPENS released — a nameless swarm; any key or tap lands it into the data
   lastInputAt = performance.now();
 
-  buildIcons();     // the views' dot miniatures, from the real layouts (map + terrain refresh on each landing)
   layoutHud();      // measure the dock → the engine-drawn ribbon + compass rects
   refreshHud();
   updateFlag();
@@ -1622,6 +1622,7 @@ function refreshHud(type = crimeType) {
   ribbonNow = ribbonSpec(type);
   light.setRibbon(ribbonNow);
   refreshDock();
+  scheduleIcons();   // the living dock's miniatures follow crime / year / region / mode (debounced, cached)
 }
 // Data-source credit — the help sheet's "this view" line (it used to be the ◆ flag under the chips).
 function updateFlag() {
@@ -2117,7 +2118,7 @@ const ACTIONS = {
   drillOut: () => startDrill('wc'),                       // "Western Cape" in a district
   unfocus: () => exitFocus(),                             // the district/province crumb while standing in a suburb
 };
-const FLOCK_OK = new Set(['release', 'map', 'more']);    // airborne, only the landings respond (+ help/home/scrub below)
+const FLOCK_OK = new Set(['release', 'map']);            // airborne, only the landings respond (+ help/home/scrub below)
 
 // ONE door for every dock intent (dock.js calls act(name, arg, el)).
 function dockAct(name, arg, el) {
@@ -2128,7 +2129,6 @@ function dockAct(name, arg, el) {
   if (drilling) return;                                   // input is quiet mid-transition
   const act = name === 'view' ? arg : name;
   if (flockMode && !FLOCK_OK.has(act)) return;
-  if (act === 'more') { openMore(el); return; }
   if (act === 'crimes') { openCrimes(el); return; }
   if (act === 'districts') { openDistricts(el); return; }
   const f = ACTIONS[act];
@@ -2173,15 +2173,6 @@ function openDistricts(el) {
   });
   dock.openPop(el, items, { title: `${crimeLabels[crimeType] || crimeType} · ${pulseMode ? fmtMonth(monthLabels[mi]) : yearLabels[yi]}` });
 }
-function openMore(el) {
-  const suburbOff = !focusMode && (pieMode || triPieMode || tollMode || canyonMode || forensicsMode || flockMode);
-  const releaseOff = !flockMode && (region !== 'wc' || pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode || forensicsMode);
-  dock.openPop(el, [
-    { label: 'my suburb', cur: focusMode, off: suburbOff, pick: () => dockAct('suburb') },
-    { label: 'release', cur: flockMode, off: releaseOff, pick: () => dockAct('release') },
-  ]);
-}
-
 // The help sheet (#about: the About card + Keys + Sources) — ?-opened only (the key or the button), never
 // automatic; ✕ / backdrop / Esc close it.
 const aboutEl = document.getElementById('about');
@@ -2221,21 +2212,9 @@ function layoutHud() {
 // put (dimming, never hiding — a reflowing row is worse than a grey word). Mirrors the keydown guards
 // exactly (the old chip rules, one per word); called from refreshHud so every state change repaints it.
 function refreshDock() {
-  const noDEM = !(regionData[region] && regionData[region].terrain && regionData[region].terrain.elev);
-  const off = {
-    map: false, more: false,
-    pie: triPieMode || pulseMode || tollMode || canyonMode,
-    compare: pulseMode || tollMode || canyonMode,
-    terrain: pieMode || triPieMode || tollMode || canyonMode || noDEM,
-    canyon: !canyonMode && (pieMode || triPieMode || pulseMode || terrainMode || tollMode),
-    forensics: !forensicsMode && (pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode),
-    toll: !tollMode && (region !== 'wc' || pieMode || triPieMode || pulseMode || terrainMode || canyonMode || flockMode),
-  };
-  // Whole-toolkit dims LAST, so no per-word rule above can re-light one the mode swallows.
-  if (flockMode) for (const k of Object.keys(off)) if (!FLOCK_OK.has(k)) off[k] = true;
-  if (forensicsMode) for (const k of ['pie', 'compare', 'terrain', 'canyon', 'toll']) off[k] = true;
+  const off = dockOffs();
   const active = tollMode ? 'toll' : canyonMode ? 'canyon' : forensicsMode ? 'forensics' : terrainMode ? 'terrain'
-    : triPieMode ? 'compare' : pieMode ? 'pie' : flockMode ? '' : 'map';
+    : triPieMode ? 'compare' : pieMode ? 'pie' : flockMode ? 'release' : focusMode ? 'suburb' : 'map';
   dock.setViews({ active, off });
   dock.setRibbonBar({
     playing: livePlaying(),
@@ -2246,50 +2225,146 @@ function refreshDock() {
     ncols: ribbonNow ? ribbonNow.ncols : years.length,
   });
 }
+// Which modes would no-op right now (the old chip rules, one per mode) — they FAIL TO FORM in the dock.
+function dockOffs() {
+  const noDEM = !(regionData[region] && regionData[region].terrain && regionData[region].terrain.elev);
+  const off = {
+    map: false,
+    pie: triPieMode || pulseMode || tollMode || canyonMode,
+    compare: pulseMode || tollMode || canyonMode,
+    terrain: pieMode || triPieMode || tollMode || canyonMode || noDEM,
+    canyon: !canyonMode && (pieMode || triPieMode || pulseMode || terrainMode || tollMode),
+    forensics: !forensicsMode && (pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode),
+    toll: !tollMode && (region !== 'wc' || pieMode || triPieMode || pulseMode || terrainMode || canyonMode || flockMode),
+    suburb: !focusMode && (pieMode || triPieMode || tollMode || canyonMode || forensicsMode || flockMode),
+    release: !flockMode && (region !== 'wc' || pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode || forensicsMode),
+  };
+  // Whole-toolkit rules LAST, so no per-mode rule above can re-light one the mode swallows.
+  if (flockMode) for (const k of Object.keys(off)) if (!FLOCK_OK.has(k)) off[k] = true;
+  if (forensicsMode) for (const k of ['pie', 'compare', 'terrain', 'canyon', 'toll']) off[k] = true;
+  return off;
+}
 const livePlaying = () => (tollMode ? tollPhase === 'toll' && !tollPaused : playing);
 
-// The views' dot icons — built from the REAL layouts once (pie, compare, canyon series), the map + terrain
-// re-derived for each landed region. Drawn as white masks: the CSS colours them (grey / structure-white).
-const iconUrls = {};
-function buildIcons(regionOnly = false) {
-  const b = providers[region].raw;
-  const mapL = b.layouts[crimeType][yi], ol = outlines[region];
-  iconUrls.map = ICONS.iconDataUrl(ICONS.fitIcon([
-    ...ICONS.subsampleActive(ol.positions, ol.density, 190),
-    ...ICONS.subsampleActive(mapL.positions, mapL.density, 110),
-  ]), { r: 0.5 });
-  const d = regionData[region], T = d && d.terrain;
-  let profiles = null;
-  if (T && T.elev) {                                     // a terrain slice: six raked rows through the real DEM,
-    const { w: W, h: H } = d.meta.box, peak = T.peak || 1; // across THIS region's land (its outline extents)
-    const hb = homeBoxes[region] || { minX: -W / 2, maxX: W / 2, minY: -H / 2, maxY: H / 2 };
-    profiles = [];
-    for (let r = 0; r < 6; r++) {
-      const y = hb.maxY - ((r + 0.5) / 6) * (hb.maxY - hb.minY), row = [];
-      for (let k = 0; k < 30; k++) {
-        const x = hb.minX + (k / 29) * (hb.maxX - hb.minX);
-        const gi = Math.max(0, Math.min(T.cols - 1, Math.round(((x + W / 2) / W) * (T.cols - 1))));
-        const gj = Math.max(0, Math.min(T.rows - 1, Math.round(((H / 2 - y) / H) * (T.rows - 1))));
-        const e = T.elev[gj * T.cols + gi];
-        row.push(e > 0 ? 0.08 + 0.92 * Math.sqrt(e / peak) : 0);
-      }
-      profiles.push(row);
-    }
-  } else profiles = [0, 1, 2, 3].map((r) => Array.from({ length: 30 }, (_, k) => 0.4 + 0.3 * Math.sin(k / 3 + r)));
-  iconUrls.terrain = ICONS.iconDataUrl(ICONS.ridgeIcon(profiles, { amp: 5 }), { r: 0.5 });
-  if (!regionOnly) {
-    const pb = providers.wc.raw;
-    const pie = pb.pieLayout(crimeType, yi, { cx: 0, cy: 0, R: PIE_R });
-    iconUrls.pie = ICONS.iconDataUrl(ICONS.fitIcon([...ICONS.subsampleActive(pie.positions, pie.density, 200), ...ICONS.ringPoints(PIE_R * 1.02, 44)]), { r: 0.5 });
-    const tri = pb.triPieLayout(yi, { gap: TRI_GAP, R: TRI_R });
-    iconUrls.compare = ICONS.iconDataUrl(ICONS.fitIcon(ICONS.subsampleActive(tri.positions, tri.density, 300)), { r: 0.45 });
-    const pop = regionPop('wc');                          // the canyon: robbery's real 18-year rate, raked
-    iconUrls.canyon = ICONS.iconDataUrl(ICONS.canyonIcon(pb.totals[crimeTypes[0]].map((v) => perCap(v, pop))), { r: 0.5 });
-    iconUrls.forensics = ICONS.iconDataUrl(ICONS.forensicsIcon(), { r: 0.5 });
-    iconUrls.toll = ICONS.iconDataUrl(ICONS.tollIcon(), { r: 0.5 });
-    iconUrls.more = ICONS.iconDataUrl(ICONS.moreIcon(), { r: 0.75 });
+// THE LIVING DOCK's miniatures — each icon = ~70 dots of what its view WOULD show for the current crime / year /
+// region / mode, subsampled from the REAL layouts (frame dots = structure, data dots = crime; `real: false`
+// marks an illustrative one, which brightens white on hover instead of lighting warm). Cheap models rebuild on
+// every refresh; the heavier builders (pie · compare · canyon · forensics) are cached per key and run in idle
+// time, so a year step never stalls a frame. Unavailable modes aren't built — they fail to form.
+const ICON_ORDER = ['map', 'pie', 'compare', 'terrain', 'canyon', 'forensics', 'toll', 'suburb', 'release'];
+const HEAVY_ICONS = new Set(['pie', 'compare', 'canyon', 'forensics']);
+const iconCache = new Map();               // key → model (heavy icons), a small LRU
+const iconShown = {};                      // name → the key on screen (skip identical re-sends)
+let iconTimer = 0, iconQueue = [];
+function scheduleIcons() { clearTimeout(iconTimer); iconTimer = setTimeout(refreshIcons, 140); }
+const idle = (fn) => (typeof requestIdleCallback === 'function' ? requestIdleCallback(fn, { timeout: 400 }) : setTimeout(fn, 30));
+function refreshIcons() {
+  if (!field || drilling) { if (field) scheduleIcons(); return; }   // mid-drill the region is in flux — after it lands
+  const off = dockOffs(), ty = flipping ? flipTarget : (canyonFlipTo || crimeType);
+  iconQueue = [];
+  for (const name of ICON_ORDER) {
+    if (off[name]) continue;                                         // fails to form — nothing to build
+    const key = iconKey(name, ty);
+    if (iconShown[name] === key) continue;
+    if (HEAVY_ICONS.has(name) && !iconCache.has(key)) { iconQueue.push([name, key, ty]); continue; }
+    sendIcon(name, key, ty);
   }
-  dock.setIcons(iconUrls);
+  if (iconQueue.length) idle(drainIcons);
+}
+function drainIcons() {                                              // one heavy build per idle slice
+  const job = iconQueue.shift();
+  if (!job) return;
+  const [name, key, ty] = job;
+  if (iconKey(name, flipping ? flipTarget : (canyonFlipTo || crimeType)) === key && !drilling) sendIcon(name, key, ty);
+  if (iconQueue.length) idle(drainIcons);
+}
+function sendIcon(name, key, ty) {
+  let model = iconCache.get(key);
+  if (!model) {
+    try { model = iconModel(name, ty); } catch (err) { console.warn('[dock] icon', name, err); return; }
+    if (!model) return;
+    if (HEAVY_ICONS.has(name)) { iconCache.set(key, model); if (iconCache.size > 48) iconCache.delete(iconCache.keys().next().value); }
+  }
+  iconShown[name] = key;
+  dock.setIconModel(name, model);
+}
+function iconKey(name, ty) {
+  const at = pulseMode ? 'm' + mi : 'y' + yi;
+  switch (name) {
+    case 'map': return `map|${region}|${dataMode}|${ty}|${at}`;
+    case 'pie': return `pie|${region}|${dataMode}|${ty}|${yi}`;
+    case 'compare': return `tri|${region}|${dataMode}|${yi}`;
+    case 'terrain': return `ter|${region}|${dataMode}|${ty}|${yi}`;
+    case 'canyon': return `can|${region}|${ty}`;
+    case 'forensics': return `for|${region}|${ty}`;
+    case 'toll': return 'toll';
+    case 'suburb': return `sub|${region}|${dataMode}|${ty}|${yi}|${focusMode ? focusStation : -1}`;
+    case 'release': return flockFrames ? 'rel' : 'rel0';
+    default: return name;
+  }
+}
+function iconModel(name, ty) {
+  const ramp = rampIndexOf(ty);
+  const mapL = () => (pulseMode && pulseData && ty === crimeType ? pulseData.layouts[mi] : layoutsByType[ty][yi]);
+  if (name === 'map') {                                              // the region's outline + this crime's cloud
+    const ol = outlines[region];
+    return { frame: ICONS.subsampleActive(ol.positions, ol.density, 36), data: ICONS.sampleLayout(mapL(), 46, { ramp }), real: true };
+  }
+  if (name === 'pie') {
+    const L = pieMode && pieYears && ty === crimeType ? pieYears[yi] : pieBuilder(ty, yi, { cx: 0, cy: 0, R: PIE_R });
+    return { frame: ICONS.ringPoints(PIE_R * 1.04, 18), data: ICONS.sampleLayout(L, 56, { ramp }), real: true };
+  }
+  if (name === 'compare') {                                          // six pies — each dot keeps ITS crime's family
+    const L = triPieMode && triPieYears ? triPieYears[yi] : triPieBuilder(yi, { gap: TRI_GAP, R: TRI_R });
+    return { frame: [], data: ICONS.sampleLayout(L, 72), real: true };
+  }
+  if (name === 'terrain') {                                          // a raked relief slice + the crime riding it
+    const d = regionData[region], T = d && d.terrain;
+    if (!T || !T.elev) return ICONS.terrainFallback();
+    const hb = homeBoxes[region], H = hb.maxY - hb.minY, W = hb.maxX - hb.minX;
+    const rake = { squash: 0.5, lift: H * 0.34 };                    // relief exaggerated (√height) for a 52×36 glyph
+    const lift = (x, y) => Math.sqrt(demHeightAt(x, y));
+    const frame = [];                                                // four dense ridgelines through the real DEM
+    for (let r = 0; r < 4; r++) for (let k = 0; k < 14; k++) {
+      const x = hb.minX + ((k + 0.5) / 14) * W, y = hb.maxY - ((r + 0.5) / 4) * H;
+      if (demHeightAt(x, y) > 0) frame.push(ICONS.oblique(x, y, lift(x, y), rake));
+    }
+    const data = ICONS.sampleLayout(mapL(), 28, { ramp }).map((p) => ({ ...p, ...ICONS.oblique(p.x, p.y, lift(p.x, p.y) + 0.03, rake) }));
+    return { frame, data, real: true };
+  }
+  if (name === 'canyon') {                                           // the real rate surface (this region, this crime), raked
+    const L = ty === crimeType ? canyonRates() : canyonLayout(canyonField.count, stationsByRegion[region], years, ty, regionData[region].meta.box);
+    // Its own ANCHORS (one per precinct × year cell, height = the lifted rate): four whole precinct rows,
+    // every year — ridgelines the 2020/21 valley cuts, exactly as the landform shows them.
+    const g = L.grid, rake = { squash: 0.35, lift: g.rows * g.cellH * 0.5 };
+    const rows = [...new Set(L.anchors.map((a) => a.y))].sort((a, b) => b - a);
+    const pick = new Set([0, 1, 2, 3].map((q) => rows[Math.min(rows.length - 1, Math.round(((q + 0.5) / 4) * (rows.length - 1)))]));
+    const data = L.anchors.filter((a) => pick.has(a.y)).map((a) => ({ ...ICONS.oblique(a.x, a.y, a.z, rake), d: 0.3 + 0.65 * a.z, r: ramp }));
+    return { frame: [], data, real: true };
+  }
+  if (name === 'forensics') {
+    const L = forensicsMode && lastForensics && ty === crimeType ? lastForensics : forensicsBuilder(ty);
+    return { frame: [], data: ICONS.sampleLayout(L, 70, { ramp }), real: true };
+  }
+  if (name === 'toll') return ICONS.tollMini(providers.wc.raw.totals.murder, { R: 1, ramp: rampIndexOf('murder') });
+  if (name === 'suburb') {                                           // one precinct lit, its neighbourhood dimmed
+    const sts = activeStations(), b = providers[region][dataMode];
+    let si = focusMode ? focusStation : -1;
+    if (si < 0) { let best = -1; sts.forEach((st, i) => { if ((st.pop || 0) > best) { best = st.pop || 0; si = i; } }); } // a neutral pick: the most populous
+    const st = sts[si], [b0, k] = b.slotRanges[si], L = mapL(), R = Math.max(10, st.r) * 5;
+    const near = (i) => Math.abs(L.positions[2 * i] - st.x) < R * 1.4 && Math.abs(L.positions[2 * i + 1] - st.y) < R;
+    const mine = ICONS.sampleLayout(L, 22, { ramp, keep: (i) => i >= b0 && i < b0 + k });
+    const dim = ICONS.sampleLayout(L, 44, { ramp, keep: (i) => (i < b0 || i >= b0 + k) && near(i), dScale: FOCUS_DIM });
+    const ring = ICONS.ringPoints(Math.max(9, st.r * 1.15), 8, st.x, st.y); // the beacon (structure)
+    return { frame: ring, data: [...dim, ...mine], real: true };
+  }
+  if (name === 'release') {                                          // the murmuration's first keyframe (positions only)
+    if (!flockFrames || !flockDensity) return ICONS.releaseFallback();
+    const fr = flockFrames[0].positions;
+    const pts = ICONS.sampleLayout({ positions: fr, density: flockDensity }, 70).map((p) => ({ x: p.x, y: p.y }));
+    return { frame: pts, data: [], real: false };                    // airborne positions carry no data — white, never warm
+  }
+  return null;
 }
 
 // Debug hook (region-aware).
@@ -2829,7 +2904,6 @@ function tick() {
       repoint();
       landRegion();                                  // re-seed cleanly at the landed region's map, at rest
       reseedTerrain();                               // rebuild the relief pool for the landed region ('T' shows ITS mountains)
-      buildIcons(true);                              // the map + terrain icons become THIS region's
       refreshHud();                                  // refreshes the region label + context-aware hint
 
     }

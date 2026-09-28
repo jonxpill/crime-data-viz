@@ -98,11 +98,15 @@ Sizes: S (hours) · M (a day) · L (multi-day). Tier = the agent model for execu
     SENTENCE `place · crime · year · count  unlit` — the readout IS the control (dotted underline = tappable:
     place drills out / lists the six districts, crime opens a popover with each crime's number → `flipTo`,
     year = play/pause, count = reported ⇄ per 100k with rolling numbers, `unlit` = the lens); scene
-    instructions become a transient caption (~4 s, hover re-shows). Bottom-right THE VIEWS as words with 28×20
-    dot icons derived from the real layouts (`more` → my suburb · release). Bottom edge THE YEAR RIBBON drawn by
-    the PointField engine (grey frame pool + glowing data pool on the camera; lit ∝ the place's true series,
-    normalised to its own max; left→right relight wave; 60 months in the pulse; grey in canyon/forensics/toll/
-    flock; click/drag scrubs; ▶ at the left, years | months at the right). Top-right THE COMPASS (engine-drawn,
+    instructions become a transient caption (~4 s, hover re-shows). Bottom-right THE LIVING DOCK — an
+    icon-first living dock (real-data miniatures; unavailable = fails to form): nine ~70-dot 52×36 canvases
+    (map · pie · compare · terrain · canyon · forensics · toll · my suburb · release), label beneath, grey at rest,
+    structure-white when active, on hover the dots gather from a light scatter and light in their crime family's
+    ramp (real data only — illustrative ones brighten white); an unavailable mode's dots stay loosely scattered.
+    Bottom edge THE YEAR RIBBON drawn by the PointField engine (grey frame pool + glowing data pool on the camera;
+    each year a 3-dot-wide × 12 column — a small field, not a barcode — lit ∝ the place's true series from a zero
+    baseline, normalised to its own max; left→right relight wave; 60 months in the pulse; grey in canyon/
+    forensics/toll/flock; click/drag scrubs; ▶ at the left, years | months at the right). Top-right THE COMPASS (engine-drawn,
     only away from home, tap = home) + `?` → the help sheet (About + every key + Sources). No box — a soft
     bottom shade drawn in-frame beneath the ribbon; fps only with `?debug`; cinema keeps the brand, ribbon 25 %.
   - **pass 2 — touch**: a coarse-pointer layout (one-row dock, "more" sheet, bigger targets, the canvas gestures
@@ -112,7 +116,10 @@ Sizes: S (hours) · M (a day) · L (multi-day). Tier = the agent model for execu
   > **Status 2026-09-28:** pass 1 BUILT on `polish/hud` — `src/hud/light.js` (ribbon + compass pools on the camera
   > at depth 300, where the engine's size law makes uSize = CSS px; the shade quad), `src/hud/dock.js` (the DOM:
   > sentence, views, ribbon bar, popovers — one `act()` door back into the explorer's action table),
-  > `src/hud/icons.js` (icon points → CSS masks), `tests/hud.test.mjs` in `npm test`. The DOM owns the layout;
+  > `src/hud/icons.js` (the living dock: real-data miniatures + the LivingIcon canvas renderer; heavy models —
+  > pie · compare · canyon · forensics — cached per key and built in idle time), `tests/hud.test.mjs` in `npm test`.
+  > Revision (maker, 2026-09-28): the icon-first living dock replaced "view words + `more`"; ribbon defaults
+  > from the eye pass (lit 0.74 · hot 0.97 · slot 0.035 · dot 2.6) + 3-wide columns with a fixed seeded wobble. The DOM owns the layout;
   > the engine draws into the measured rects (resize re-measures). Live eye knobs: `__viz.hud({...})`; honesty
   > probe: `__viz.hudCheck()`. Deferred: the `src/input.js` keymap table (keys still live in the explorer's
   > keydown; the dock calls the same action table), the shell. Awaiting the planner's render-and-look.

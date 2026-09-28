@@ -27,7 +27,9 @@ import { PointField } from '../engine/PointField.js';
 
 export const HUD_DEPTH = 300;          // camera-local depth — PointField sizes are uSize·300/depth → CSS px here
 export const RIBBON_ROWS = 12;
+export const RIBBON_WIDE = 3;          // each column is 3 dots wide — the ribbon reads as a small FIELD, not a barcode
 export const RIBBON_MAX_COLS = 60;     // the pulse's 60 months — both pools are sized once for it
+export const RIBBON_PER_COL = RIBBON_ROWS * RIBBON_WIDE;
 export const WAVE_STAGGER_MS = 28;     // per-column delay of a relight wave
 export const WAVE_EACH_MS = 520;       // each column's own crossing
 export const WAVE_MAX_MS = 1100;       // a long series (60 months) compresses its stagger to keep the wave ≈ 1 s
@@ -37,12 +39,14 @@ export const COMPASS_RING = 16, COMPASS_NEEDLE = 4;
 /** Live-tunable look (planner's eye: __viz.hud({...})). Densities ride the engine's own curves: structure
  *  brightness = matte·(0.32 + 4.5·d), data colour/brightness = the family ramp at d. */
 export const HUD_TUNE = {
-  slotDensity: 0.07,     // the ribbon's unlit frame slots — faint, recessive
+  slotDensity: 0.035,    // the ribbon's unlit frame slots — faint, recessive
   caretDensity: 0.42,    // the grey caret under the current column
-  litDensity: 0.40,      // a lit (data) slot
-  hotDensity: 0.92,      // the current column's lit slots — hotter (warmer ramp stop, larger, brighter)
+  litDensity: 0.74,      // a lit (data) slot — up the ramp from its cool end (0.4 read as grey on screen)
+  hotDensity: 0.97,      // the current column's lit slots — hotter (warmer ramp stop, larger, brighter)
+  subDx: 2.8,            // CSS px between a column's 3 sub-columns
+  jitter: 1.0,           // CSS px of fixed, seeded wobble per slot (0 = a strict grid)
   frameSize: 1.7,        // CSS px (at HUD_DEPTH)
-  dataSize: 2.3,         // × the engine's density size-boost (0.6 + 0.95·d)
+  dataSize: 2.6,         // × the engine's density size-boost (0.6 + 0.95·d)
   compassSize: 1.7,
   compassR: 9,           // ring radius, CSS px
   ringDensity: 0.16, needleDensity: 0.30, tipDensity: 0.62,
@@ -76,12 +80,22 @@ export function ribbonGrid(rect, ncols, rows = RIBBON_ROWS) {
   const base = rect.top + rect.height - 9;          // row 0 — the caret sits 7 px below it
   const topY = rect.top + 3;
   const pitchY = rows > 1 ? (base - topY) / (rows - 1) : 0;
+  const colX = (c) => rect.left + (clamp(c, 0, n - 1) + 0.5) * pitchX;
+  const rowY = (j) => base - j * pitchY;
+  const dx = Math.min(HUD_TUNE.subDx, pitchX / (RIBBON_WIDE + 0.5));   // 60 narrow months never overlap
+  const J = HUD_TUNE.jitter;
   return {
-    ncols: n, rows, pitchX, pitchY,
-    colX: (c) => rect.left + (clamp(c, 0, n - 1) + 0.5) * pitchX,
-    rowY: (j) => base - j * pitchY,
+    ncols: n, rows, pitchX, pitchY, colX, rowY,
     caretY: rect.top + rect.height - 2,
+    /** The slot's CSS-px position: column c, row j, sub-column k — with slot i's fixed seeded wobble (the SAME
+     *  for the frame and the data pool, so a lit dot lands exactly on its grey slot). */
+    slotXY: (c, j, k, i) => [colX(c) + (k - (RIBBON_WIDE - 1) / 2) * dx + J * slotJitter(i, 1), rowY(j) + J * 0.8 * slotJitter(i, 2)],
   };
+}
+/** Deterministic wobble in [−0.5, 0.5] for slot i (axis s) — a fixed hash, never animated. */
+export function slotJitter(i, s) {
+  const v = Math.sin(i * 12.9898 + s * 78.233) * 43758.5453;
+  return v - Math.floor(v) - 0.5;
 }
 /** Which column a client x falls in (clamped — dragging past either end holds the end column). */
 export function columnAt(rect, ncols, clientX) {
@@ -101,13 +115,14 @@ export function litColumn(v, max, rows = RIBBON_ROWS) {
 /** STRUCTURE pose: every slot of the first `ncols` columns (grey), the rest parked invisible at the right
  *  end; + one caret dot (last slot) under `cur` (hidden when cur < 0). Positions in camera-local units. */
 export function ribbonFrameLayout({ grid, cur = -1, map, maxCols = RIBBON_MAX_COLS, slotDensity = HUD_TUNE.slotDensity, caretDensity = HUD_TUNE.caretDensity }) {
-  const rows = grid.rows, n = maxCols * rows + 1;
+  const rows = grid.rows, W = RIBBON_WIDE, n = maxCols * rows * W + 1;
   const positions = new Float32Array(n * 2), density = new Float32Array(n);
   for (let c = 0; c < maxCols; c++) {
     const live = c < grid.ncols;
-    for (let j = 0; j < rows; j++) {
-      const i = c * rows + j;
-      const [x, y] = map(grid.colX(live ? c : grid.ncols - 1), grid.rowY(live ? j : 0));
+    for (let j = 0; j < rows; j++) for (let k = 0; k < W; k++) {
+      const i = (c * rows + j) * W + k;
+      const [px, py] = grid.slotXY(live ? c : grid.ncols - 1, live ? j : 0, k, i);
+      const [x, y] = map(px, py);
       positions[2 * i] = x; positions[2 * i + 1] = y;
       density[i] = live ? slotDensity : 0;
     }
@@ -122,7 +137,7 @@ export function ribbonFrameLayout({ grid, cur = -1, map, maxCols = RIBBON_MAX_CO
  *  parks at its column's BASE with density 0 (so lighting grows up from the baseline). `values` null/empty =
  *  the dark frame (nothing lit). `ramp` = the palette door's family index for the whole ribbon. */
 export function ribbonDataLayout({ grid, values = null, cur = -1, ramp = 0, map, maxCols = RIBBON_MAX_COLS, litDensity = HUD_TUNE.litDensity, hotDensity = HUD_TUNE.hotDensity }) {
-  const rows = grid.rows, n = maxCols * rows;
+  const rows = grid.rows, W = RIBBON_WIDE, n = maxCols * rows * W;
   const positions = new Float32Array(n * 2), density = new Float32Array(n);
   let max = 0;
   if (values) for (let c = 0; c < grid.ncols; c++) if (values[c] > max) max = values[c];
@@ -132,14 +147,13 @@ export function ribbonDataLayout({ grid, values = null, cur = -1, ramp = 0, map,
     const col = live && values ? litColumn(values[c], max, rows) : { full: 0, frac: 0, height: 0 };
     const d = c === cur ? hotDensity : litDensity;
     if (live) lit[c] = col.height;
-    const [bx, by] = map(grid.colX(live ? c : grid.ncols - 1), grid.rowY(0));
-    for (let j = 0; j < rows; j++) {
-      const i = c * rows + j;
-      const dj = j < col.full ? d : 0;
-      if (dj > 0) {
-        const [x, y] = map(grid.colX(c), grid.rowY(j));
-        positions[2 * i] = x; positions[2 * i + 1] = y;
-      } else { positions[2 * i] = bx; positions[2 * i + 1] = by; }
+    for (let j = 0; j < rows; j++) for (let k = 0; k < W; k++) {
+      const i = (c * rows + j) * W + k;
+      const dj = j < col.full ? d : 0;       // every sub-column of a row lights together — honest heights
+      // lit → its own slot; unlit → parked at its sub-column's BASE slot (so a lighting column grows up)
+      const [px, py] = grid.slotXY(live ? c : grid.ncols - 1, dj > 0 ? j : 0, k, dj > 0 ? i : (c * rows) * W + k);
+      const [x, y] = map(px, py);
+      positions[2 * i] = x; positions[2 * i + 1] = y;
       density[i] = dj;
     }
   }
@@ -157,12 +171,12 @@ export function waveTiming(ncols, { stagger = WAVE_STAGGER_MS, each = WAVE_EACH_
 
 /** Per-dot seed01 for a left→right wave: column c crosses at uT ≈ c/(ncols−1)·(1−w) — the engine's
  *  `lt = clamp((uT − seed01·(1−w))/w)` with ORDERED seeds (the toll's procession grammar). Parked columns
- *  (c ≥ ncols) go last. Capped below 1 because the shader takes fract(). */
-export function columnSeed01(n, rows, ncols) {
+ *  (c ≥ ncols) go last. Capped below 1 because the shader takes fract(). `perCol` = slots per column. */
+export function columnSeed01(n, perCol, ncols) {
   const s = new Float32Array(n);
   const last = Math.max(1, ncols - 1);
   for (let i = 0; i < n; i++) {
-    const c = Math.floor(i / rows);
+    const c = Math.floor(i / perCol);
     s[i] = Math.min(0.9999, c < ncols ? c / last : 0.9999);
   }
   return s;
@@ -215,8 +229,8 @@ export function compassLayout({ ring, north, cx, cy, R = HUD_TUNE.compassR, map,
 
 // ---- a pool + its own transition clock (source → target with ordered seeds) -----------------------------
 class PoolClock {
-  constructor(pool, rows) {
-    this.pool = pool; this.rows = rows;
+  constructor(pool, perCol) {
+    this.pool = pool; this.perCol = perCol;
     this.src = null; this.tgt = null;
     this.s01 = new Float32Array(pool.count);
     this.uT = 1; this.w = 1; this.start = 0; this.dur = 1; this.prog = 1; this.ease = linear;
@@ -230,7 +244,7 @@ class PoolClock {
   setOrder(ncols) {
     if (ncols === this.ncols) return;
     this.ncols = ncols;
-    const s = columnSeed01(this.pool.count, this.rows, ncols);
+    const s = columnSeed01(this.pool.count, this.perCol, ncols);
     this.s01 = s;
     const seeds = new Float32Array(s.length);
     for (let i = 0; i < s.length; i++) seeds[i] = (s[i] + this.turns[i]) * TAU;
@@ -280,10 +294,10 @@ export class LightHud {
     this.group.position.set(0, 0, -HUD_DEPTH);
     camera.add(this.group);
     if (!camera.parent) scene.add(camera);       // a camera's children only render when the camera is in the scene
-    const T = HUD_TUNE, rows = RIBBON_ROWS;
+    const T = HUD_TUNE;
 
-    this.frame = new PointField(RIBBON_MAX_COLS * rows + 1, { glow: false, size: T.frameSize });
-    this.data = new PointField(RIBBON_MAX_COLS * rows, { glow: true, size: T.dataSize });
+    this.frame = new PointField(RIBBON_MAX_COLS * RIBBON_PER_COL + 1, { glow: false, size: T.frameSize });
+    this.data = new PointField(RIBBON_MAX_COLS * RIBBON_PER_COL, { glow: true, size: T.dataSize });
     this.compass = new PointField(COMPASS_RING + COMPASS_NEEDLE, { glow: false, size: T.compassSize });
     for (const f of [this.frame, this.data, this.compass]) {
       f.setPixelRatio(pixelRatio);
@@ -298,8 +312,8 @@ export class LightHud {
     this.data.points.renderOrder = 101;         // after the shade (50) → the ribbon's light is never dimmed by it
     this.compass.points.renderOrder = 102;
     this.data.points.layers.enable(bloomLayer); // the ribbon's lit dots ARE data: they bloom like the field
-    this.frameClock = new PoolClock(this.frame, rows);
-    this.dataClock = new PoolClock(this.data, rows);
+    this.frameClock = new PoolClock(this.frame, RIBBON_PER_COL);
+    this.dataClock = new PoolClock(this.data, RIBBON_PER_COL);
     this.compass.points.visible = false;
 
     // THE SHADE — clip-space quad: no matrices, always the bottom of the frame. Colour = the scene's bg token

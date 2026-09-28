@@ -53,17 +53,19 @@
       #caption { position: absolute; left: 0; bottom: 100%; margin-bottom: 5px; white-space: nowrap;
         font-size: 11.5px; color: var(--card-text); opacity: 0; transition: opacity .7s ease; pointer-events: none; }
       #caption.show { opacity: 0.92; }
-      /* THE VIEWS — words with tiny dot icons (structure voice; the active one brightens to structure-white). */
-      #views { display: flex; align-items: flex-end; gap: 1px; }
-      .view { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; padding: 3px 5px 1px;
-        border-radius: 6px; font-size: 11px; color: var(--hud-text); transition: color .3s, opacity .3s; }
-      .view .ico { display: block; width: 28px; height: 20px; background: currentColor; opacity: 0; transition: opacity .5s;
-        -webkit-mask-size: 28px 20px; mask-size: 28px 20px; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
-      .view .ico.ready { opacity: 0.85; }   /* hidden until its dot mask exists (else: a solid grey block) */
-      .view:hover { color: var(--card-strong); }
-      .view.on { color: var(--hud-strong); }
-      .view.on .ico.ready { opacity: 1; }
-      .view.off { opacity: 0.28; pointer-events: none; }
+      /* THE LIVING DOCK — nine icon-first real-data miniatures, one fixed cell each, the label centred BENEATH.
+         Grey at rest (structure), white when active, alive on hover (src/hud/icons.js draws the canvases);
+         an unavailable mode FAILS TO FORM (scattered dots, dimmed label, no click) — never merely dimmed. */
+      #views { display: flex; align-items: flex-end; gap: 2px; }
+      #views .view { width: 62px; flex: 0 0 62px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+        padding: 2px 0 0; border-radius: 6px; color: var(--hud-text); }
+      #views .view canvas { display: block; width: 52px; height: 36px; }
+      #views .view .lbl { display: block; width: 100%; text-align: center; white-space: nowrap; overflow: hidden;
+        font-size: 11px; line-height: 13px; color: var(--hud-text); transition: color .3s, opacity .3s; }
+      #views .view:hover .lbl { color: var(--card-strong); }
+      #views .view.on .lbl { color: var(--hud-strong); }
+      #views .view.off { pointer-events: none; cursor: default; }
+      #views .view.off .lbl { opacity: 0.35; }
       /* THE RIBBON BAR — ▶ · the invisible hit track over the engine-drawn ribbon · years | months. */
       #ribbon-bar { display: flex; align-items: stretch; justify-content: center; gap: 12px; height: 44px; margin-top: 6px; }
       #rb-play { width: 22px; font-size: 10px; color: var(--hud-text); text-align: center; }
@@ -106,7 +108,7 @@
       body.quiet .hud, body.quiet #topright, body.quiet #fps, body.quiet #rb-tip { opacity: 0; }
       body.quiet .hud button, body.quiet .hud #sentence-wrap, body.quiet #rb-track, body.quiet #topright button { pointer-events: none; }
       @media (pointer: coarse) {
-        .view { padding: 5px 6px 3px; }
+        #views .view { padding-top: 4px; }
         #rb-play { width: 32px; }
       }
       @media (max-width: 760px) {
@@ -303,14 +305,15 @@
             id="count"></button><button id="lens-unlit" class="tap" aria-label="the unlit field">unlit</button></div>
         </div>
         <div id="views">
-          <button class="view" data-view="map"><span class="ico"></span>map</button>
-          <button class="view" data-view="pie"><span class="ico"></span>pie</button>
-          <button class="view" data-view="compare"><span class="ico"></span>compare</button>
-          <button class="view" data-view="terrain"><span class="ico"></span>terrain</button>
-          <button class="view" data-view="canyon"><span class="ico"></span>canyon</button>
-          <button class="view" data-view="forensics"><span class="ico"></span>forensics</button>
-          <button class="view" data-view="toll"><span class="ico"></span>toll</button>
-          <button class="view" data-view="more"><span class="ico"></span>more</button>
+          <button class="view" data-view="map"><canvas width="104" height="72"></canvas><span class="lbl">map</span></button>
+          <button class="view" data-view="pie"><canvas width="104" height="72"></canvas><span class="lbl">pie</span></button>
+          <button class="view" data-view="compare"><canvas width="104" height="72"></canvas><span class="lbl">compare</span></button>
+          <button class="view" data-view="terrain"><canvas width="104" height="72"></canvas><span class="lbl">terrain</span></button>
+          <button class="view" data-view="canyon"><canvas width="104" height="72"></canvas><span class="lbl">canyon</span></button>
+          <button class="view" data-view="forensics"><canvas width="104" height="72"></canvas><span class="lbl">forensics</span></button>
+          <button class="view" data-view="toll"><canvas width="104" height="72"></canvas><span class="lbl">toll</span></button>
+          <button class="view" data-view="suburb"><canvas width="104" height="72"></canvas><span class="lbl">my suburb</span></button>
+          <button class="view" data-view="release"><canvas width="104" height="72"></canvas><span class="lbl">release</span></button>
         </div>
       </div>
       <div id="ribbon-bar">
