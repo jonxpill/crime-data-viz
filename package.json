@@ -9,6 +9,7 @@
     "build": "vite build",
     "build:single": "SINGLE=1 vite build && node pipeline/build-single.mjs",
     "preview": "vite preview",
+    "test": "node tests/forensics.test.mjs",
     "deploy": "npm run build && npx --yes gh-pages -d dist -t -m deploy"
   },
   "devDependencies": {

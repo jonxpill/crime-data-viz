@@ -308,3 +308,9 @@ specific instruments (deferred) · where it lives / distribution · a name.
   just before one SHARED closer (a `}`, a `/**`), concatenating the sides silently drops a brace or a
   comment opener — the merge "resolves" and the file no longer parses. Parse-check every resolution before
   running it (`node --check`), and read one line past each hunk before deciding it's "keep both".
+- **Preprocessing the data moves the test's own null — recentre the statistic by the residual degrees of
+  freedom, then PIN the null with a synthetic-honest unit test.** Seasonal adjustment (fitting 12 monthly
+  means) before the dispersion test consumed 12 df; dividing the variance by n−1 instead of n−12 would have
+  centred a TRUE Poisson tally on D≈0.81, silently dragging honest stations toward the "look closer" zone —
+  an anomaly detector whose null is off-centre manufactures anomalies. The guard that caught it: a seeded
+  synthetic test asserting the honest case lands dead on the reference value (and a rigged case doesn't). (?)
