@@ -147,6 +147,21 @@ Sizes: S (hours) · M (a day) · L (multi-day). Tier = the agent model for execu
 - **X1** the director: a script of addresses (flock → province → drill Cape Town → six pies → the Toll →
   release), `?exhibit` + idle drift, chapter titles in dots, slow orbit, Toll as finale. L · opus
 
+### Round-2 additions (maker GO 2026-09-28: "go with all of them")
+From the second eye pass (brainstorm § Round 2). Folded into existing packets where they belong:
+- **H1 Height revealed by tilt** (new packet, L · opus) — top-down unchanged; tilting lifts data by its own value:
+  pie/compare wedges by count (crowns), the flat map's crime by local density (the grey land stays flat — never
+  mistakable for terrain), the Toll's years stack into an 18-layer cairn.
+- **D4 Motion** gains: aerial perspective (distance haze + near-plane fade so foreground dots never balloon over
+  the HUD) and sky roosts (surplus rises like sparks, arrivals rain in).
+- **E6 Terrain** gains: land-texture relief ghost under sparse districts (structure grey).
+- **K1 Canyon** gains: rows ordered by rate (climbs to the horizon) + a low side-angle home.
+- **K6 Toll** gains: right-drag rotation while tolling (the dial keeps left-drag) — pairs with the H1 cairn.
+- **HUD** gains: the ribbon breathes on play (arriving year flares); a stronger map icon (density heat).
+- **Exhibit (X1)** gains: idle camera drift.
+- **Palette**: whichever candidate wins, lift the contact family's warm-stop chroma so dense cores stay molten.
+- **Camera bug**: re-fit when a resize lands mid-glide.
+
 ## Execution rules
 - **Flat delegation:** each packet = a self-contained brief (goal, files, acceptance, what NOT to touch) to
   ONE agent with an explicit `model`; agents never spawn sub-agents. Parallel lanes get separate worktrees;
