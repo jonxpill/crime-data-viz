@@ -3,11 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Misdaadveld · Western Cape crime as a field of light</title>
-    <meta name="description" content="Misdaadveld (Afrikaans: 'crime field') — 18 years of Western Cape crime as one living field of light. Every dot is one reported crime; drill from the province into its districts, flip six crimes, ride the terrain, feel the monthly pulse." />
-    <meta property="og:title" content="Misdaadveld — Western Cape crime as a field of light" />
-    <meta property="og:description" content="Every glowing dot is one reported crime. 18 years, six crimes, 150 police precincts — a living point-field you drill, flip, and scrub." />
-    <meta property="og:url" content="https://jonxpill.github.io/crime-data-viz/" />
+    <title>The Toll · Western Cape × Gauteng, 2008–2026</title>
+    <meta name="description" content="The Toll, as a diptych — eighteen years of recorded murders in the Western Cape and Gauteng poured side by side on one calendar clock, one dot each, into two growing discs. A memorial in light, on the Misdaadveld point-field engine." />
+    <meta property="og:title" content="The Toll — Western Cape × Gauteng, one clock, two discs" />
+    <meta property="og:description" content="Every dot is one recorded murder. Two provinces' eighteen-year accumulations poured in step on one shared calendar, into growing rings of loss that never reset." />
+    <meta property="og:url" content="https://jonxpill.github.io/crime-data-viz/toll-diptych.html" />
     <meta property="og:type" content="website" />
     <style>
       :root { color-scheme: dark; }
@@ -52,7 +52,7 @@
       .gsep { color: #3a4456; margin: 0 7px; user-select: none; }
       .hud button.off { opacity: 0.28; pointer-events: none; }
       /* CINEMA — after a few idle seconds the chrome bows out; any input brings it back.
-         (body.quiet is driven from wcExplore; the About card pins the chrome awake.) */
+         (body.quiet is driven from the shell; the About card pins the chrome awake.) */
       .hud, #brand, #fps { transition: opacity 1.1s ease; }
       body.quiet .hud, body.quiet #brand, body.quiet #fps { opacity: 0; }
       body.quiet .hud button { pointer-events: none; }
@@ -102,66 +102,48 @@
         background: rgba(6, 8, 13, 0.6);
         backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
       }
+      /* THE READING here is PER DISC — each province's name + two figures. The view builds its own
+         elements via hud.makeFigure (no fixed #fig-* trio on this page) and positions/sizes them each
+         frame from the discs' projected world anchors. Always-on; the honesty channel. */
     </style>
   </head>
   <body>
     <div id="app"></div>
     <div id="brand">
-      <b>MISDAADVELD</b>
-      <span>Western Cape crime as a field of light</span>
+      <b>THE TOLL</b>
+      <span>Western Cape × Gauteng · recorded murders, 2008/09 – 2025/26</span>
     </div>
     <div id="about">
       <div id="about-card">
         <button id="about-close" aria-label="close">✕</button>
-        <h2>MISDAADVELD</h2>
-        <p class="tag">Afrikaans: “crime field” · Western Cape, 2008/09 – 2025/26</p>
-        <p><b style="color:#d4dcef">Every glowing dot is one reported crime.</b> Eighteen years of South African
-          Police Service records for the Western Cape — robbery, residential burglary, murder, sexual offences,
-          commercial crime and carjacking across 150 police precincts — drawn as a single living field of
-          ~180,000 points. The province, its districts, the pies, the terrain and the monthly pulse are all the
-          same dots rearranging; nothing is ever redrawn, only moved.</p>
-        <p>Glow is crime; grey is geography. Colour is local density — cool and sparse through molten and dense.
-          Click a district to bloom into it. <span class="hint" style="color:#ffce86">N</span> breathes month by
-          month, <span style="color:#ffce86">C</span> shows rates per 100k people,
-          <span style="color:#ffce86">T</span> raises the land itself.</p>
-        <p class="hon"><b style="color:#b9c4d8">Honesty notes.</b> Counts are real; positions are jittered within
-          each precinct (volume is true, street addresses are not). Raw counts largely follow population — per-capita
-          (<span style="color:#ffce86">C</span>) is the fairer read (denominators: WorldPop 2020). 2025/26 is the sum
-          of SAPS’s quarterly releases and is unaudited; the monthly series (Apr 2021 – Mar 2026) comes from the same
-          quarterlies. Stations opened after 2023 (Samora Machel, Makhaza) are folded into the older precinct
-          boundaries that contain them. Carjacking is also a subcategory of aggravated robbery, so it appears inside
-          the robbery lens too. And throughout: these are <i>reported</i> crimes — what reaches a police station, not
-          all that happens.</p>
-        <p class="src">Crime: <a href="https://doi.org/10.25828/5MAW-4H90" target="_blank" rel="noopener">SAPS Annual
-          Crime Records 2008–2023 via DataFirst (CC-BY)</a> + SAPS annual &amp; quarterly releases 2023–2026
-          (saps.gov.za). Boundaries: Western Cape Government GIS. Population: WorldPop 2020. Terrain: AWS Terrain
-          Tiles. Built on three.js with a custom GPU point-field engine — one buffer of points, every view a pure
-          layout function. By Jonx Pillemer.</p>
+        <h2>THE TOLL</h2>
+        <p class="tag">Western Cape × Gauteng · recorded murders · Apr 2008 – Mar 2026</p>
+        <p><b style="color:#d4dcef">Every dot is one recorded murder.</b> Eighteen years of South African
+          Police Service murder records for two provinces, poured side by side into two growing discs —
+          each dot leaving the year it happened, year one at the core, each year adding a ring that never
+          resets. What settles is each province's accumulated toll: <b style="color:#d4dcef">61,561</b> lives
+          in the Western Cape, <b style="color:#d4dcef">79,060</b> in Gauteng.</p>
+        <p>Both discs pour on <b style="color:#d4dcef">one calendar clock</b> — every year takes the same
+          time on both dials, so a heavy year arrives as a visible burst and the two provinces stay
+          comparable year by year. Drag either dial to scrub them together.</p>
+        <p class="hon"><b style="color:#b9c4d8">Honesty notes.</b> Counts are real, from SAPS records; each
+          disc's radius is that province's running total, so each ring's thickness is that year's loss. At
+          equal disc sizes the busier province simply burns denser — density is this piece's light. 2025/26
+          is the sum of SAPS's quarterly releases and is unaudited. These are <i>recorded</i> murders — what
+          reached a police station.</p>
+        <p class="src">Crime: <a href="https://doi.org/10.25828/5MAW-4H90" target="_blank" rel="noopener">SAPS
+          Annual Crime Records 2008–2023 via DataFirst (CC-BY)</a> + SAPS annual &amp; quarterly releases
+          2023–2026 (saps.gov.za). Built on three.js with a custom GPU point-field engine — one buffer of
+          points, every view a pure layout function. By Jonx Pillemer.</p>
       </div>
     </div>
+    <!-- Everything else is HIDEABLE chrome — gone by default, revealed on movement: a whisper of a hint, a '?', a credit. -->
     <div class="hud">
-      <div><b id="region">Western Cape</b> — <span id="crime">robbery</span> &nbsp;·&nbsp; <span id="year">—</span> &nbsp;·&nbsp; <span id="count" style="color:#8792a6;"></span></div>
-      <div id="hint" class="hint" style="margin-top:2px;">click Cape Town to zoom in</div>
-      <!-- The toolkit, grouped: TIME · LENS · VIEWS · meta. Chips DIM (never vanish — a moving row is
-           worse than a grey chip) when invalid in the current state; refreshChips() owns that. -->
-      <div id="controls">
-        <span class="grp"><button data-act="play"><span class="hint">space</span> play</button><button
-          data-act="yearPrev" class="arr"><span class="hint">&larr;</span></button><button
-          data-act="yearNext" class="arr"><span class="hint">&rarr;</span></button><span class="glabel">year</span><button
-          data-act="months"><span class="hint">N</span> months</button></span><span class="gsep">│</span><span
-        class="grp"><button data-act="crimeUp" class="arr"><span class="hint">&uarr;</span></button><button
-          data-act="crimeDown" class="arr"><span class="hint">&darr;</span></button><span class="glabel">crime</span><button
-          data-act="percapita"><span class="hint">C</span> per-capita</button></span><span class="gsep">│</span><span
-        class="grp"><button data-act="map"><span class="hint">M</span> map</button><button
-          data-act="pie"><span class="hint">P</span> pie</button><button
-          data-act="compare"><span class="hint">3</span> compare</button><button
-          data-act="terrain"><span class="hint">T</span> terrain</button><button
-          data-act="toll"><span class="hint">K</span> the toll</button></span><span class="gsep">│</span><span
-        class="grp"><button data-act="about"><span class="hint">?</span> about</button></span><span class="passive">&thinsp;<span class="hint">scroll</span> zoom&thinsp;·&thinsp;<span class="hint">drag</span> pan</span>
-      </div>
-      <div id="flag" style="color:#5e6a52; margin-top:4px;">◆ real SAPS robbery</div>
+      <div id="hint" class="hint">drag either dial to scrub · space pauses</div>
+      <div id="controls"><button data-act="about"><span class="hint">?</span> about</button></div>
+      <div id="flag" style="color:#5e6a52; margin-top:4px;">◆ SAPS crime records · DataFirst + saps.gov.za</div>
     </div>
     <div id="fps"></div>
-    <script type="module" src="/src/wcExplore.js"></script>
+    <script type="module" src="/src/tollDiptychMain.js"></script>
   </body>
 </html>

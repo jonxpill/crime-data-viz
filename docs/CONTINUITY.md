@@ -279,3 +279,10 @@ specific instruments (deferred) · where it lives / distribution · a name.
   in the parent; showing it separately needs geometry you don't have. And check whether the child recorded
   separately BEFORE your snapshot's end (Samora Machel since 2018/19) — if so, backfill its history too, or
   the series has a hole exactly where the fold begins. (?)
+- **Point a live counter at what the eye can verify.** A derived count's THRESHOLD is a truth decision,
+  not a math detail: the toll counts dots that have LANDED (lt = 1, the disc the viewer sees), because the
+  reading's mid-flight threshold (lt = 0.5) would let "this year" briefly exceed the year's real total —
+  an impossible number on screen. Choose the formula so the display can never claim more than the pixels.
+- **Sibling labels share a SIZE, never a WIDTH.** Fitting each label to one span makes type size encode
+  string length — a meaningless signal that still reads as hierarchy (GAUTENG set ~2× KWAZULU-NATAL looked
+  like the headline). Solve the shared size once from the longest label; let shorter ones end early.

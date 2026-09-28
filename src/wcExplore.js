@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointField } from './engine/PointField.js';
-import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor } from './layouts/capeTown.js';
+import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor, tollLayouts, tollFrameLayout, tollHandLayout, textLayout } from './layouts/capeTown.js';
 
 /*
  * THE APP — a Western Cape crime field you drill into Cape Town from. (Was the single-region Cape Town app
@@ -110,6 +110,7 @@ function render() {
 // ---- the ONE data pool + ONE structure pool ---------------------------------
 let field = null;          // DATA (glow). Province = all 150; a district view = its own contiguous SLICE of the field.
 let structField = null;    // STRUCTURE (grey matte). Province outline ⇄ the active district's outline. One conserved pool.
+let wordField = null; const WORD_N = 22000; // the toll's memorial WORD — a dim structure backdrop BEHIND the disc
 let COUNT = 0;             // total data slots. Field is ordered BY DISTRICT (Cape Town first); each district a slice.
 let awayAll = null;        // ALL province dots pushed out ×2.5 (density 0) — the base a district's lift() overwrites.
 let structN = 0;           // structure dot budget (the province outline's) — the shared pool's size.
@@ -199,11 +200,18 @@ const hintEl = document.getElementById('hint');
 let _lastHint = null;
 function refreshHint() {
   if (!hintEl || drilling) return;
-  const txt = terrainMode ? 'T or tap → flat map'
-    : pulseMode ? '←→ month · space play/pause · N or M → years'
-      : (pieMode || triPieMode) ? 'press M for the map'
-        : region !== 'wc' ? 'N months · T terrain · click empty space (or M) to zoom out'
-          : 'N months · T terrain · click any area to zoom in';
+  const txt = tollMode
+    ? (tollPhase === 'gather' ? 'the years are gathering…'
+      : tollPhase === 'drain' || tollPhase === 'home' ? 'the murders return to the map…'
+        : tollDone ? 'the toll stands · scrub the dial back · K returns them to the map'
+          : (tollHoldPtr || tollHoldKey) ? 'one recorded murder per second — release to resume the sweep'
+            : tollPaused ? 'paused — space resumes · drag the dial · K ends the toll'
+              : 'drag the dial to scrub · hold the disc (or 1) for one per second · space pauses · K ends the toll')
+    : terrainMode ? 'T or tap → flat map'
+      : pulseMode ? '←→ month · space play/pause · N or M → years'
+        : (pieMode || triPieMode) ? 'press M for the map'
+          : region !== 'wc' ? 'N months · T terrain · click empty space (or M) to zoom out'
+            : 'N months · T terrain · click any area to zoom in';
   if (txt !== _lastHint) { hintEl.textContent = txt; _lastHint = txt; }
 }
 
@@ -352,6 +360,17 @@ async function init() {
   structField.setMaxSize(7);
   fieldGroup.add(structField.points);
 
+  // The toll's memorial WORD: a structure pool (grey, matte, NO glow — a word is a LABEL, never a data
+  // claim) that renders BEHIND everything (renderOrder -2) so the glowing disc always sits in front of
+  // it — "sent backwards", not dimmed into submission. Hidden except during the toll ceremony.
+  wordField = new PointField(WORD_N, { glow: false, size: 1.4, matte: '#3a4656' });
+  wordField.setPixelRatio(renderer.getPixelRatio());
+  wordField.setDrift(0.0);
+  wordField.setMaxSize(6);
+  wordField.points.renderOrder = -2;
+  wordField.points.visible = false;
+  fieldGroup.add(wordField.points);
+
   // Per-dot relief height on the DATA field, filled per region by fillAZ() when terrain is on (0 at rest).
   field.points.geometry.setAttribute('aZ', new THREE.BufferAttribute(new Float32Array(COUNT), 1));
 
@@ -437,7 +456,7 @@ function startTerrainTransition(toLayout) {
 // coincident band, rise band → relief; on the way back, sink to band, then tick swaps the outline back.
 function toggleTerrain() {
   const d = regionData[region];
-  if (!d || !d.terrain || !d.terrain.elev || pieMode || triPieMode || drilling) return; // any region WITH a DEM
+  if (!d || !d.terrain || !d.terrain.elev || pieMode || triPieMode || drilling || tollMode) return; // any region WITH a DEM
   terrainMode = !terrainMode;
   if (terrainMode) {
     structField.points.visible = false;
@@ -514,7 +533,7 @@ function buildPulse() {
   return !!p;
 }
 function enterPulse() {
-  if (pulseMode || !monthLabels || !field || pieMode || triPieMode || drilling) return;
+  if (pulseMode || !monthLabels || !field || pieMode || triPieMode || drilling || tollMode) return;
   if (!buildPulse()) return;
   pulseMode = true;
   playing = true; morphStart = -1; holdUntil = performance.now();
@@ -534,6 +553,342 @@ function stepMonth(dir) {
   playing = false;
   setMonthPair(mi + dir);
 }
+
+// ---- THE TOLL — the 18-year accumulation the reading can't show (murders only) ----------------------
+// K on the province map: a thin grey YEAR-DIAL sweeps once (~75 s, scrubable — the dial IS the
+// scrubber); every recorded murder pours OUT of the dimmed map into a growing central disc — one
+// stratum ring per year, growth rings of loss — and it never resets. Press-and-hold on the disc
+// (or key 1) drops the pour to exactly ONE PER SECOND (the Reading's soul as a gesture). It is
+// ONE morph with ORDERED seeds (dot k = the k-th murder chronologically, window at uT ≈ k/M) and
+// uT driven by the dial clock; the engine never learns what a ceremony is. Counts are RAW
+// recorded murders, whatever the display mode.
+let tollMode = false, tollPhase = '';                // '' | 'gather' | 'toll' | 'drain' | 'home'
+let tollT = 0;                                       // the ceremony's uT — the dial reads/writes THIS
+let tollPaused = false, tollHoldKey = false, tollHoldPtr = false, tollScrubbing = false;
+let tollData = null;                                 // { source, disc, M, perYear, cum, seamRadii } from tollLayouts
+let tollFrame = null, tollHand = null;               // the dial structure layout + its hand slice
+let tollSeeds = null, tollSeedsSaved = null;         // ordered seeds of dot k + the randoms restored on exit
+let tollCount = -1, tollYearShown = -1, tollDone = false;
+let tollPhaseStart = 0, tollLastNow = 0, tollDrainFrom = 0, tollHandAngle = -1, tollSpinStart = 0;
+let tollHoldTimer = 0;
+const TOLL_SWEEP_MS = 75000, TOLL_GATHER_MS = 2400, TOLL_DRAIN_MS = 1400, TOLL_HOME_MS = 2000;
+const TOLL_FLIGHT_S = 1.2;                           // one dot's map→disc flight at sweep speed
+const TOLL_HOLD_MS = 350;                            // press-and-hold threshold on the disc
+let TOLL_SPIN_RATE = 0.028;                          // settled-ring spin (rad/s) ≈ 1 rev / 3.7 min — very slow, tune by eye
+// Per-dot stagger window: at sweep speed (uT/s = 1000/TOLL_SWEEP_MS) a window w is a w·75 s flight.
+const tollW = () => Math.min(0.95, TOLL_FLIGHT_S / (TOLL_SWEEP_MS / 1000));
+
+// Ceremony geometry, in the province map frame: the disc slightly below map centre, the dial
+// ring just outside it. (The plan's constants; the maker's eye owns the ratios.)
+function tollGeom() {
+  const box = regionData.wc.meta.box;
+  const R = Math.min(box.w, box.h) * 0.32;
+  return { cx: 0, cy: -box.h * 0.06, R, dialR: R * 1.16 };
+}
+
+// The memorial WORD behind the toll. Grey structure, no glow, renderOrder -2 → the disc sits in front.
+// Centred a touch ABOVE the disc (yFrac of box.h); all params live-tunable via __viz.word() by eye.
+let tollWord = 'MURDER';
+let tollWordOpts = { fontFrac: 0.14, jitter: 0.8, weight: 800, yFrac: 0.41, spanFrac: 0.46 }; // "title above" — the word crowns the dial, its base just dipping into the outer ring
+function showTollWord() {
+  if (!wordField) return;
+  if (!tollWord) { wordField.points.visible = false; return; }
+  const box = regionData.wc.meta.box;
+  const { cy } = tollGeom();
+  const o = tollWordOpts;
+  const lay = textLayout(tollWord, WORD_N, box, {
+    fontFrac: o.fontFrac, jitter: o.jitter, weight: o.weight, spanFrac: o.spanFrac,
+    cx: 0, cy: cy + o.yFrac * box.h,
+  });
+  wordField.setSource(lay); wordField.setTarget(lay); wordField.setT(1);
+  wordField.points.visible = true;
+}
+function hideTollWord() { if (wordField) wordField.points.visible = false; }
+
+// Bake the field's CURRENT on-screen pose (the vertex shader's per-dot staggered mix, minus the
+// cosmetic drift) into a plain layout, so a new morph can begin from EXACTLY what the eye sees —
+// mid-transition, any seeds, any stagger. Mirrors the shader: fract(aSeed/2π), epsilon floor, and
+// Math.fround so float32 seeds resolve the same way they do on the GPU.
+function bakeFieldPose() {
+  const g = field.points.geometry;
+  const src = g.getAttribute('aSource').array, tgt = g.getAttribute('aTarget').array;
+  const sd = g.getAttribute('aSourceDensity').array, td = g.getAttribute('aTargetDensity').array;
+  const seeds = g.getAttribute('aSeed').array;
+  const uT = field.material.uniforms.uT.value;
+  const w = Math.max(field.material.uniforms.uStagger.value, 1e-4);
+  const positions = new Float32Array(COUNT * 2), density = new Float32Array(COUNT);
+  for (let i = 0; i < COUNT; i++) {
+    const s01 = Math.fround(seeds[i] * 0.1591549431) % 1;
+    const lt = Math.min(1, Math.max(0, (uT - s01 * (1 - w)) / w));
+    positions[2 * i] = src[2 * i] + (tgt[2 * i] - src[2 * i]) * lt;
+    positions[2 * i + 1] = src[2 * i + 1] + (tgt[2 * i + 1] - src[2 * i + 1]) * lt;
+    density[i] = sd[i] + (td[i] - sd[i]) * lt;
+  }
+  return { positions, density };
+}
+
+// The counter and the disc are ONE formula: a murder is counted the moment its dot LANDS
+// (lt = 1 — the reading counted at its line, lt = 0.5; the toll has no line, so the count is the
+// dots visibly IN the disc, never more). Binary search calling the shader's own math — lt at a
+// fixed uT is non-increasing in k for ordered seeds — so the count CANNOT disagree with the
+// pixels (step-tested exact at 1,501 sweep steps, float32 seeds included).
+function tollCountAt(uT) {
+  const w = tollW();
+  let lo = 0, hi = tollData.M;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    const s01 = Math.fround(tollSeeds[mid] * 0.1591549431) % 1;
+    if ((uT - s01 * (1 - w)) / w >= 1) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+
+// The dial's two clocks reconciled: uT counts EVENTS (dot k crosses at uT ≈ k/M), the dial shows
+// CALENDAR (18 equal ticks). Mapping through the cumulative counts keeps both honest — the pour
+// runs at one constant density of loss, so the hand LINGERS through the heavy years.
+function tollYearFrac(uT) {
+  const { cum, perYear, M } = tollData;
+  const km = Math.min(uT, 1) * M;
+  let y = 0; while (y < years.length - 1 && km >= cum[y + 1]) y++;
+  const f = perYear[y] ? Math.min(1, (km - cum[y]) / perYear[y]) : 0;
+  return { y, f, frac: (y + f) / years.length };
+}
+function tollFracToT(frac) {                         // dial arc (0..1 from twelve, cw) → uT
+  const { cum, perYear, M } = tollData;
+  const yf = Math.min(Math.max(frac, 0), 1) * years.length;
+  const y = Math.min(years.length - 1, Math.floor(yf));
+  return (cum[y] + (yf - y) * perYear[y]) / M;
+}
+
+function enterToll() {
+  if (tollMode || !field || drilling || pieMorphing || flipping || pieMode || triPieMode || pulseMode || terrainMode) return;
+  if (region !== 'wc') return;                       // province-only: the toll is the WHOLE province's 18 years
+  const { cx, cy, R, dialR } = tollGeom();
+  // Province-only full-pool CEREMONY: the pool IS the province (sliceStart() = 0), and tollLayouts
+  // returns full COUNT-sized endpoints by construction — full-buffer writes at offset 0 are the
+  // correct door here (startDrill is the precedent). Raw murder counts, whatever the display mode.
+  tollData = tollLayouts(stationsByRegion.wc, { years, count: COUNT, park: awayAll.positions, cx, cy, R, dialR });
+  if (!tollData) return;                             // tollLayouts asserted loudly (M > pool)
+  playing = false; morphStart = -1;
+  tollMode = true; tollPhase = 'gather'; tollPaused = false; tollDone = false;
+  tollT = 0; tollCount = -1; tollYearShown = -1; tollHandAngle = -1;
+  tollHoldKey = tollHoldPtr = tollScrubbing = false;
+  controls.enabled = false;                          // the dial owns the pointer while tolling
+  field.setSource(bakeFieldPose());                  // from exactly what the eye sees (any crime, mid-morph)
+  field.setTarget(tollData.source);
+  field.setStagger(0.55);
+  t = 0; tollPhaseStart = performance.now();
+  tollFrame = tollFrameLayout(structN, { cx, cy, R, dialR, ticks: years.length, seamRadii: tollData.seamRadii, frameDots: pieFrameDots, thin: pieThin });
+  tollHand = tollFrame.hand;
+  structField.setSize(PIE_LINE_SIZE);
+  startStructTransition(tollFrame, TOLL_GATHER_MS, 0.6);
+  showTollWord();                                    // the memorial word appears behind the ceremony
+  refreshHud();
+}
+
+// The gather has landed: impose the ORDER (dot k's window at uT ≈ k/M), then let the dial walk.
+function beginTollClock(now) {
+  tollSeedsSaved = Float32Array.from(field.points.geometry.getAttribute('aSeed').array);
+  const seeds = Float32Array.from(tollSeedsSaved);
+  const M = tollData.M;
+  tollSeeds = new Float32Array(M);
+  for (let k = 0; k < M; k++) {
+    tollSeeds[k] = (k / M) / 0.1591549431;           // fract(seed · 1/2π) = k/M (the reading's seed math)
+    seeds[k] = tollSeeds[k];                         // event k IS pool dot k (chronological allocation)
+  }
+  field.setSeeds(seeds);
+  field.setSource(tollData.source);
+  field.setTarget(tollData.disc);
+  field.setStagger(tollW());
+  bakeTollSpin();                                     // the settled rings will turn (a real-time clock)
+  field.setSpinTime(0); field.setSpinOn(true); tollSpinStart = now;
+  tollPhase = 'toll';
+  tollT = 0; tollLastNow = now; t = 0;
+  refreshHud();
+}
+
+// Bake the ORDERED SPIN: once a year's ring has settled it turns VERY slowly, and ADJACENT rings
+// turn OPPOSITE ways (parity by year index) — a nested orrery. Onset = when dot k lands at the
+// DEFAULT sweep speed, so each ring eases from angle 0 the instant it settles; the engine gates
+// the spin by landed-ness, so scrubbing back lifts dots and stops them cleanly. Radius-preserving,
+// so it changes no year/count — ambient living-motion, like the idle drift.
+function bakeTollSpin() {
+  if (!tollData) return;
+  const M = tollData.M, rates = new Float32Array(COUNT), onsets = new Float32Array(COUNT);
+  const sweepS = TOLL_SWEEP_MS / 1000, w = tollW();
+  let yy = 0;
+  for (let k = 0; k < M; k++) {
+    while (yy < years.length - 1 && k >= tollData.cum[yy + 1]) yy++;
+    onsets[k] = ((k / M) * (1 - w) + w) * sweepS;     // seconds until this dot lands at sweep speed
+    rates[k] = TOLL_SPIN_RATE * ((yy & 1) ? -1 : 1);  // adjacent rings counter-rotate
+  }
+  field.setSpin(rates, onsets);
+  field.setSpinCentre(tollData.cx, tollData.cy);       // rotate about the DISC centre → radius invariant
+}
+
+// K/M/Esc/tap outside the dial: the pour REVERSES — a fast eased drain back into the dimmed map,
+// then the ordinary morph home to the truthful map (re-anchored via setYearPair, like the pies).
+function exitToll() {
+  if (!tollMode || tollPhase === 'drain' || tollPhase === 'home') return;
+  clearTimeout(tollHoldTimer); tollHoldPtr = false; tollScrubbing = false;
+  if (tollPhase === 'gather') {                      // no order imposed yet — morph straight home
+    field.setSource(bakeFieldPose());
+    beginTollHome();
+    return;
+  }
+  if (tollT <= 0) { field.setSource(tollData.source); beginTollHome(); return; }
+  tollDrainFrom = tollT; tollPhase = 'drain'; tollPhaseStart = performance.now();
+  refreshHud();
+}
+function beginTollHome() {
+  // At uT = 0 the pose IS the source, so restoring the random seeds is invisible here.
+  if (tollSeedsSaved) { field.setSeeds(tollSeedsSaved); tollSeedsSaved = null; }
+  field.setSpinOn(false);                            // stop the orrery BEFORE the map target lands (never spin the map)
+  hideTollWord();                                    // the memorial word leaves with the disc
+  hideTollRoll();                                    // and the ring caption goes with it
+  field.setTarget(layouts[yi]);                      // the truthful map (current crime, year yi)
+  field.setStagger(0.55);
+  t = 0; tollT = 0; tollPhase = 'home'; tollPhaseStart = performance.now();
+  structField.setSize(structDotSize);
+  startStructTransition(structRest(), TOLL_HOME_MS, 0.6);
+  controls.enabled = true;
+  refreshHud();
+}
+function tollPauseToggle() {
+  if (!tollMode || tollPhase !== 'toll') return;
+  tollPaused = !tollPaused;
+  refreshHud();
+}
+
+// The ceremony's HUD line — year under the hand · that year's running count · cumulative total.
+// Writes only when a count or the hand's year changes (called every frame while tolling).
+function updateTollHud(force = false) {
+  if (!countEl || !tollData) return;
+  const M = tollData.M;
+  const counting = tollPhase === 'toll' || tollPhase === 'drain';
+  const n = counting ? tollCountAt(tollT) : 0;
+  const { y } = tollYearFrac(counting ? tollT : 0);
+  if (!force && n === tollCount && y === tollYearShown) return;
+  tollCount = n; tollYearShown = y;
+  if (yearEl) yearEl.textContent = yearLabels[y];
+  const total = M.toLocaleString();
+  if (tollPhase === 'gather') {
+    countEl.textContent = `${total} recorded murders · Apr 2008 – Mar 2026`;
+  } else if (n >= M) {
+    countEl.textContent = `${total} recorded murders · Western Cape · Apr 2008 – Mar 2026`;
+    if (!tollDone) { tollDone = true; refreshHud(); } // the hand rests; the hint flips once
+  } else {
+    const inYear = Math.max(0, n - tollData.cum[y]); // landings lag the hand — never more than the year holds
+    countEl.textContent = `${inYear.toLocaleString()} this year · ${n.toLocaleString()} recorded murders so far`;
+    if (tollDone) { tollDone = false; refreshHud(); } // scrubbed back below complete
+  }
+}
+
+// The hand rides the dial: rewrite ONLY its slice of the structure pool (both endpoints, so the
+// pose survives the next full-buffer transition), leaving ring/ticks/seams untouched. Writing
+// into tollFrame's own arrays keeps structCurrent truthful — the exit morph starts from the
+// hand's REAL angle, not a stale twelve.
+function updateTollHand(uT) {
+  if (!tollHand || strProg < 1 || structCurrent !== tollFrame) return;
+  const angle = tollYearFrac(uT).frac * Math.PI * 2;
+  if (Math.abs(angle - tollHandAngle) < 6e-4) return;
+  tollHandAngle = angle;
+  const { cx, cy, R, dialR } = tollGeom();
+  const h = tollHandLayout(tollHand.count, { cx, cy, R, dialR, angle, thin: pieThin });
+  tollFrame.positions.set(h.positions, tollHand.start * 2);
+  tollFrame.density.set(h.density, tollHand.start);
+  const slice = {
+    positions: tollFrame.positions.subarray(tollHand.start * 2, (tollHand.start + tollHand.count) * 2),
+    density: tollFrame.density.subarray(tollHand.start, tollHand.start + tollHand.count),
+  };
+  structField.setSource(slice, tollHand.start);
+  structField.setTarget(slice, tollHand.start);
+}
+
+// Ring rollover: hover a year-stratum to name its year + that year's murder count. Structure-voiced —
+// grey, small, pointer-transparent; a memorial caption that follows the pointer over the disc.
+let tollRollEl = null;
+function tollRoll() {
+  if (!tollRollEl) {
+    tollRollEl = document.createElement('div');
+    tollRollEl.style.cssText = 'position:fixed;pointer-events:none;z-index:20;color:#8b98ac;' +
+      'font:12px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em;' +
+      'opacity:0;transition:opacity .25s';
+    app.appendChild(tollRollEl);
+  }
+  return tollRollEl;
+}
+function hideTollRoll() { if (tollRollEl) tollRollEl.style.opacity = '0'; }
+function updateTollRollover(clientX, clientY) {
+  // Only while the disc exists (not gather/home), and never mid-scrub — rollover is pure hover.
+  if (!tollMode || tollPhase === 'gather' || tollPhase === 'home' || tollScrubbing || !tollData) {
+    hideTollRoll(); return;
+  }
+  const { cx, cy } = tollGeom();                       // fieldGroup local == world here (same as the pointer grammar)
+  const p = tollWorldAt(clientX, clientY);
+  const r = Math.hypot(p.x - cx, p.y - cy);
+  if (r < tollData.r0 || r > tollData.R) { hideTollRoll(); return; }  // off the disc band → nothing to name
+  let y = 0;                                           // radius → year; the orrery spin preserves radius, so it's unaffected
+  while (y < tollData.seamRadii.length && r >= tollData.seamRadii[y]) y++;
+  const el = tollRoll();
+  el.textContent = `${yearLabels[y]} · ${tollData.perYear[y].toLocaleString()} recorded`;
+  el.style.opacity = '1';
+  const w = el.offsetWidth, h = el.offsetHeight;       // clamp so the caption never runs off the viewport edge
+  el.style.left = Math.max(8, Math.min(clientX + 14, window.innerWidth - w - 8)) + 'px';
+  el.style.top = Math.max(8, Math.min(clientY - 10, window.innerHeight - h - 8)) + 'px';
+}
+
+// ---- the dial's pointer grammar: drag the ring scrubs, hold the disc drips 1:1, tap outside exits ----
+function tollWorldAt(clientX, clientY) {             // screen → the flat map plane (z = 0 while tolling)
+  const rect = renderer.domElement.getBoundingClientRect();
+  _hv.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1, 0.5)
+    .unproject(camera);
+  const dir = _hv.sub(camera.position).normalize();
+  const k = -camera.position.z / dir.z;
+  return { x: camera.position.x + dir.x * k, y: camera.position.y + dir.y * k };
+}
+function tollScrubTo(clientX, clientY) {
+  const { cx, cy } = tollGeom();
+  const p = tollWorldAt(clientX, clientY);
+  const ang = Math.atan2(p.x - cx, p.y - cy);        // 0 at twelve, clockwise positive
+  let frac = ang / (Math.PI * 2); if (frac < 0) frac += 1;
+  const cur = tollYearFrac(tollT).frac;              // unwrap: the dial can't teleport across twelve
+  if (frac - cur > 0.5) frac -= 1;
+  if (cur - frac > 0.5) frac += 1;
+  tollT = tollFracToT(Math.min(1, Math.max(0, frac)));
+  t = tollT;
+  updateTollHud();
+}
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (!tollMode || tollPhase !== 'toll') return;
+  const { cx, cy, R, dialR } = tollGeom();
+  const p = tollWorldAt(e.clientX, e.clientY);
+  const r = Math.hypot(p.x - cx, p.y - cy);
+  if (r <= R * 1.02) {                               // the disc: press-and-hold → one per second
+    clearTimeout(tollHoldTimer);
+    tollHoldTimer = setTimeout(() => { tollHoldPtr = true; refreshHud(); }, TOLL_HOLD_MS);
+  } else if (r <= dialR * 1.3) {                     // the ring: the dial IS the scrubber
+    tollScrubbing = true;
+    tollScrubTo(e.clientX, e.clientY);
+  }
+});
+window.addEventListener('pointermove', (e) => {
+  if (tollScrubbing) tollScrubTo(e.clientX, e.clientY);
+  updateTollRollover(e.clientX, e.clientY);           // pure hover — name the ring under the pointer
+});
+window.addEventListener('pointerup', (e) => {
+  if (!tollMode) return;
+  clearTimeout(tollHoldTimer);
+  const wasHolding = tollHoldPtr, wasScrubbing = tollScrubbing;
+  if (tollHoldPtr) { tollHoldPtr = false; refreshHud(); }
+  tollScrubbing = false;
+  // a quick tap OUTSIDE the dial ends the toll (the drill's tap-to-leave grammar)
+  if (wasHolding || wasScrubbing) return;
+  if (Math.hypot(e.clientX - _downX, e.clientY - _downY) > 6) return;
+  const { cx, cy, dialR } = tollGeom();
+  const p = tollWorldAt(e.clientX, e.clientY);
+  if (Math.hypot(p.x - cx, p.y - cy) > dialR * 1.3) exitToll();
+});
 
 // ---- year-scrub control -----------------------------------------------------
 function setYearPair(i) {
@@ -618,6 +973,11 @@ function refreshHud(type = crimeType) {
   if (regionEl) regionEl.textContent = (REGION_META[region] || REGION_META.wc).name;
   refreshHint();
   refreshChips();
+  if (tollMode) {
+    if (crimeEl) crimeEl.textContent = 'murder · the toll';
+    updateTollHud(true); // the dial clock owns yearEl + countEl
+    return;
+  }
   if (triPieMode) {
     if (crimeEl) crimeEl.textContent = `all ${crimeTypes.length} crimes` + (rate ? ' · per capita' : '');
     if (yearEl) yearEl.textContent = yearLabels[yi];
@@ -750,6 +1110,7 @@ function resolveTriToPie(ci) {
 
 // The `M` key: from a pie/3-pie → swarm home to the map. On the Cape Town map → drill back out.
 function goToMap() {
+  if (tollMode) { exitToll(); return; }         // the toll drains home first
   if (terrainMode) { toggleTerrain(); return; } // terrain → flat first (then M again exits pulse / drills out)
   if (pulseMode) { exitPulse(); return; }       // pulse → back to the years
   if (triPieMode) { toggleTriPie(); return; }
@@ -772,7 +1133,7 @@ function goToMap() {
 // STRUCTURE: the province outline reconfigures into Cape Town's outline. Nothing fades except the rural
 // crime that genuinely has no detail to zoom into; the lens never moves.
 function startDrill(to) {
-  if (drilling || to === region || pieMode || triPieMode) return;
+  if (drilling || to === region || pieMode || triPieMode || tollMode) return;
   if (pulseMode) { pulseMode = false; playing = false; updateFlag(); } // drill flies on the YEARLY field (liveMap below); land re-seeds yearly
   if (terrainMode) { // never drill mid-relief — snap flat first (normal input exits terrain before this)
     terrainMode = false; zScaleCur = 0; tiltCur = 0; fieldGroup.rotation.x = 0; trProg = 1;
@@ -797,6 +1158,12 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === '?' || e.code === 'Slash') { e.preventDefault(); toggleAbout(); return; } // ? opens the card from ANY state
+  if (tollMode) { // the toll swallows the toolkit: space pauses, 1 holds the 1:1 drip, K/M/Esc end it
+    if (e.code === 'Space') { e.preventDefault(); tollPauseToggle(); }
+    else if (e.code === 'Digit1') { e.preventDefault(); if (!tollHoldKey) { tollHoldKey = true; refreshHud(); } }
+    else if (e.code === 'KeyK' || e.code === 'KeyM' || e.code === 'Escape') { e.preventDefault(); exitToll(); }
+    return;
+  }
   if (drilling) return; // input is quiet mid-transition
   if (pulseMode) { // the pulse has its own clock: arrows step months, N/M return to years
     if (e.code === 'KeyN' || e.code === 'KeyM') { e.preventDefault(); exitPulse(); }
@@ -810,6 +1177,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (e.code === 'KeyN') { e.preventDefault(); enterPulse(); return; }
+  if (e.code === 'KeyK') { e.preventDefault(); enterToll(); return; } // province flat map only (guards itself)
   if (e.code === 'KeyC') { e.preventDefault(); toggleMode(); return; }
   if (e.code === 'Digit3') { e.preventDefault(); toggleTriPie(); return; }
   if (triPieMode) {
@@ -827,12 +1195,15 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
   else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); } // Cape Town relief (no-op in the province)
 });
+window.addEventListener('keyup', (e) => { // release the toll's 1:1 hold
+  if (e.code === 'Digit1' && tollHoldKey) { tollHoldKey = false; if (tollMode) refreshHud(); }
+});
 
 // HUD chips → the SAME actions as the keys (touch parity: on a phone the keyboard toolkit doesn't
 // exist). Guards mirror the keydown handler exactly: input is quiet mid-drill, and the 3-pie only
 // listens to map/year/compare/per-capita. Blur after click so a focused chip can't re-fire on Space.
 const CHIP_ACTIONS = {
-  play: () => { if (triPieMode) return; playing = !playing; if (playing) { holdUntil = performance.now(); if (pulseMode) morphStart = -1; else if (pieMode) setYearPair(yi); } },
+  play: () => { if (triPieMode) return; if (tollMode) { tollPauseToggle(); return; } playing = !playing; if (playing) { holdUntil = performance.now(); if (pulseMode) morphStart = -1; else if (pieMode) setYearPair(yi); } },
   yearPrev: () => (pulseMode ? stepMonth(-1) : stepYear(-1)),
   yearNext: () => (pulseMode ? stepMonth(1) : stepYear(1)),
   crimeUp: () => { if (triPieMode) return; flipCrime(1); },
@@ -843,6 +1214,7 @@ const CHIP_ACTIONS = {
   percapita: () => toggleMode(),
   terrain: () => toggleTerrain(), // guards itself (needs a loaded DEM, no pies, no drill)
   months: () => (pulseMode ? exitPulse() : enterPulse()),
+  toll: () => (tollMode ? exitToll() : enterToll()),
   about: () => toggleAbout(),
 };
 
@@ -865,7 +1237,8 @@ for (const ev of ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart'
 }
 setInterval(() => {
   const asleep = performance.now() - chromeLastActive > CHROME_IDLE_MS
-    && !(aboutEl && aboutEl.classList.contains('open'));
+    && !(aboutEl && aboutEl.classList.contains('open'))
+    && !tollMode; // the counter is the toll's honesty channel — the chrome stays awake
   document.body.classList.toggle('quiet', asleep);
 }, 500);
 const chipEls = {};
@@ -883,11 +1256,16 @@ for (const el of document.querySelectorAll('.hud [data-act]')) {
 function refreshChips() {
   const off = (act, is) => { const el = chipEls[act]; if (el) el.classList.toggle('off', !!is); };
   off('play', triPieMode);
-  off('months', pieMode || triPieMode || !monthLabels);
-  off('crimeUp', triPieMode); off('crimeDown', triPieMode);
-  off('pie', triPieMode || pulseMode);
-  off('compare', pulseMode);
-  off('terrain', pieMode || triPieMode || !(regionData[region] && regionData[region].terrain && regionData[region].terrain.elev));
+  // The toll dims the whole toolkit except play (= pause), map (= end), about — months would
+  // have to exit first anyway, so it dims with the rest. Everything mirrors the keydown swallow.
+  off('yearPrev', tollMode); off('yearNext', tollMode);
+  off('percapita', tollMode);
+  off('months', pieMode || triPieMode || !monthLabels || tollMode);
+  off('crimeUp', triPieMode || tollMode); off('crimeDown', triPieMode || tollMode);
+  off('pie', triPieMode || pulseMode || tollMode);
+  off('compare', pulseMode || tollMode);
+  off('terrain', pieMode || triPieMode || tollMode || !(regionData[region] && regionData[region].terrain && regionData[region].terrain.elev));
+  off('toll', !tollMode && (region !== 'wc' || pieMode || triPieMode || pulseMode || terrainMode));
 }
 
 // Debug hook (region-aware).
@@ -906,6 +1284,29 @@ window.__viz = {
     return { pulseMode, month: monthLabels && monthLabels[mi], total: pulseData && pulseData.totals[mi] };
   },
   t: (v) => { playing = false; t = v; },
+  toll: (p) => { // debug: enter the toll; toll(p) fast-forwards the gather and scrubs to uT = p
+    if (!tollMode) enterToll();
+    if (!tollMode) return 'toll unavailable here (province flat map only)';
+    if (typeof p === 'number') {
+      if (tollPhase === 'gather') beginTollClock(performance.now());
+      tollT = Math.min(Math.max(p, 0), 1); t = tollT;
+      updateTollHud(true);
+    }
+    const counting = tollPhase === 'toll' || tollPhase === 'drain';
+    return { phase: tollPhase, M: tollData.M, count: counting ? tollCountAt(tollT) : 0,
+      tollT, year: yearLabels[tollYearFrac(counting ? tollT : 0).y], paused: tollPaused, spinRate: TOLL_SPIN_RATE };
+  },
+  tollSpin: (rate) => { // debug: live-tune the settled-ring spin rate (rad/s); re-bakes if tolling
+    if (typeof rate === 'number') { TOLL_SPIN_RATE = rate; if (tollMode && tollData) bakeTollSpin(); }
+    return { spinRate: TOLL_SPIN_RATE, revSeconds: TOLL_SPIN_RATE ? (2 * Math.PI / Math.abs(TOLL_SPIN_RATE)).toFixed(0) : Infinity };
+  },
+  word: (w, opts) => { // live-tune the toll's memorial backdrop word. word('') hides; opts: {fontFrac,jitter,weight,yFrac,spanFrac}
+    if (typeof w === 'string') tollWord = w;
+    if (opts) Object.assign(tollWordOpts, opts);
+    if (tollMode) showTollWord();
+    if (wordField && (opts && opts.matte)) wordField.material.uniforms.uMatte.value.set(opts.matte);
+    return { word: tollWord, ...tollWordOpts, matte: '#' + (wordField ? wordField.material.uniforms.uMatte.value.getHexString() : '') };
+  },
   flip: () => flipCrime(1),
   drift: (px) => field && field.setDrift(px),
   driftSpeed: (m) => field && field.setDriftSpeed(m),
@@ -1009,6 +1410,7 @@ function hoverPrecinct(clientX, clientY) {
 }
 let mouseX = null, mouseY = null;
 function updateTooltip() {
+  if (tollMode) { tip.style.opacity = '0'; return; } // the tooltip sleeps during the ceremony
   if (mouseX == null) return;
   const si = hoverPrecinct(mouseX, mouseY);
   if (si < 0) { tip.style.opacity = '0'; return; }
@@ -1062,7 +1464,7 @@ function buildLabelSpecs() {
 }
 const _lv = new THREE.Vector3();
 function updateLabels() {
-  const show = !drilling && !pieMode && !triPieMode && !terrainMode && strProg >= 1 && trProg >= 1;
+  const show = !drilling && !pieMode && !triPieMode && !terrainMode && !tollMode && strProg >= 1 && trProg >= 1;
   labelLayer.style.opacity = show ? '1' : '0';
   if (!show) return;
   if (labelsRegion !== region) buildLabelSpecs();
@@ -1091,7 +1493,7 @@ function updateLabels() {
 let _downX = 0, _downY = 0;
 renderer.domElement.addEventListener('pointerdown', (e) => { _downX = e.clientX; _downY = e.clientY; });
 renderer.domElement.addEventListener('pointerup', (e) => {
-  if (drilling) return;
+  if (drilling || tollMode) return; // the toll's own pointer grammar owns taps while tolling
   if (Math.hypot(e.clientX - _downX, e.clientY - _downY) > 6) return; // a drag (pan), not a click
   if (triPieMode && lastTriPie) {
     const rect = renderer.domElement.getBoundingClientRect();
@@ -1203,6 +1605,42 @@ function tick() {
       setYearPair(yi);
       morphStart = -1;
       holdUntil = now + HOLD_MS;
+    }
+  } else if (tollMode) {
+    if (tollPhase === 'gather') {                    // map → the dimmed 18-year murder map (random seeds)
+      const p = Math.min((now - tollPhaseStart) / TOLL_GATHER_MS, 1);
+      t = swarmEase(p);
+      if (p >= 1) beginTollClock(now);
+    } else if (tollPhase === 'toll') {               // the dial clock: sweep rate, or the 1:1 drip on hold
+      const dt = (now - tollLastNow) / 1000;
+      tollLastNow = now;
+      field.setSpinTime((now - tollSpinStart) / 1000); // real time — the settled disc turns even when paused/complete
+      if (!tollPaused && !tollScrubbing && tollT < 1) {
+        const rate = (tollHoldPtr || tollHoldKey)
+          ? (1 - tollW()) / tollData.M               // exactly one landing per second (seed spacing)
+          : 1000 / TOLL_SWEEP_MS;                    // the ~75 s sweep
+        tollT = Math.min(1, tollT + dt * rate);
+      }
+      t = tollT;
+      updateTollHud();
+      updateTollHand(tollT);
+    } else if (tollPhase === 'drain') {              // the pour reverses — fast, eased, ordered seeds still on
+      const p = Math.min((now - tollPhaseStart) / TOLL_DRAIN_MS, 1);
+      field.setSpinTime((now - tollSpinStart) / 1000); // still-landed dots keep turning; lifting dots stop (gate)
+      tollT = tollDrainFrom * (1 - drillEase(p));
+      t = tollT;
+      updateTollHud();
+      updateTollHand(tollT);
+      if (p >= 1) beginTollHome();
+    } else {                                         // 'home' — the dots morph gently back to the truthful map
+      const p = Math.min((now - tollPhaseStart) / TOLL_HOME_MS, 1);
+      t = swarmEase(p);
+      if (p >= 1) {
+        tollMode = false; tollPhase = '';
+        tollData = null; tollFrame = null; tollHand = null; tollSeeds = null;
+        setYearPair(yi);                             // re-anchor the year pair cleanly, at rest (playing stays off)
+        refreshHud();
+      }
     }
   } else if (playing) {
     const MS = pulseMode ? PULSE_MS : YEAR_MS, HOLD = pulseMode ? PULSE_HOLD : HOLD_MS;
