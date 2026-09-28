@@ -102,6 +102,19 @@
         background: rgba(6, 8, 13, 0.6);
         backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
       }
+
+      /* The unlit legend chip — the estimate's on-screen declaration, shown only while U is active.
+         Violet-voiced (the third role's hue), quiet, and it MUST carry the sexoff floor caveat. */
+      #unlit-chip {
+        position: fixed; right: 14px; top: 44px; z-index: 10; display: none;
+        max-width: 340px; text-align: right;
+        font: 11.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; color: #9c8fc0;
+        padding: 7px 11px; border-radius: 8px;
+        background: rgba(8, 7, 14, 0.66); border: 1px solid rgba(150, 130, 190, 0.16);
+        backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+        pointer-events: none; user-select: none;
+      }
+      #unlit-chip b { font-weight: 500; }
     </style>
   </head>
   <body>
@@ -132,11 +145,23 @@
           boundaries that contain them. Carjacking is also a subcategory of aggravated robbery, so it appears inside
           the robbery lens too. And throughout: these are <i>reported</i> crimes — what reaches a police station, not
           all that happens.</p>
+        <p class="hon"><b style="color:#b9c4d8">The unlit field (<span style="color:#ffce86">U</span>).</b> On any map
+          view, <span style="color:#ffce86">U</span> condenses a second population out of the dark: slate-violet dots
+          that never glow — an <i>estimate</i> of the crimes that never reached a police station. Per precinct-year it
+          draws R×(1−r)/r unlit dots beside the R reported ones, where r is the national reporting rate from Stats SA's
+          Governance, Public Safety and Justice Survey (GPSJS 2024/25, cross-checked against 2023/24): housebreaking
+          43,4% · street robbery 36,3% · sexual offences 56,3% · hijacking 76,8%. The rate is national and applied
+          uniformly — the true geography of underreporting is unknown, so the estimate carries the reported field's
+          shape by construction. Sexual offences are a <b>floor</b>: surveys themselves under-capture them, so the true
+          unlit count is higher than drawn. Murder (near-fully recorded) and commercial crime (outside household
+          surveys) get no estimate — excluded, never guessed.</p>
         <p class="src">Crime: <a href="https://doi.org/10.25828/5MAW-4H90" target="_blank" rel="noopener">SAPS Annual
           Crime Records 2008–2023 via DataFirst (CC-BY)</a> + SAPS annual &amp; quarterly releases 2023–2026
           (saps.gov.za). Boundaries: Western Cape Government GIS. Population: WorldPop 2020. Terrain: AWS Terrain
-          Tiles. Built on three.js with a custom GPU point-field engine — one buffer of points, every view a pure
-          layout function. By Jonx Pillemer.</p>
+          Tiles. Reporting rates: <a href="https://www.statssa.gov.za/publications/P0341/P03412025.pdf" target="_blank"
+          rel="noopener">Stats SA GPSJS 2024/25 (P0341)</a> cross-checked against the GPSJS 2023/24 release. Built on
+          three.js with a custom GPU point-field engine — one buffer of points, every view a pure layout function. By
+          Jonx Pillemer.</p>
       </div>
     </div>
     <div class="hud">
@@ -151,7 +176,8 @@
           data-act="months"><span class="hint">N</span> months</button></span><span class="gsep">│</span><span
         class="grp"><button data-act="crimeUp" class="arr"><span class="hint">&uarr;</span></button><button
           data-act="crimeDown" class="arr"><span class="hint">&darr;</span></button><span class="glabel">crime</span><button
-          data-act="percapita"><span class="hint">C</span> per-capita</button></span><span class="gsep">│</span><span
+          data-act="percapita"><span class="hint">C</span> per-capita</button><button
+          data-act="unlit"><span class="hint">U</span> unlit</button></span><span class="gsep">│</span><span
         class="grp"><button data-act="map"><span class="hint">M</span> map</button><button
           data-act="pie"><span class="hint">P</span> pie</button><button
           data-act="compare"><span class="hint">3</span> compare</button><button
@@ -162,6 +188,7 @@
       </div>
       <div id="flag" style="color:#5e6a52; margin-top:4px;">◆ real SAPS robbery</div>
     </div>
+    <div id="unlit-chip"></div>
     <div id="fps"></div>
     <script type="module" src="/src/wcExplore.js"></script>
   </body>

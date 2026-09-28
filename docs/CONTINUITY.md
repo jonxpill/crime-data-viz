@@ -291,3 +291,6 @@ specific instruments (deferred) · where it lives / distribution · a name.
   crime flip hides that snap by sinking the surface flat (zScale→0), swapping the landform at zero height,
   and rising as the new crime — the constraint becomes the choreography. Generalises: mask any
   non-interpolable state change at the moment its visual weight is zero. (?)
+- **When a primary source blocks robots, pull the exact document from the Internet Archive rather than
+  settling for secondary quotes** — a citation must point at the real table (statssa.gov.za sits behind
+  Incapsula; web.archive.org served both GPSJS PDFs intact, rates then read to the digit).
