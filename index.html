@@ -19,6 +19,7 @@
         --card-text: #a8b2c6; --card-head: #e6ebf5; --card-dim: #93a0b5; --card-strong: #b9c4d8; --fig: #5a6377;
       }
       html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
+      body { font-family: ui-monospace, "SF Mono", Menlo, monospace; } /* the chrome's one voice — nothing may fall back to serif */
       #app { position: fixed; inset: 0; }
       canvas { display: block; }
 
@@ -98,7 +99,8 @@
       /* THE VIEWS — nine icon-first real-data miniatures (src/hud/icons.js draws the canvases), one fixed cell
          each, label beneath. Grey at rest, white when active, alive on hover, a slow pulse while a queued
          navigation waits; FAILS TO FORM only when truly impossible (the tip says why). */
-      #views { position: fixed; z-index: 11; display: flex; gap: 2px; pointer-events: auto; }
+      #views { position: fixed; z-index: 11; display: flex; gap: 2px; pointer-events: auto;
+        font: 12px/1.3 ui-monospace, "SF Mono", Menlo, monospace; } /* its own font: it sits outside every font-setting ancestor */
       body.layout-bottom #views { left: 50%; transform: translateX(-50%); bottom: 8px; flex-direction: row; align-items: flex-end; }
       @media (max-width: 700px) { body.layout-bottom #views { flex-wrap: wrap; justify-content: center; width: calc(5 * 70px); } }
       body.layout-rail #views { right: 0; top: 50%; transform: translateY(-50%); width: var(--rail-w); flex-direction: column; align-items: center; gap: 6px; }

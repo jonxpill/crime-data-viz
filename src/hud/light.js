@@ -347,8 +347,10 @@ export class LightHud {
           float up = p.y - uBand;                                           // soft ground under the ribbon
           float ground = (up > 0.0 && p.x < railX) ? uGround * (1.0 - smoothstep(0.0, uGroundH, up)) : 0.0;
           vec2 q = vec2(p.x, uView.y - p.y);                                // the readout rect (top-left origin)
-          vec2 d = max(uRead.xy - q, q - uRead.zw);
-          float read = uRead.z > uRead.x ? uReadA * (1.0 - smoothstep(0.0, 30.0, length(max(d, 0.0)))) : 0.0;
+          // a corner VIGNETTE anchored at the page's top-left, reaching past the readout — darkest behind the
+          // text, fading diagonally with no straight edge (a feathered rect still read as a box on the field)
+          vec2 e = q / max(uRead.zw + vec2(60.0, 36.0), vec2(1.0));
+          float read = uRead.z > uRead.x ? uReadA * (1.0 - smoothstep(0.30, 1.0, length(e * vec2(0.85, 1.0)))) : 0.0;
           float a = max(max(glass, ground), read) * uOpacity;
           gl_FragColor = vec4(uColor + vec3(uLift), a);
         }`,
