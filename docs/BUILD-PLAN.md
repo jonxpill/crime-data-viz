@@ -275,3 +275,18 @@ press-and-hold = 1:1 (the Reading's soul as a gesture); scrub the dial both ways
 ordered-seed mechanism (setSeeds replicated identically). Whether it REPLACES the Reading is decided
 after the maker sees it. National variant (~430–470k dots, needs a national murder-totals bake) is
 explicitly deferred until the WC version has been felt.
+**⬆ Built (2026-07-13→15, docs caught up 2026-09-28):** `feat/toll` landed the WC Toll in the explorer (`K`:
+spiral pour, growth rings, the settled disc turns as an orrery, MURDER in grey dots, hover a ring for its
+year). `feat/standalone-shell` then extracted a reusable stage + HUD + view registry (`src/stage.js`,
+`src/hud.js`, `src/views/`) so the Toll runs as its own pages — `toll.html` (WC 61,561) · `toll-gauteng.html`
+(79,060) · `toll-kzn.html` (83,435) · `toll-diptych.html` · `toll-triptych.html` (one calendar clock, three
+discs; S cycles sizing, W flips word mode). 2026-09-28: province names now spelled in the word's dots at one
+shared size (maker: keeper). Still open: per-capita flip, default sizing, narrow-window clipping.
+
+## Stage — The Polish Program (planned 2026-09-28, GO: all 30 ideas)
+[plan](plans/polish-program.md) · [brainstorm](brainstorms/2026-09-28-polish-brainstorm.md). A full eye pass
+over every surface → 30 tweak/transition/UI ideas, all GO'd, plus a **controllable camera** (orbit/pan/zoom;
+scenes re-home it — replaces "camera dead still") and a **richer palette** (data ramps by SAPS crime family,
+structure colours by role). Waves: **0** merge the keepers (toll/shell, canyon, unlit, flock, suburb;
+forensics after its wording gate; reading/ember/loom stay parked) → **1** doors (camera · palette · address ·
+motion · input+dock) → **2** explorer polish → **3** keepers polish → **4** exhibit mode.
