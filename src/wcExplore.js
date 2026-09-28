@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointField } from './engine/PointField.js';
-import { loadCapeTown, buildCrimeLayouts, buildUnlitLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor, tollLayouts, tollFrameLayout, tollHandLayout, textLayout, canyonLayout, canyonFrameLayout, flockLayouts } from './layouts/capeTown.js';
+import { loadCapeTown, buildCrimeLayouts, buildUnlitLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor, tollLayouts, tollFrameLayout, tollHandLayout, textLayout, canyonLayout, canyonFrameLayout, flockLayouts, personGridLayout, suburbCaptionLine } from './layouts/capeTown.js';
 import RATES from '../data/vocs-reporting.json'; // GPSJS reporting rates + citations — bundled, so the offline single-file build needs no fetch
 
 /*
@@ -157,6 +157,22 @@ let pulseMode = false, mi = 0, pulseData = null, monthLabels = null;
 const PULSE_MS = 480, PULSE_HOLD = 70; // month crossing + hold → ~1.8 months/sec, full sweep ≈ 33s (maker-tuned: calmer)
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const fmtMonth = (label) => { const [y, m] = label.split('-'); return `${MONTH_NAMES[+m - 1]} ${y}`; };
+// ---- FOCUS (stand in your suburb, H) — one precinct lit, the rest of the field dimmed --------------
+// Mirrors the pulse's mode grammar (enter/exit through the same at-rest machinery), but the dimming is
+// a pure density post-pass (focusLayout) riding EVERY door write — so year scrubs, crime flips and
+// per-capita all stay focused for free. Exits: H, Esc, M; drills/pulse/pies exit focus first (snap,
+// the drill-from-pulse precedent). Never composes with the pulse or the pies.
+let focusMode = false, focusStation = -1;   // index into activeStations() (== the build's slotRanges)
+const FOCUS_DIM = 0.12;                     // every OTHER station's density ×0.12 — dim, never hidden
+let focusScratch = null, focusPing = 0;     // two COUNT-sized density buffers (a door write needs src+tgt)
+let beaconField = null;                     // small structure-voiced ring marking the focused station
+const BEACON_N = 420;
+// "One in Forty-Three" — the focused precinct's POPULATION stands up as a rough grey grid among the
+// year's crime dots. 1 grey dot = 100 residents, DECLARED on screen (the caption); STRUCTURE-voiced
+// (matte, no glow — people are scale, never crime). Auto-shown on focus; J hides it if it fights the eye.
+let peopleField = null, peopleOn = true, PEOPLE_N = 0;
+const PEOPLE_PER_DOT = 100;
+let plStart = 0, plProg = 1;                // the stand-up morph's clock (collapsed → grid)
 let morphStart = -1;
 const YEAR_MS = 2200, HOLD_MS = 450;
 let holdUntil = 0;
@@ -245,6 +261,7 @@ function refreshHint() {
     : canyonMode ? 'a surface of rates — height is the data · ↑↓ crime · V or tap → flat map'
     : terrainMode ? 'T or tap → flat map'
       : pulseMode ? '←→ month · space play/pause · N or M → years'
+      : focusMode ? '←→ year · scroll in close · J neighbours · H or Esc lets go'
         : (pieMode || triPieMode) ? 'press M for the map'
           : region !== 'wc' ? 'N months · T terrain · click empty space (or M) to zoom out'
             : 'N months · T terrain · click any area to zoom in';
@@ -297,10 +314,24 @@ const structRest = () => outlines[region] || outlines.wc;
 // door makes the offset explicit. Boundary crossings (landRegion, startDrill) still write the FULL
 // buffer via lift()/liveMap().
 const sliceStart = () => (region === 'wc' ? 0 : slices[region][0]);
+// While focused, the door itself applies the dim post-pass — one hook, every at-rest write covered.
 function setDataPair(src, tgt) {
   const o = sliceStart();
-  field.setSource(src, o);
-  field.setTarget(tgt, o);
+  field.setSource(focusMode ? focusLayout(src) : src, o);
+  field.setTarget(focusMode ? focusLayout(tgt) : tgt, o);
+}
+// Pure post-pass for the focus dim: same positions, every OTHER station's densities ×factor. Takes any
+// region-sized layout (the door's slice offset decides WHERE it lands in the shared field, so station
+// slot ranges stay build-local). Ping-pongs two pre-allocated scratch buffers — one door write dims
+// src AND tgt, and they must not alias.
+function focusLayout(layout, si = focusStation, factor = FOCUS_DIM) {
+  if (!focusScratch) focusScratch = [new Float32Array(COUNT), new Float32Array(COUNT)];
+  const den = focusScratch[(focusPing ^= 1)];
+  const n = layout.density.length;
+  const [b0, k] = providers[region][dataMode].slotRanges[si];
+  for (let i = 0; i < n; i++) den[i] = layout.density[i] * factor;
+  for (let i = b0, e = b0 + k; i < e; i++) den[i] = layout.density[i];
+  return { positions: layout.positions, density: den.subarray(0, n) };
 }
 // Cycle a detail outline (its own point count) up to structN dots so the frame is a DENSE line, not sparse.
 function cycleOutline(structure, n) {
@@ -455,6 +486,30 @@ async function init() {
   canyonField.points.layers.enable(BLOOM_LAYER);
   canyonField.points.visible = false;
   fieldGroup.add(canyonField.points);
+  // FOCUS beacon — a thin grey ring (structure voice: matte, NO glow) at the focused station; its
+  // "pulse" is the existing structure shimmer, just breathing faster. Hidden until H focuses somewhere.
+  beaconField = new PointField(BEACON_N, { glow: false, size: 1.7, matte: '#566d78' });
+  beaconField.setPixelRatio(renderer.getPixelRatio());
+  beaconField.setDrift(0.0);
+  beaconField.setMaxSize(7);
+  beaconField.setShimmer(0.85);     // a felt beat — the beacon must be findable from province zoom
+  beaconField.setShimmerSpeed(2.4);
+  beaconField.points.visible = false;
+  fieldGroup.add(beaconField.points);
+
+  // People pool — sized once to the most populous precinct (Mitchells Plain ≈ 243k → ~2.4k dots at
+  // 1:100); every focus fills round(pop/100) of it and parks the rest. All 300 baked station records
+  // are drawn from these same 150 stations, so the province list bounds every region's needs.
+  const maxPop = Math.max(...stationsByRegion.wc.map((s) => s.pop || 0));
+  PEOPLE_N = Math.round(maxPop / PEOPLE_PER_DOT);
+  peopleField = new PointField(PEOPLE_N, { glow: false, size: 1.3, matte: '#566d78' });
+  peopleField.setPixelRatio(renderer.getPixelRatio());
+  peopleField.setDrift(0.0);
+  peopleField.setMaxSize(7);
+  peopleField.setShimmer(0.3);      // barely breathing — a standing crowd, not a twinkle
+  peopleField.setShimmerSpeed(0.6);
+  peopleField.points.visible = false;
+  fieldGroup.add(peopleField.points);
 
   applyMode('raw');
   frameUnion(wcRaw.meta.box, ctRaw.meta.box);
@@ -608,6 +663,7 @@ function toggleCanyon() {
   playing = false; morphStart = -1;
   if (canyonMode) {
     unlitBlock();                              // the estimate leaves with the map it shadows
+    if (focusMode) exitFocus(false);           // the canyon re-shapes the whole crime — no single precinct to stand in
     canyonCur = canyonRates();
     canyonField.setSource(canyonCur);
     canyonField.setTarget(canyonCur);
@@ -696,7 +752,7 @@ function hideUnlitNow() {
 // next included crime.
 function unlitAfterAnchor() {
   if (!unlitField || !unlitOn) { updateUnlitChip(); return; }
-  if (pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode || flockMode || drilling) return;
+  if (pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode || flockMode || focusMode || drilling) return;
   if (!RATES.rates[crimeType]) { if (unlitShown) hideUnlitNow(); }
   else if (!unlitShown || unlitPhase === 'out') unlitCondense();
   else unlitAnchorPair();
@@ -709,7 +765,7 @@ function unlitBlock() { // a blocked view opens (pie/pulse/terrain/drill) — th
   updateUnlitChip();
 }
 function toggleUnlit() {
-  if (!unlitField || drilling || flipping || pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode || flockMode) return;
+  if (!unlitField || drilling || flipping || pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode || flockMode || focusMode) return;
   unlitOn = !unlitOn;
   if (!unlitOn) { if (unlitShown) unlitDisperse(); }
   else if (RATES.rates[crimeType]) {
@@ -755,6 +811,7 @@ function enterPulse() {
   if (pulseMode || !monthLabels || !field || pieMode || triPieMode || drilling || tollMode || canyonMode || flockMode) return;
   if (!buildPulse()) return;
   unlitBlock(); // no estimate in the pulse (v1) — it disperses as the months take over
+  if (focusMode) exitFocus(false); // the two lenses don't compose — N trades focus for the pulse (setMonthPair below rewrites the pair)
   pulseMode = true;
   playing = true; morphStart = -1; holdUntil = performance.now();
   setMonthPair(mi);
@@ -890,6 +947,7 @@ function enterToll() {
   tollData = tollLayouts(stationsByRegion.wc, { years, count: COUNT, park: awayAll.positions, cx, cy, R, dialR });
   if (!tollData) return;                             // tollLayouts asserted loudly (M > pool)
   unlitBlock();                                      // the estimate leaves with the map (the toll counts the recorded dead)
+  if (focusMode) exitFocus(false);                   // the toll is the whole province's dead — focus lets go first
   playing = false; morphStart = -1;
   tollMode = true; tollPhase = 'gather'; tollPaused = false; tollDone = false;
   tollT = 0; tollCount = -1; tollYearShown = -1; tollHandAngle = -1;
@@ -1151,6 +1209,7 @@ function enterFlock(attract = false) {
   if (flockMode || region !== 'wc' || !field || pieMode || triPieMode || pulseMode || terrainMode
     || tollMode || canyonMode || drilling || flipping || pieMorphing) return;
   unlitBlock();                                      // the estimate leaves with the map it shadows
+  if (focusMode) exitFocus(false);                   // the whole field flies — the focus dim can't ride along
   if (!flockFrames) flockFrames = flockLayouts(COUNT, regionData.wc.meta.box, 0xf10c); // seeded → stable per build; built once per session
   const live = liveMap('wc');     // wherever the map is mid-breath — the flight lifts from HERE
   flockDensity = live.density;
@@ -1290,8 +1349,10 @@ function flipCrime(dir) {
 // HUD text for a crime + the current year (defaults to the live crime).
 function refreshHud(type = crimeType) {
   const rate = dataMode === 'percapita';
-  if (regionEl) regionEl.textContent = (REGION_META[region] || REGION_META.wc).name;
+  const focusS = focusMode && focusStation >= 0 ? activeStations()[focusStation] : null;
+  if (regionEl) regionEl.textContent = focusS ? focusS.name : (REGION_META[region] || REGION_META.wc).name;
   refreshHint();
+  updateCaption(); // the One-in-N line rides every HUD refresh (year scrubs, crime flips, focus moves)
   refreshChips();
   if (tollMode) {
     if (crimeEl) crimeEl.textContent = 'murder · the toll';
@@ -1324,7 +1385,9 @@ function refreshHud(type = crimeType) {
   }
   if (yearEl) yearEl.textContent = yearLabels[yi];
   if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + (rate ? ' · per 100k' : '');
-  if (countEl) countEl.textContent = ((totalsByType[type] && totalsByType[type][yi]) || 0).toLocaleString();
+  if (countEl) countEl.textContent = focusS
+    ? ((focusS.crimes[type] && focusS.crimes[type][years[yi]]) || 0).toLocaleString() // the station's OWN count
+    : ((totalsByType[type] && totalsByType[type][yi]) || 0).toLocaleString();
 }
 // Data-source credit line — names the population source too once per-capita is in play.
 function updateFlag() {
@@ -1344,6 +1407,7 @@ function updateFlag() {
 // + spokes — conserved, staggered, no fades.
 function togglePie() {
   if (!pieBuilder || !field || canyonMode || flockMode) return;
+  if (focusMode) exitFocus(false); // pies read the whole field — the write below replaces the pair
   pieMode = !pieMode;
   playing = false;
   if (pieMode) {
@@ -1368,6 +1432,7 @@ function togglePie() {
 // Break the single pie into THREE — robbery · burglary · murder, same year, side by side.
 function toggleTriPie() {
   if (!triPieBuilder || !field || canyonMode || flockMode) return;
+  if (focusMode) exitFocus(false); // pies read the whole field — the write below replaces the pair
   const wasPie = pieMode;
   triPieMode = !triPieMode;
   playing = false;
@@ -1455,6 +1520,7 @@ function goToMap() {
   if (flockMode) { landFlock(); return; }       // airborne → land (M is an exit everywhere)
   if (terrainMode) { toggleTerrain(); return; } // terrain → flat first (then M again exits pulse / drills out)
   if (pulseMode) { exitPulse(); return; }       // pulse → back to the years
+  if (focusMode) { exitFocus(); return; }       // focused → the whole field first (M again drills out)
   if (triPieMode) { toggleTriPie(); return; }
   if (pieMode) {
     pieMode = false;
@@ -1476,6 +1542,7 @@ function goToMap() {
 // crime that genuinely has no detail to zoom into; the lens never moves.
 function startDrill(to) {
   if (drilling || to === region || pieMode || triPieMode || tollMode || canyonMode || flockMode) return; // exit the canyon first — a drill mid-relief would strand the graticule
+  if (focusMode) exitFocus(false); // drilling exits focus first (like the pulse); liveMap below rewrites the whole pair
   if (pulseMode) { pulseMode = false; playing = false; updateFlag(); } // drill flies on the YEARLY field (liveMap below); land re-seeds yearly
   if (terrainMode) { // never drill mid-relief — snap flat first (normal input exits terrain before this)
     terrainMode = false; zScaleCur = 0; tiltCur = 0; fieldGroup.rotation.x = 0; trProg = 1;
@@ -1500,10 +1567,187 @@ function startDrill(to) {
   }
 }
 
+// ---- FOCUS: stand in your suburb (H) ---------------------------------------------------------------
+// Enter writes the ONE asymmetric pair (undimmed → dimmed) while the flag is still off — so the door
+// can't double-dim it — then flips the flag; every later at-rest write lands pre-dimmed. The morph
+// rides the pieMorphing clock, whose completion re-anchors setYearPair(yi) exactly like a pie/flip.
+function enterFocus(si) {
+  if (!field || si < 0 || drilling || pieMode || triPieMode || tollMode || canyonMode || flockMode || flipping) return;
+  unlitBlock();                      // the estimate doesn't compose with the focus dim — it leaves
+  if (pulseMode) exitPulse();        // focus reads the YEARLY field (the drill's same snap)
+  if (focusMode) exitFocus(false);   // refocus = clean slate; the write below re-dims for the new station
+  playing = false;
+  focusStation = si;
+  peopleOn = true;                   // the residents auto-show on each fresh focus (J hides them)
+  const dim = focusLayout(layouts[yi], si);
+  setDataPair(layouts[yi], dim);     // flag still false → the door passes both through untouched
+  focusMode = true;
+  field.setStagger(0.55);
+  t = 0; pieMorphStart = performance.now(); pieMorphing = true;
+  seedBeacon();
+  seedPeople();
+  refreshHud();
+}
+function exitFocus(animate = true) {
+  if (!focusMode) return;
+  const dim = focusLayout(layouts[yi]);  // the dimmed pose, composed while the flag is still on
+  focusMode = false; focusStation = -1;
+  if (beaconField) beaconField.points.visible = false;
+  hidePeople();
+  if (animate) {                     // fade back up; completion re-anchors the undimmed year pair.
+    setDataPair(dim, layouts[yi]);   // animate:false = a boundary caller (drill/pulse/pie) immediately
+    field.setStagger(0.55);          //   rewrites the whole pair itself, so no write here.
+    t = 0; pieMorphStart = performance.now(); pieMorphing = true;
+  }
+  refreshHud();
+}
+// ---- One in Forty-Three: the people stand up --------------------------------------------------------
+function seedPeople() {
+  if (!peopleField || focusStation < 0) return;
+  const s = activeStations()[focusStation];
+  const n = Math.round((s.pop || 0) / PEOPLE_PER_DOT);   // 1 grey dot = 100 residents, exactly
+  const grid = personGridLayout({ x: s.x, y: s.y, r: Math.max(8, s.r) }, n, PEOPLE_N);
+  // They RISE: same dots huddled dark at the centre → the standing grid (dot count never lies).
+  const from = { positions: new Float32Array(PEOPLE_N * 2), density: new Float32Array(PEOPLE_N) };
+  for (let i = 0; i < PEOPLE_N; i++) {
+    from.positions[i * 2] = s.x + (grid.positions[i * 2] - s.x) * 0.12;
+    from.positions[i * 2 + 1] = s.y + (grid.positions[i * 2 + 1] - s.y) * 0.12;
+  }
+  peopleField.setSource(from);
+  peopleField.setTarget(grid);
+  peopleField.setStagger(0.6);
+  plStart = performance.now(); plProg = 0;
+  peopleField.points.visible = true;
+  updateCaption();
+}
+function hidePeople() {
+  if (peopleField) peopleField.points.visible = false;
+  updateCaption();
+}
+function togglePeople() { // J — only meaningful while focused
+  if (!focusMode) return;
+  peopleOn = !peopleOn;
+  if (peopleOn) seedPeople(); else hidePeople();
+}
+
+// The caption — the money line, with its own honesty attached: the 1:100 scale, the population
+// source, and 'reported' (these are reports that reached a station, not victims).
+const captionEl = document.createElement('div');
+captionEl.id = 'suburb-caption';
+captionEl.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:10;' +
+  'max-width:min(92vw,640px);text-align:center;font:12px/1.6 ui-monospace,"SF Mono",Menlo,monospace;' +
+  'color:#a8b2c6;padding:7px 14px;border-radius:8px;background:rgba(6,8,13,.66);' +
+  'border:1px solid rgba(140,170,210,.10);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);' +
+  'pointer-events:none;user-select:none;opacity:0;transition:opacity .4s';
+document.body.appendChild(captionEl);
+function updateCaption() {
+  const on = focusMode && peopleOn && focusStation >= 0;
+  captionEl.style.opacity = on ? '1' : '0';
+  if (!on) return;
+  const s = activeStations()[focusStation];
+  const n = (s.crimes[crimeType] && s.crimes[crimeType][years[yi]]) || 0;
+  const line = suburbCaptionLine(s.pop, n, crimeLabels[crimeType] || crimeType, yearLabels[yi]);
+  captionEl.innerHTML = line.replace(/^([\d,]+ residents)/, '<b style="color:#d4dcef">$1</b>') +
+    '<br><span style="color:#77839a;font-size:10.5px">each grey dot ≈ 100 residents · WorldPop 2020 · reported crimes only</span>';
+}
+
+// The beacon ring sits just outside the precinct's jitter radius; the shimmer is its pulse.
+function seedBeacon() {
+  const s = activeStations()[focusStation];
+  const R = Math.max(9, s.r * 1.15);
+  const pos = new Float32Array(BEACON_N * 2), den = new Float32Array(BEACON_N).fill(0.55);
+  for (let i = 0; i < BEACON_N; i++) {
+    const a = (i / BEACON_N) * Math.PI * 2;
+    const r = R + (Math.random() - 0.5) * 1.6;
+    pos[i * 2] = s.x + Math.cos(a) * r;
+    pos[i * 2 + 1] = s.y + Math.sin(a) * r;
+  }
+  const ring = { positions: pos, density: den };
+  beaconField.setSource(ring); beaconField.setTarget(ring); beaconField.setT(1);
+  beaconField.points.visible = true;
+}
+
+// ---- the locate overlay (H): "your suburb… or find me" ----------------------------------------------
+// Text matches the CURRENT region's station names — case/space/punct-insensitive, prefix beats
+// contains, shorter name beats longer (most specific wins). "Find me" is CLIENT-SIDE ONLY: the
+// coordinate lives in one callback for one nearest-station pass and is never transmitted or stored
+// (the card says so). Outside the reach of every station here (>60 km) → say so kindly, stay put.
+const locateEl = document.getElementById('locate');
+const locateInput = document.getElementById('locate-input');
+const locateMatch = document.getElementById('locate-match');
+const fold = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+function matchStation(q) {
+  const f = fold(q);
+  if (!f) return -1;
+  const sts = activeStations();
+  let best = -1, bestRank = Infinity;
+  for (let i = 0; i < sts.length; i++) {
+    const n = fold(sts[i].name);
+    const rank = n.startsWith(f) ? n.length : (n.includes(f) || f.includes(n)) ? 1000 + n.length : -1;
+    if (rank >= 0 && rank < bestRank) { bestRank = rank; best = i; }
+  }
+  return best;
+}
+function haversineKm(lng1, lat1, lng2, lat2) {
+  const R = 6371, toR = Math.PI / 180;
+  const dLat = (lat2 - lat1) * toR, dLng = (lng2 - lng1) * toR;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * toR) * Math.cos(lat2 * toR) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function openLocate() {
+  if (!locateEl || drilling || pieMode || triPieMode || tollMode || canyonMode || flockMode) return; // focus is a map-view lens (pulse ok — confirm exits it)
+  locateEl.classList.add('open');
+  if (locateInput) locateInput.value = '';
+  if (locateMatch) locateMatch.textContent = `matching ${(REGION_META[region] || REGION_META.wc).name}’s precincts…`;
+  locateInput && locateInput.focus();
+}
+function closeLocate() { if (locateEl) locateEl.classList.remove('open'); }
+locateInput && locateInput.addEventListener('input', () => {
+  const si = matchStation(locateInput.value);
+  locateMatch.textContent = si < 0
+    ? (fold(locateInput.value) ? 'no match here yet — keep typing, or try the police-station name' : '…')
+    : '→ ' + activeStations()[si].name;
+});
+locateInput && locateInput.addEventListener('keydown', (e) => {
+  if (e.code !== 'Enter') return;
+  const si = matchStation(locateInput.value);
+  if (si < 0) { locateMatch.textContent = 'nothing matches — try the nearest big suburb, or ◎ find me'; return; }
+  closeLocate();
+  enterFocus(si);
+});
+document.getElementById('locate-me')?.addEventListener('click', () => {
+  if (!navigator.geolocation) { locateMatch.textContent = 'no location on this device — type your suburb instead'; return; }
+  locateMatch.textContent = 'asking your browser…';
+  navigator.geolocation.getCurrentPosition((p) => {
+    // The coordinate never leaves this callback: one nearest-station pass, then it's gone.
+    const lng = p.coords.longitude, lat = p.coords.latitude;
+    const sts = activeStations();
+    let best = -1, bestKm = Infinity;
+    for (let i = 0; i < sts.length; i++) {
+      const d = haversineKm(lng, lat, sts[i].lng, sts[i].lat);
+      if (d < bestKm) { bestKm = d; best = i; }
+    }
+    if (best < 0 || bestKm > 60) {
+      locateMatch.textContent = region === 'wc'
+        ? 'you seem to be outside the Western Cape — the field stays put (type a suburb to visit one anyway)'
+        : `nothing within 60 km of ${REGION_META[region].name} — M zooms back out to the whole province`;
+      return;
+    }
+    closeLocate();
+    enterFocus(best);
+  }, () => { locateMatch.textContent = 'location unavailable — type your suburb instead'; }, { timeout: 8000, maximumAge: 60000 });
+});
+document.getElementById('locate-close')?.addEventListener('click', closeLocate);
+locateEl && locateEl.addEventListener('click', (e) => { if (e.target === locateEl) closeLocate(); });
+
 window.addEventListener('keydown', (e) => {
   lastInputAt = performance.now();
   if (aboutEl && aboutEl.classList.contains('open')) { // the about card swallows keys; Esc closes
     if (e.code === 'Escape') { e.preventDefault(); toggleAbout(false); }
+    return;
+  }
+  if (locateEl && locateEl.classList.contains('open')) { // the locate prompt swallows keys (typing!); Esc closes
+    if (e.code === 'Escape') { e.preventDefault(); closeLocate(); }
     return;
   }
   if (e.key === '?' || e.code === 'Slash') { e.preventDefault(); toggleAbout(); return; } // ? opens the card from ANY state
@@ -1519,6 +1763,7 @@ window.addEventListener('keydown', (e) => {
     landFlock();
     return;
   }
+  if (e.code === 'KeyH') { e.preventDefault(); if (focusMode) exitFocus(); else openLocate(); return; }
   if (pulseMode) { // the pulse has its own clock: arrows step months, N/M return to years
     if (e.code === 'KeyN' || e.code === 'KeyM') { e.preventDefault(); exitPulse(); }
     else if (e.code === 'Space') { e.preventDefault(); playing = !playing; if (playing) { holdUntil = performance.now(); morphStart = -1; } }
@@ -1557,6 +1802,8 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); } // Cape Town relief (no-op in the province)
   else if (e.code === 'KeyV') { e.preventDefault(); toggleCanyon(); }  // time as the landform (guards itself)
   else if (e.code === 'KeyU') { e.preventDefault(); toggleUnlit(); }   // the unlit field (map views only)
+  else if (e.code === 'KeyJ') { e.preventDefault(); togglePeople(); } // hide/show the residents (focus only)
+  else if (e.code === 'Escape') { if (focusMode) { e.preventDefault(); exitFocus(); } }
 });
 window.addEventListener('keyup', (e) => { // release the toll's 1:1 hold
   if (e.code === 'Digit1' && tollHoldKey) { tollHoldKey = false; if (tollMode) refreshHud(); }
@@ -1581,6 +1828,7 @@ const CHIP_ACTIONS = {
   months: () => (pulseMode ? exitPulse() : enterPulse()),
   toll: () => (tollMode ? exitToll() : enterToll()),
   release: () => (flockMode ? landFlock() : enterFlock()), // guards itself (province flat map only)
+  suburb: () => (focusMode ? exitFocus() : openLocate()), // same toggle as the H key
   about: () => toggleAbout(),
 };
 
@@ -1637,6 +1885,8 @@ function refreshChips() {
   off('terrain', pieMode || triPieMode || tollMode || canyonMode || !(regionData[region] && regionData[region].terrain && regionData[region].terrain.elev));
   off('canyon', !canyonMode && (pieMode || triPieMode || pulseMode || terrainMode || tollMode));
   off('unlit', pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode);
+  off('suburb', !focusMode && (pieMode || triPieMode || tollMode || canyonMode));
+  if (focusMode) off('unlit', true);
   off('release', !flockMode && (region !== 'wc' || pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode));
   // Airborne, the toolkit sleeps (the click handler swallows all but release/map/about) — dim to match.
   if (flockMode) for (const act of Object.keys(chipEls)) if (!['release', 'map', 'about'].includes(act)) off(act, true);
@@ -1735,6 +1985,36 @@ window.__viz = {
   unlitDots: (px) => unlitField && unlitField.setSize(px),
   unlitMatte: (hex) => unlitField && unlitField.material.uniforms.uMatte.value.set(hex),
   flock: () => { if (flockMode) landFlock(); else enterFlock(); return { flockMode, phase: flockPhase, frame: flockIdx }; }, // debug: release / land the field
+  suburb: (name) => { // debug: focus a precinct by name (no name while focused = exit) — headless testing
+    if (name === undefined) { if (focusMode) { exitFocus(); return 'exited'; } return 'not focused'; }
+    const si = matchStation(String(name));
+    if (si < 0) return 'not found';
+    enterFocus(si);
+    const s = activeStations()[si];
+    const n = (s.crimes[crimeType] && s.crimes[crimeType][years[yi]]) || 0;
+    return { station: s.name, pop: s.pop, personDots: Math.round(s.pop / PEOPLE_PER_DOT), n,
+      caption: suburbCaptionLine(s.pop, n, crimeLabels[crimeType] || crimeType, yearLabels[yi]) };
+  },
+  focusForensic: () => { // verification: is the dim post-pass REALLY on the GPU buffer? Per-station
+    if (!field) return null; // ratio of the field's live target densities vs the undimmed provider
+    const arr = field.points.geometry.getAttribute('aTargetDensity').array; // layout — 1.0 = kept, 0.12 = dimmed.
+    const b = providers[region][dataMode];
+    const und = b.layouts[crimeType][(yi + 1) % years.length].density; // at rest, target = yi+1
+    const o = sliceStart();
+    const sts = activeStations();
+    const ratios = b.slotRanges.map(([b0, k], si) => {
+      let sum = 0, n = 0;
+      for (let j = 0; j < k; j++) { const u = und[b0 + j]; if (u > 0.001) { sum += arr[o + b0 + j] / u; n++; } }
+      return { name: sts[si].name, ratio: n ? sum / n : -1, active: n };
+    });
+    return { focusMode, region, station: focusMode && focusStation >= 0 ? sts[focusStation].name : null, ratios };
+  },
+  peopleForensic: () => ({ // verification: the beacon/people pools' live state
+    beaconVisible: !!(beaconField && beaconField.points.visible),
+    peopleVisible: !!(peopleField && peopleField.points.visible),
+    peopleActive: peopleField ? peopleField.points.geometry.getAttribute('aTargetDensity').array.filter((d) => d > 0).length : 0,
+    pop: focusMode && focusStation >= 0 ? activeStations()[focusStation].pop : 0,
+  }),
 };
 
 // ---- hover readout — "Nyanga · 2,300 robbery · 2019/20" (works in map AND pie), region-aware ----
@@ -2143,7 +2423,7 @@ function tick() {
   }
   // Idle attract: long stillness on the resting province releases the field again (any input wakes it).
   if (!flockMode && region === 'wc' && !drilling && !pieMode && !triPieMode && !pulseMode
-    && !terrainMode && !tollMode && !canyonMode && !flipping && !pieMorphing && lastInputAt > 0 && now - lastInputAt > IDLE_RELEASE_MS) {
+    && !terrainMode && !tollMode && !canyonMode && !focusMode && !flipping && !pieMorphing && lastInputAt > 0 && now - lastInputAt > IDLE_RELEASE_MS) {
     enterFlock(true);
   }
 
@@ -2157,6 +2437,11 @@ function tick() {
     field.setDrift(flockDriftCur);
   }
 
+  if (beaconField) beaconField.setTime(time); // the beacon's pulse IS the shimmer breath
+  if (peopleField) {
+    if (plProg < 1) { plProg = Math.min((now - plStart) / 1100, 1); peopleField.setT(swarmEase(plProg)); }
+    peopleField.setTime(time);
+  }
   // Terrain (Cape Town only): ease the land up/down + the view tilt, advance the band⇄relief swarm, and
   // lift the crime with it. In the province zScaleCur stays 0 (T is a no-op there), so it renders flat.
   if (terrainField) {

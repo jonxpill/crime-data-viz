@@ -415,7 +415,12 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
     return { positions, density, boundaries, R, cx, cy };
   }
 
-  return { years, count: COUNT, layouts, totals, pieLayout, triPieLayout, resolvePieLayout, monthly, months: MONTH_LABELS };
+  // slotRanges: station i's contiguous [base, K] in this build's buffer (same order as data.stations)
+  // — lets a downstream post-pass (the suburb focus dim) address ONE station's dots without the
+  // builder knowing what "focus" means. Identical across raw/percapita (K is sized to the max of both).
+  const slotRanges = slots.map((sl) => [sl.base, sl.K]);
+
+  return { years, count: COUNT, layouts, totals, slotRanges, pieLayout, triPieLayout, resolvePieLayout, monthly, months: MONTH_LABELS };
 }
 
 /**
@@ -1052,6 +1057,49 @@ export function flockLayouts(count, box, seed = 0xf10c) {
   }
   frames.halo = halo;
   return frames;
+}
+
+/**
+ * Person-grid layout — "One in Forty-Three": ONE precinct's population standing up as a rough grid
+ * inside its jitter radius (the same "around here" honesty as the crime dots). The CALLER declares
+ * the scale on screen (1 dot = 100 residents); this only places n dots. Pool-shaped like every
+ * layout: the first n slots form the grid, the rest park invisible (density 0). Deterministic
+ * (seeded) so the same precinct always stands the same way.
+ */
+export function personGridLayout({ x, y, r }, n, poolN) {
+  const positions = new Float32Array(poolN * 2), density = new Float32Array(poolN);
+  for (let k = 0; k < poolN; k++) { positions[k * 2] = x; positions[k * 2 + 1] = y; } // parked default
+  n = Math.min(n, poolN);
+  if (n <= 0) return { positions, density };
+  const rng = mulberry32(0x50e0b1e);
+  // Spacing from the circle's area; shrink until the lattice holds ≥ n points, then thin the surplus
+  // EVENLY (never truncate row-major — that would chop the bottom off the circle).
+  let sp = Math.sqrt((Math.PI * r * r) / n);
+  let pts = [];
+  for (let tries = 0; tries < 24 && pts.length < n; tries++) {
+    pts = [];
+    const half = Math.ceil(r / sp);
+    for (let gj = -half; gj <= half; gj++) for (let gi = -half; gi <= half; gi++) {
+      const px = gi * sp, py = gj * sp;
+      if (px * px + py * py <= r * r) pts.push([px, py]);
+    }
+    if (pts.length < n) sp *= 0.96;
+  }
+  const stride = pts.length / n;
+  for (let k = 0; k < n; k++) {
+    const p = pts[Math.floor(k * stride)];
+    positions[k * 2] = x + p[0] + (rng() - 0.5) * sp * 0.35;     // rough grid, not a sterile lattice
+    positions[k * 2 + 1] = y + p[1] + (rng() - 0.5) * sp * 0.35;
+    density[k] = 0.4;                                            // quiet and even — people are frame, never data
+  }
+  return { positions, density };
+}
+
+/** The One-in-N caption line — pure (and node-importable) so the checks can assert it to the digit. */
+export function suburbCaptionLine(pop, n, crimeLabel, yearLabel) {
+  return n > 0
+    ? `${pop.toLocaleString()} residents · ${n.toLocaleString()} reported ${crimeLabel} in ${yearLabel} — 1 for every ${Math.round(pop / n).toLocaleString()} residents`
+    : `${pop.toLocaleString()} residents · no reported ${crimeLabel} in ${yearLabel}`;
 }
 
 function gauss(rng) {

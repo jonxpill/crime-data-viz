@@ -152,6 +152,8 @@ const stations = stationList.map((s) => {
   return {
     name: titleCase(s.name),
     x: +x.toFixed(1), y: +y.toFixed(1),
+    lng: +s.lng.toFixed(4), lat: +s.lat.toFixed(4), // real-world anchor (4dp ≈ 11 m) — the client's
+    //   "find me" geolocate haversines against these; the station's own public coords, nothing new claimed
     r: +(radiusByName.get(s.key) ?? 22).toFixed(1),
     pop: Math.round(popByKey.get(s.key) ?? POP_FALLBACK),
     crimes,

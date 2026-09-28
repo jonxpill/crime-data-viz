@@ -299,3 +299,8 @@ specific instruments (deferred) · where it lives / distribution · a name.
   window have arrived, ones before it haven't left; a uniform lerp snaps both. (The flock's landing:
   airbornePose() mirrors the shader's stagger window on the CPU, so the glide home starts from
   precisely where every dot is on screen.) (?)
+- **Before changing a generator, run it UNCHANGED and diff against the committed artifact.** A byte-identical
+  baseline (same inputs + same code → same bytes) turns every later "did my change drift anything?" into a
+  one-line proof: rerun, diff the trust lines, hash the untouched outputs, deep-diff the touched ones for
+  exactly the intended delta (+600 lng/lat fields, zero other changes). Without the baseline you can't tell
+  your drift from input drift. (?)
