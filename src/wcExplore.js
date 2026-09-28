@@ -14,6 +14,7 @@ import { LightHud, HUD_TUNE } from './hud/light.js';
 import { createDock, fmtValue } from './hud/dock.js';
 import { navPlan, sceneOf } from './hud/nav.js';
 import * as ICONS from './hud/icons.js';
+import { createMotion, centroid } from './motion.js';
 
 // ---- palette TONES (the Palette door, src/palette.js) ---------------------------------------------------
 // Every layout that places DATA dots for a crime carries that crime's FAMILY ramp (layout.ramp: a number
@@ -88,6 +89,10 @@ app.appendChild(renderer.domElement);
 // alias because the toll switches it off while its dial owns the pointer.
 const cam = createCameraDoor({ camera, dom: renderer.domElement });
 const controls = cam.controls;
+// THE MOTION DOOR (src/motion.js, D4): each change gets its own path + meaningful stagger (+ comets on the
+// drill), aerial haze on the world pools, the output dither. Call sites say motion.begin(kind, …) right after
+// writing their pair; the door ends it on landing. Knobs: __viz.motion({...}).
+const motion = createMotion({ renderer, camera, controls });
 
 // Data + structure share one frame so geography and crime stay in register.
 const fieldGroup = new THREE.Group();
@@ -123,8 +128,10 @@ const finalComposer = new EffectComposer(renderer);
 finalComposer.addPass(new RenderPass(scene, camera));
 finalComposer.addPass(mixPass);
 finalComposer.addPass(new OutputPass());
+finalComposer.addPass(motion.ditherPass); // ±1 LSB dither after tone map + sRGB → no banding in the bloom halos
 
 function render() {
+  motion.frame(); // streak clock · focus distance · ends landed motions (before any pixel is drawn)
   scene.background = null;
   camera.layers.set(BLOOM_LAYER);
   bloomComposer.render();
@@ -602,6 +609,7 @@ async function init() {
   peopleField.points.visible = false;
   fieldGroup.add(peopleField.points);
 
+  motion.world([field, structField, wordField, unlitField, terrainField, canyonField, beaconField, peopleField]); // haze + streak clock (not the HUD's pools)
   setPalette(paletteName); // the ONE colour door paints every pool + the bg + the HUD (default = today, exactly)
 
   applyMode('raw');
@@ -1105,7 +1113,7 @@ function enterToll() {
   // Province-only full-pool CEREMONY: the pool IS the province (sliceStart() = 0), and tollLayouts
   // returns full COUNT-sized endpoints by construction — full-buffer writes at offset 0 are the
   // correct door here (startDrill is the precedent). Raw murder counts, whatever the display mode.
-  tollData = tollLayouts(stationsByRegion.wc, { years, count: COUNT, park: awayAll.positions, cx, cy, R, dialR });
+  tollData = tollLayouts(stationsByRegion.wc, { years, count: COUNT, park: providers.wc.raw.roosts, cx, cy, R, dialR }); // unused dots wait at the sky roosts
   if (!tollData) return;                             // tollLayouts asserted loudly (M > pool)
   unlitBlock();                                      // the estimate leaves with the map (the toll counts the recorded dead)
   if (focusMode) exitFocus(false);                   // the toll is the whole province's dead — focus lets go first
@@ -1514,6 +1522,7 @@ function flipTo(next) {
     lastPie = pieYears[yi];
     setDataPair(prevPie, lastPie, true);
     field.setStagger(0.6);
+    motion.begin('flip', field, { layouts: [lastPie, prevPie], offset: sliceStart() }); // arc, hottest first
     t = 0; pieMorphStart = performance.now(); pieMorphing = true;
     refreshHud();
     return;
@@ -1524,6 +1533,7 @@ function flipTo(next) {
   flipStart = performance.now();
   morphStart = -1;
   setDataPair(from, layoutsByType[next][yi], true);
+  motion.begin('flip', field, { layouts: [layoutsByType[next][yi], layoutsByType[crimeType][yi]], offset: sliceStart() }); // arc, hottest first
   if (unlitField && unlitShown) { // the shadow flips WITH the reported field — or flies home if the next crime has no rate
     unlitField.setStagger(0.6);
     unlitSet(unlitLive(), RATES.rates[next] ? unlitL(yi, next) : unlitRoost());
@@ -1681,6 +1691,7 @@ function morphScene(T) {
   if (focusMode && T !== 'map') exitFocus(false);  // pies + the strip read the whole field (focus composes with the map only)
   if (pulseMode && T !== 'map') leavePulse();      // the pies are yearly — the months leave from wherever they are
   if (T !== 'map') unlitBlock();                   // no estimate off the map (v1)
+  const wasFore = forensicsMode;                   // D4: the strip keeps straight paths (no swirl in or out of it)
   pieMode = T === 'pie'; triPieMode = T === 'compare'; forensicsMode = T === 'forensics';
   playing = false; morphStart = -1;
   let dataT, frameT;
@@ -1703,6 +1714,7 @@ function morphScene(T) {
   field.setStagger(T === 'map' ? 0.55 : 0.6);
   structField.setSize(T === 'map' ? structDotSize : PIE_LINE_SIZE);
   startStructTransition(frameT);
+  if (T !== 'forensics' && !wasFore) motion.begin('pie', [field, structField], { dir: T === 'map' ? -1 : 1 }); // D4: winds into a chart / unwinds to the map
   homeScene(PIE_MS);
   t = 0; pieMorphStart = performance.now(); pieMorphing = true;  // completion re-anchors the year pair on the map
   refreshHud();
@@ -1772,6 +1784,7 @@ function resolveTriToPie(ci) {
   structField.setSize(PIE_LINE_SIZE);
   startStructTransition(pieFrameLayout(structN, { cx: 0, cy: 0, R: PIE_R, boundaries: resolved.boundaries, frameDots: pieFrameDots, thin: pieThin }));
   triPieMode = false; pieMode = true;
+  motion.begin('pie', [field, structField], { dir: -1 }); // retraces pie → compare
   homeScene(PIE_MS);
   t = 0; pieMorphStart = performance.now(); pieMorphing = true;
   refreshHud();
@@ -1807,13 +1820,20 @@ function startDrill(to) {
   drilling = true; drillTo = to; drillStart = performance.now(); playing = false;
   labelLayer.style.opacity = '0'; // labels leave with the outline (tick's drill branch skips updateLabels)
   refreshHud();                   // the sentence's place goes quiet mid-flight; the caption clears
-  field.setSource(bakeFieldPose());               // from what the eye sees (a pie, a mid-morph, a month…)
-  field.setTarget(liveMap(to));
+  const src = bakeFieldPose(), tgt = liveMap(to); // from what the eye sees (a pie, a mid-morph, a month…)
+  field.setSource(src);
+  field.setTarget(tgt);
   field.setStagger(0.62);
   structField.setSource(strProg < 1 ? bakeStructPose() : structCurrent);
   structField.setTarget(outlines[to]);
   strProg = 1; structCurrent = outlines[to];      // the drill clock drives the frame now; it lands on the outline
   structField.setStagger(0.62);
+  { // D4: the drill RADIATES from the district it opens (or closes) — its stations' centroid on the province
+    const rk = to === 'wc' ? region : to;
+    const point = centroid(stationsByRegion.wc.filter((s) => norm(s.dc) === REGION_META[rk].dc));
+    motion.begin('drill', field, { layouts: [to === 'wc' ? tgt : liveMap(region)], point });  // + comet streaks (order measured on the province map)
+    motion.begin('drill', structField, { layouts: [outlines.wc], point });
+  }
   cam.home(mapBox(to), { dur: DRILL_MS, ease: drillEase });
   if (unlitField && unlitShown) { // the estimate can't survive the region change — it flies home with the drill
     unlitField.setStagger(0.62);
@@ -2533,6 +2553,10 @@ window.__viz = {
     camera.position.copy(world).addScaledVector(dir, dist);
     controls.update();
   },
+  // The Motion door (D4): motion() → the live table; motion({ flip: {bend, fan, order, stagger, streak}, pie: {dir,
+  // turns, streak}, drill: {order, reverse, stagger, streak}, streakMax, tail, conserve, haze: {on, far, near,
+  // strength}, dither }). order: 'value' | 'point' | 'x' | 'y' | null. Takes effect from the next transition.
+  motion: (o) => motion.tune(o),
   cam: (o) => (o ? cam.orbit(o) : cam.state()), // camera door: state(), or orbit({spin, tilt, dist}) in degrees — obeys the limits
   home: (dur = REHOME_MS) => { homeScene(dur); return cam.state(); }, // ⌂ re-home the current scene (dur ms; default 1100)
   // The HUD made of light — live eye knobs: hud({ litDensity, hotDensity, slotDensity, caretDensity, dataSize,

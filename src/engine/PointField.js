@@ -27,9 +27,28 @@ import * as THREE from 'three';
  *     own matte (uMatte), so an untagged pool looks exactly as it always did.
  *   `ramp`/`role` may be a number (the whole written slice) or a typed array (one per dot, same length as
  *   the layout's density). Absent → 0. Density is still the ONLY brightness channel inside any ramp.
+ *
+ * MOTION (packet D4 — the Motion door drives these; src/motion.js). Every term below is TRANSITIONAL: it is
+ * exactly zero at lt = 0 and lt = 1 and off by default, so no endpoint (no layout, no resting frame) moves.
+ *   • PATH (`setPath`) — how a dot travels source → target: `straight` (the lerp, default), `arc` (a quadratic
+ *     bezier bowed perpendicular to its own travel, ∝ travel distance × bend, side per dot from its seed so the
+ *     swarm fans both ways), `swirl` (angle + radius interpolated about a centre → the field WINDS in/out).
+ *   • ORDER (`setOrder`) — a per-dot stagger order in [0,1) that REPLACES the random seed's slot in the stagger
+ *     window, without touching aSeed (twinkle + drift phase) — so switching it on/off at an endpoint is
+ *     pixel-invisible (setSeeds, the Toll's tool, re-phases every dot's drift + twinkle).
+ *   • STREAK (`setStreak`) — a moving dot's sprite stretches into a comet along its SCREEN-space velocity
+ *     (the finite difference of its own path between last frame's uT and this one, through the same camera;
+ *     a bright head, a fading tail). Zero speed → the round dot, bit-identical. Needs `beginFrame()` once
+ *     per rendered frame + `setViewport()`.
+ *   • HAZE (`setHaze`) — aerial perspective by VIEW DEPTH relative to the camera's focus distance (`setFocus`):
+ *     far dots fade toward the background; dots nearer than a threshold dissolve instead of ballooning. A flat
+ *     field seen top-down sits at relative depth 1 everywhere → a no-op at every top-down home.
+ * Invisible dots (the fragment would discard all of them) are clipped in the vertex stage — same pixels, no
+ * rasterisation cost (parked surplus is most of every pool).
  */
 export const MAX_RAMPS = 4;
 export const MAX_ROLES = 8;
+export const PATH_MODES = { straight: 0, arc: 1, swirl: 2 };
 
 export class PointField {
   /**
@@ -74,6 +93,11 @@ export class PointField {
     geometry.setAttribute('aSourceTone', new THREE.BufferAttribute(new Float32Array(count), 1));
     geometry.setAttribute('aTargetTone', new THREE.BufferAttribute(new Float32Array(count), 1));
     this._toneUsed = false; // stays false until a non-zero tone is written → untagged pools never re-upload
+    // Per-point stagger ORDER (the Motion door's meaningful stagger) — only read while uOrderOn = 1.
+    geometry.setAttribute('aOrder', new THREE.BufferAttribute(new Float32Array(count), 1));
+    // Streak bookkeeping: any change to what a given uT MEANS (a pair write, seeds, order, path, stagger)
+    // bumps the epoch, and beginFrame() then gives that frame a zero-length streak instead of a false one.
+    this._epoch = 0; this._frameEpoch = -1; this._frameT = null; this._staggerWrites = 0;
     // BufferGeometry needs *some* `position`; we drive xy ourselves, keep z=0.
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
     geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1e6);
@@ -127,6 +151,26 @@ export class PointField {
         // Structure role colours (index 0 unused — role 0 IS uMatte). Default = the matte, so a tagged
         // dot in a pool nobody has given role colours still draws the pool's own grey.
         uRoleColors: { value: Array.from({ length: MAX_ROLES }, () => matte.clone()) },
+        // ---- MOTION (D4) — all off by default; see the class note ----
+        uTPrev: { value: 0 },        // last frame's uT (beginFrame) — the streak's finite difference
+        uPath: { value: 0 },         // PATH_MODES: 0 straight · 1 arc · 2 swirl
+        uBend: { value: 0.35 },      // arc: control-point offset ∝ travel distance (peak bow = bend/2 × distance)
+        uFan: { value: 1 },          // arc: 1 = sides 50/50 per dot (the swarm fans both ways) · 0 = all one side
+        uSwirlCentre: { value: new THREE.Vector2(0, 0) },
+        uSwirlDir: { value: 0 },     // swirl: 0 = each dot takes its shortest turn · +1 all CCW · −1 all CW (a vortex)
+        uSwirlTurns: { value: 0 },   // swirl: extra WHOLE turns in that direction (whole, so endpoints stay exact)
+        uOrderOn: { value: 0 },      // 0 = the random seed's stagger slot · 1 = aOrder
+        uStreak: { value: 0 },       // comet length in FRAMES of travel at 60 fps (0 = off)
+        uStreakRate: { value: 1 },   // (1/60 s) ÷ this frame's dt — keeps a comet's length refresh-rate-free
+        uStreakMax: { value: 20 },   // cap on the streak's length (CSS px)
+        uStreakTail: { value: 0.12 },   // tail brightness relative to the head
+        uStreakConserve: { value: 0.45 }, // 0 = the comet adds light · 1 = its energy spreads (head dims ∝ width/length)
+        uViewport: { value: new THREE.Vector2(1, 1) }, // drawing-buffer px (streak px ↔ NDC)
+        uHazeOn: { value: 0 },
+        uFocus: { value: 1 },        // camera → orbit-target distance: relative depth 1 = the plane you look at
+        uHazeFar: { value: 1.2 },    // haze reaches full `strength` at relative depth 1 + far
+        uHazeNear: { value: 0.5 },   // dots nearer than this relative depth dissolve (gone at half of it)
+        uHazeStrength: { value: 0.6 },
       },
       vertexShader: VERT,
       fragmentShader: FRAG,
@@ -152,6 +196,7 @@ export class PointField {
   setTarget(layout, offset = 0) { this._fill('aTarget', 'aTargetDensity', 'aTargetTone', layout, offset); }
 
   _fill(posAttr, densAttr, toneAttr, layout, offset = 0) {
+    this._epoch++;
     const g = this.points.geometry;
     const pos = g.getAttribute(posAttr); pos.array.set(layout.positions, offset * 2); pos.needsUpdate = true;
     const den = g.getAttribute(densAttr); den.array.set(layout.density, offset); den.needsUpdate = true;
@@ -189,7 +234,12 @@ export class PointField {
   /** Idle-drift SPEED — how fast the orbit runs (makes motion felt; no extra stray). */
   setDriftSpeed(mult) { this.material.uniforms.uDriftSpeed.value = mult; }
   /** Per-dot transition stagger (0 = all move together; ~0.6 = a cascading swarm). */
-  setStagger(w) { this.material.uniforms.uStagger.value = w; }
+  setStagger(w) {
+    const u = this.material.uniforms.uStagger;
+    this._staggerWrites++; // every call counts (the Motion door hands its stagger back only if nobody set one since)
+    if (u.value !== w) { u.value = w; this._epoch++; }
+  }
+  get staggerWrites() { return this._staggerWrites; }
   /** Replace the per-point seed buffer (twinkle/drift phase AND stagger order). Random seeds =
    *  an organic flock; ORDERED seeds turn a staggered morph into a strict procession — dot k
    *  crosses at uT ≈ fract(seed_k / 2π). Callers restore the old array to return to randomness. */
@@ -197,6 +247,7 @@ export class PointField {
     const a = this.points.geometry.getAttribute('aSeed');
     a.copyArray(seeds);
     a.needsUpdate = true;
+    this._epoch++;
   }
   /** Ordered per-point SPIN: a LANDED dot's target slowly rotates about uSpinCentre by
    *  sign·rate·(uSpinTime − onset), gated to only bite near lt≈1 — the inbound morph stays a clean
@@ -208,6 +259,7 @@ export class PointField {
     const g = this.points.geometry;
     g.getAttribute('aSpinRate').copyArray(rates).needsUpdate = true;
     g.getAttribute('aSpinOnset').copyArray(onsets).needsUpdate = true;
+    this._epoch++;
   }
   /** Advance the spin's REAL-time clock (seconds) — independent of the morph's uT, so a settled
    *  field keeps turning even when the morph is paused. */
@@ -252,6 +304,79 @@ export class PointField {
   setZScale(s) { this.material.uniforms.uZScale.value = s; }
   /** Global opacity 0..1 — for cross-fading fields (map mesh ↔ terrain). */
   setOpacity(o) { this.material.uniforms.uOpacity.value = o; }
+
+  // ---- MOTION (D4) ------------------------------------------------------------------------------------
+  /** How dots travel source → target. `mode`: 'straight' (default) | 'arc' | 'swirl'. opts — arc:
+   *  { bend (control offset × travel distance, ~0.35), fan (1 = both sides, 0 = one side) }; swirl:
+   *  { centre: {x,y} | [x,y], dir (0 = shortest turn per dot · +1 every dot CCW · −1 every dot CW — a
+   *  vortex; −1 exactly retraces a +1 swirl backwards), turns (extra whole turns) }. Endpoints are untouched
+   *  (every mode equals the lerp at lt = 0 and 1). Unknown modes fall back to straight. */
+  setPath(mode = 'straight', opts = {}) {
+    const u = this.material.uniforms;
+    const m = PATH_MODES[mode] ?? 0;
+    if (u.uPath.value !== m) { u.uPath.value = m; this._epoch++; }
+    if (opts.bend != null) u.uBend.value = opts.bend;
+    if (opts.fan != null) u.uFan.value = opts.fan;
+    if (opts.dir != null) u.uSwirlDir.value = Math.sign(opts.dir);
+    if (opts.turns != null) u.uSwirlTurns.value = Math.max(0, Math.round(opts.turns));
+    if (opts.centre) {
+      const c = opts.centre;
+      u.uSwirlCentre.value.set(c.x ?? c[0] ?? 0, c.y ?? c[1] ?? 0);
+    }
+  }
+  get path() { return Object.keys(PATH_MODES).find((k) => PATH_MODES[k] === this.material.uniforms.uPath.value); }
+  /** A per-dot stagger ORDER in [0,1) (0 = crosses first) that replaces the random seed's slot in the stagger
+   *  window — aSeed (twinkle/drift phase) is untouched, so this is invisible to switch at an endpoint.
+   *  `offset` (points) writes a slice (the rest keeps its values). null → back to the random order. */
+  setOrder(order, offset = 0) {
+    const u = this.material.uniforms.uOrderOn;
+    if (order == null) {
+      if (u.value !== 0) { u.value = 0; this._epoch++; }
+      return;
+    }
+    const a = this.points.geometry.getAttribute('aOrder');
+    a.array.set(order.length + offset > this.count ? order.subarray(0, this.count - offset) : order, offset);
+    a.needsUpdate = true;
+    u.value = 1;
+    this._epoch++;
+  }
+  /** Comet streaks: `k` = length in frames of travel (0 = off). opts: { max (CSS px cap), tail (0..1 tail
+   *  brightness), conserve (0 = the comet adds light, 1 = its energy spreads along it) }. */
+  setStreak(k, opts = {}) {
+    const u = this.material.uniforms;
+    u.uStreak.value = k;
+    if (opts.max != null) u.uStreakMax.value = opts.max;
+    if (opts.tail != null) u.uStreakTail.value = opts.tail;
+    if (opts.conserve != null) u.uStreakConserve.value = opts.conserve;
+  }
+  /** (1/60 s) ÷ the last frame's duration: the per-frame travel × this = travel per 60-fps frame, so a comet
+   *  is as long on a 120 Hz display as on a 60 Hz one. The Motion door sets it each frame (default 1). */
+  setStreakRate(r) { this.material.uniforms.uStreakRate.value = r; }
+  /** Drawing-buffer size in device px (the streak converts NDC motion → px). */
+  setViewport(w, h) { this.material.uniforms.uViewport.value.set(w, h); }
+  /** Aerial perspective: { far, near, strength } (any subset; relative to the focus distance), or
+   *  false/null to switch it off. far = relative depth past the focus plane where haze is full; near = the
+   *  relative depth below which dots dissolve (fully gone at near/2); strength = the far fade (0..1). */
+  setHaze(cfg) {
+    const u = this.material.uniforms;
+    if (!cfg) { u.uHazeOn.value = 0; return; }
+    u.uHazeOn.value = cfg.on === false ? 0 : 1;
+    if (cfg.far != null) u.uHazeFar.value = cfg.far;
+    if (cfg.near != null) u.uHazeNear.value = cfg.near;
+    if (cfg.strength != null) u.uHazeStrength.value = cfg.strength;
+  }
+  /** The camera's focus distance (camera → the point it looks at), world units — haze's depth yardstick. */
+  setFocus(d) { this.material.uniforms.uFocus.value = d; }
+  /** Once per RENDERED frame, before rendering: last frame's uT becomes uTPrev (the streak's finite
+   *  difference). A frame in which the pair/order/path/stagger changed gets uTPrev = uT (no streak) — the old
+   *  uT means nothing against the new endpoints. Pages that never call this never streak (uStreak = 0). */
+  beginFrame() {
+    const u = this.material.uniforms, t = u.uT.value;
+    u.uTPrev.value = this._frameEpoch === this._epoch && this._frameT != null ? this._frameT : t;
+    this._frameT = t; this._frameEpoch = this._epoch;
+  }
+  /** Monotone counter of changes that alter what uT means (pair writes, seeds, order, path, stagger). */
+  get epoch() { return this._epoch; }
 }
 
 const VERT = /* glsl */ `
@@ -272,6 +397,24 @@ const VERT = /* glsl */ `
   uniform float uSpinTime;
   uniform vec2 uSpinCentre;
   uniform float uSpinOn;
+  // motion (D4)
+  uniform float uTPrev;
+  uniform float uPath;
+  uniform float uBend;
+  uniform float uFan;
+  uniform vec2 uSwirlCentre;
+  uniform float uSwirlDir;
+  uniform float uSwirlTurns;
+  uniform float uOrderOn;
+  uniform float uStreak;
+  uniform float uStreakRate;
+  uniform float uStreakMax;
+  uniform vec2 uViewport;
+  uniform float uHazeOn;
+  uniform float uFocus;
+  uniform float uHazeFar;
+  uniform float uHazeNear;
+  uniform float uHazeStrength;
 
   attribute vec2 aSource;
   attribute vec2 aTarget;
@@ -283,21 +426,60 @@ const VERT = /* glsl */ `
   attribute float aSpinOnset;
   attribute float aSourceTone;
   attribute float aTargetTone;
+  attribute float aOrder;
 
   varying float vDensity;
   varying float vTwinkle;
-  varying vec3 vTone; // x = source tone, y = target tone, z = this dot's lt (the blend between them)
+  varying vec3 vTone;   // x = source tone, y = target tone, z = this dot's lt (the blend between them)
+  varying vec3 vStreak; // xy = unit travel direction in gl_PointCoord's frame (y down) · z = round width / sprite size (1 = round)
+  varying float vFade;  // aerial perspective × near-dissolve (1 = untouched)
 
-  // Smooth, slightly eased blend so the field "settles" rather than slides linearly.
+  const float TAU = 6.2831853;
+
+  // This dot's progress through its OWN stagger window at a given uT (o = its order slot in [0,1)).
+  float ltAt(float T, float o, float w) { return clamp((T - o * (1.0 - w)) / w, 0.0, 1.0); }
+
+  // Where the dot is along its PATH at progress lt (tgt = its target, possibly spun). Every mode is EXACTLY
+  // the lerp at lt = 0 and lt = 1 — the endpoints (the layouts) are never touched.
+  vec2 pathAt(float lt, vec2 tgt) {
+    vec2 p = mix(aSource, tgt, lt);
+    if (uPath < 0.5 || lt <= 0.0 || lt >= 1.0) return p;
+    vec2 d = tgt - aSource;
+    if (uPath < 1.5) {
+      // ARC — a quadratic bezier whose control point sits off the chord's midpoint, perpendicular to the
+      // travel, by bend × travel distance: bezier − lerp = 2·lt·(1−lt)·(C − mid), so the motion ALONG the
+      // chord is the lerp's and only the bow is added. Side + magnitude per dot from two seed hashes.
+      float h1 = fract(sin(aSeed * 12.9898 + 1.7) * 43758.5453);
+      float h2 = fract(sin(aSeed * 78.233 + 4.1) * 43758.5453);
+      float side = h1 < 0.5 * uFan ? -1.0 : 1.0;
+      return p + vec2(-d.y, d.x) * (side * 2.0 * lt * (1.0 - lt) * uBend * (0.55 + 0.45 * h2));
+    }
+    // SWIRL — radius + angle about a centre, interpolated separately: the field winds in / unwinds out.
+    vec2 a = aSource - uSwirlCentre, b = tgt - uSwirlCentre;
+    float ra = length(a), rb = length(b);
+    float tb0 = rb > 1.0e-3 ? atan(b.y, b.x) : 0.0;
+    float ta = ra > 1.0e-3 ? atan(a.y, a.x) : tb0;
+    float tb = rb > 1.0e-3 ? tb0 : ta;
+    float dth = tb - ta;
+    if (uSwirlDir > 0.5) dth = mod(dth, TAU);                // every dot turns CCW (a vortex)
+    else if (uSwirlDir < -0.5) dth = mod(dth, TAU) - TAU;    // every dot turns CW (retraces a CCW swirl)
+    else dth -= TAU * floor(dth / TAU + 0.5);                // each dot's shortest turn
+    dth += TAU * uSwirlTurns * (uSwirlDir < -0.5 ? -1.0 : 1.0); // whole extra turns → the endpoint stays exact
+    float th = ta + dth * lt;
+    return uSwirlCentre + mix(ra, rb, lt) * vec2(cos(th), sin(th));
+  }
+
   void main() {
     // Per-dot staggered transition into a cascading swarm, not a rigid slide. Each dot
-    // crosses over a window w of uT, starting at a seed-based offset. Endpoints are
-    // preserved (everyone is fully at source at uT=0, fully at target at uT=1).
+    // crosses over a window w of uT, starting at an order-based offset: the random seed (an organic
+    // flock) or, while the Motion door asks, a MEANINGFUL order (aOrder). Endpoints are preserved
+    // (everyone is fully at source at uT=0, fully at target at uT=1).
     float seed01 = fract(aSeed * 0.1591549431);
+    float o = uOrderOn > 0.5 ? aOrder : seed01;
     // The floor only guards the division — keep it an EPSILON, not a taste value: per-dot windows
     // of a few 1e-4 are legitimate (thousands of ordered dots crossing one at a time).
     float w = max(uStagger, 1.0e-4);
-    float lt = clamp((uT - seed01 * (1.0 - w)) / w, 0.0, 1.0);
+    float lt = ltAt(uT, o, w);
 
     // Ordered spin — a LANDED dot's target rotates about uSpinCentre on a real-time clock. gate ≈ 0
     // until lt≈1, so a still-inbound dot keeps its clean path (the spiral pour is untouched); the
@@ -312,7 +494,8 @@ const VERT = /* glsl */ `
       tgt = uSpinCentre + vec2(d.x * cs - d.y * sn, d.x * sn + d.y * cs);
     }
 
-    vec2 pos = mix(aSource, tgt, lt);
+    vec2 base = pathAt(lt, tgt);
+    vec2 pos = base;
     float density = mix(aSourceDensity, aTargetDensity, lt);
     vDensity = density;
     vTone = vec3(aSourceTone, aTargetTone, lt); // the colour choice travels with the dot, blended by ITS lt
@@ -348,15 +531,55 @@ const VERT = /* glsl */ `
       ? (0.85 + 0.15 * sin(uTime * 1.6 + aSeed))
       : (1.0 - uShimmer * (0.5 - 0.5 * sin(uTime * uShimmerSpeed + aSeed * 1.7)));
 
-    vec4 mvPosition = modelViewMatrix * vec4(pos, aZ * uZScale, 1.0);
+    float zLift = aZ * uZScale;
+    vec4 mvPosition = modelViewMatrix * vec4(pos, zLift, 1.0);
     gl_Position = projectionMatrix * mvPosition;
 
     // Data: dense cores read a touch larger. Structure: uniform fine dust.
     float sizeBoost = uGlow > 0.5 ? (0.6 + 0.95 * density) : 1.0;
-    gl_PointSize = uSize * sizeBoost * uPixelRatio * (300.0 / -mvPosition.z);
+    float D = uSize * sizeBoost * uPixelRatio * (300.0 / -mvPosition.z);
     // Cap on-screen size so a zoom-in keeps a FINE field of dots instead of fat discs
     // (perspective otherwise grows each point ∝ 1/distance without limit).
-    gl_PointSize = min(gl_PointSize, uMaxSize * uPixelRatio);
+    D = min(D, uMaxSize * uPixelRatio);
+
+    // The fragment discards these anyway (data < 0.02, structure < 0.01) — clip them here instead, so the
+    // parked surplus (most of every pool) costs no rasterisation. Same pixels.
+    bool hidden = density < (uGlow > 0.5 ? 0.02 : 0.01);
+
+    // COMET STREAK — the dot's own screen-space travel since last frame (same path, same camera: an orbiting
+    // camera never streaks a resting field), × uStreak frames, capped. The sprite grows to hold the comet and
+    // its centre slides back half the tail, so the head stays exactly where the dot is.
+    vStreak = vec3(0.0, 0.0, 1.0);
+    if (uStreak > 0.0 && !hidden && abs(uT - uTPrev) < 0.35) {
+      float ltp = ltAt(uTPrev, o, w);
+      if (ltp != lt) {
+        vec4 cp = projectionMatrix * modelViewMatrix * vec4(pathAt(ltp, tgt) + (pos - base), zLift, 1.0);
+        if (cp.w > 0.0 && gl_Position.w > 0.0) {
+          vec2 v = (gl_Position.xy / gl_Position.w - cp.xy / cp.w) * 0.5 * uViewport * (uStreak * uStreakRate);
+          float L = length(v);
+          float Lc = min(L, uStreakMax * uPixelRatio);
+          if (Lc > 0.75) {
+            vec2 dir = v / L;
+            gl_Position.xy -= dir * (0.5 * Lc) / (0.5 * uViewport) * gl_Position.w;
+            vStreak = vec3(dir.x, -dir.y, D / (D + Lc));
+            D += Lc;
+          }
+        }
+      }
+    }
+    gl_PointSize = D;
+
+    // AERIAL PERSPECTIVE — depth relative to the focus distance (1 = the plane the camera looks at). A flat
+    // field seen top-down is at 1 everywhere, so this is a no-op at every top-down home; tilt the camera and
+    // the far land fades toward the background while dots closer than uHazeNear dissolve (never balloon).
+    vFade = 1.0;
+    if (uHazeOn > 0.5) {
+      float rel = -mvPosition.z / max(uFocus, 1.0e-3);
+      float hz = uHazeStrength * smoothstep(1.03, 1.0 + max(uHazeFar, 0.05), rel);
+      float nr = max(uHazeNear, 1.0e-3);
+      vFade = (1.0 - hz) * smoothstep(nr * 0.5, nr, rel);
+    }
+    if (hidden || vFade <= 0.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // outside the clip volume → culled
   }
 `;
 
@@ -372,10 +595,14 @@ const FRAG = /* glsl */ `
   uniform vec3 uRampWarm[${MAX_RAMPS}];
   uniform vec3 uMatte;
   uniform vec3 uRoleColors[${MAX_ROLES}];
+  uniform float uStreakTail;
+  uniform float uStreakConserve;
 
   varying float vDensity;
   varying float vTwinkle;
   varying vec3 vTone;
+  varying vec3 vStreak;
+  varying float vFade;
 
   vec3 ramp(float k, float d) {
     // Pick ramp k (constant-index selects — portable), then the SAME curve as always:
@@ -403,7 +630,23 @@ const FRAG = /* glsl */ `
   void main() {
     // Soft round sprite: bright core, smooth falloff to the edge.
     vec2 uv = gl_PointCoord - 0.5;
-    float r = length(uv) * 2.0;
+    float r;
+    float streakK = 1.0;
+    if (vStreak.z < 0.999) {
+      // A COMET: a capsule along the travel direction — the round dot's own profile across it, a head at
+      // the dot's true position, a tail fading back along where it just was.
+      float b = 0.5 * vStreak.z;               // half-width (point-coord units; the sprite is 1 wide)
+      float h = 0.5 - b;                       // half-length of the capsule's core segment
+      float along = dot(uv, vStreak.xy);       // + = toward the head
+      float across = dot(uv, vec2(-vStreak.y, vStreak.x));
+      float s = clamp(along, -h, h);
+      r = length(vec2(along - s, across)) / b;
+      // tail fade + energy spread, both weighted by the elongation (1 − z) → continuous from the round dot
+      float e = 1.0 - vStreak.z;
+      streakK = mix(1.0, mix(uStreakTail, 1.0, smoothstep(-0.5, 0.5, along)), e) * mix(1.0, vStreak.z, uStreakConserve);
+    } else {
+      r = length(uv) * 2.0;
+    }
     if (r > 1.0) discard;
     float core = smoothstep(1.0, 0.0, r);
 
@@ -431,6 +674,6 @@ const FRAG = /* glsl */ `
       if (vTone.y != vTone.x) col = mix(col, role(vTone.y), vTone.z); // a role change blends in flight too
       gl_FragColor = vec4(col * (0.9 * (0.32 + 4.5 * vDensity)) * vTwinkle, a);
     }
-    gl_FragColor.a *= uOpacity;
+    gl_FragColor.a *= uOpacity * streakK * vFade; // streakK = vFade = 1 at rest with haze off → unchanged
   }
 `;

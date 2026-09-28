@@ -57,7 +57,7 @@ export const HUD_TUNE = {
   glassLift: 0.0022,     // a faint linear lift so the glass reads as a surface, not a hole
   ground: 0.42,          // the soft ground above the rim (under the ribbon's columns) …
   groundH: 56,           // … and how far up it fades (CSS px)
-  readout: 0.55,         // the feathered backing behind the top-left readout
+  readout: 0.72,         // the vignette behind the top-left readout (0.55 lost the text over a bright zoomed-in field)
   rimDensity: 0.1, rimGap: 6,  // the glass's rim of grey structure dots
   rimInset: 10,          // the rim sits this far above the ribbon track's bottom (the caret hangs below it)
 };

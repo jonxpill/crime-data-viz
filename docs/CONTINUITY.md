@@ -338,3 +338,9 @@ specific instruments (deferred) · where it lives / distribution · a name.
   tall, the safe rect lost all height, the fit had no solution and init threw — a black page. Declaring fixed
   zones (`--claim-*`) from the chrome's own fixed geometry made the frame stable across state and time; measure
   only as a fallback. (D5 usability pass, 2026-09-28) (?)
+- **Tie a transient modifier's lifetime to the identity of the state it decorates, not to completion
+  callbacks.** The Motion door's arcs/orders/comets end when their pair LANDS or when the pair's epoch moves
+  (any new write) — so a flip interrupted by a pie, a drill landing via a re-seed, a year pair after a flip all
+  clean up without a single hook at the dozen completion sites. Same packet: never give one random seed two
+  jobs (stagger order + drift/twinkle phase) — switching one then visibly jolts the other; give the new job
+  its own channel. (D4 motion, 2026-09-28) (?)
