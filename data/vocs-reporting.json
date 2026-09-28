@@ -1,0 +1,74 @@
+{
+  "source": "Stats SA P0341 — Governance, Public Safety and Justice Survey (GPSJS, successor to the Victims of Crime Survey/VOCS). Operative rates: GPSJS 2024/25 release (published Aug 2025). Cross-checked against the GPSJS 2023/24 release (published Aug 2024) — the 2023/24 values match to the digit across both publications.",
+  "grain": "national",
+  "grainNote": "GPSJS publishes reporting-to-police rates at NATIONAL grain only; provincial tables cover experience-of-crime prevalence, not reporting rates. Western Cape rates are not published, so the national rate is applied uniformly across stations — that uniformity is declared in the app (the true geography of underreporting is unknown).",
+  "method": "Per station-year, unreported estimate U = R × (1 − r) / r, where R = SAPS reported count and r = the survey share of victims/households reporting SOME OR ALL incidences to the police (all + some, from the publication's own stacked-bar components).",
+  "rates": {
+    "burglary": {
+      "r": 0.434,
+      "confidence": "high",
+      "surveyCategory": "Housebreaking/burglary (no contact), household-level",
+      "sapsCategory": "burglary_res (residential burglary)",
+      "src": "GPSJS 2024/25 (P0341), Figure 23: 2024/25 reported all 40,1% + some 3,3% = 43,4%",
+      "crosscheck": "GPSJS 2023/24 = 44,1% in BOTH the 2023/24 release (household reporting chart, p.9) and GPSJS 2024/25 Figure 23 (all 41,9% + some 2,2%). Series: 56,1% (2020/21) · 59,2% (2021/22) · 51,4% (2022/23) · 44,1% (2023/24) · 43,4% (2024/25)."
+    },
+    "robbery": {
+      "r": 0.363,
+      "confidence": "medium",
+      "surveyCategory": "Street robbery, individuals 16+, victim-level",
+      "sapsCategory": "aggr_robbery + common_robbery (ALL robbery)",
+      "src": "GPSJS 2024/25 (P0341), Figure 51: 2024/25 reported all 35,4% + some 0,9% = 36,3% (the text's complement, 100 − 63,6% not reported, rounds to 36,4% — component sum used)",
+      "crosscheck": "GPSJS 2023/24 = 44,2% in BOTH the 2023/24 release (individual reporting chart, p.18: 'Street Robbery 44,2%') and GPSJS 2024/25 Figure 51 (all 44,2% + some 0,0%).",
+      "caveats": [
+        "Year-to-year swing 44,2% → 36,3% — the operative rate is the latest year, declared as such.",
+        "MAPPING: the app's robbery is SAPS aggravated + common robbery (street robbery, home robbery, business robbery, hijackings...). The survey's street-robbery rate is the closest published analogue; home robbery reports at a HIGHER rate (57,6% household-level 2023/24), so the estimate likely overstates unreported home-robbery within the aggregate."
+      ]
+    },
+    "sexoff": {
+      "r": 0.563,
+      "confidence": "low",
+      "floor": true,
+      "surveyCategory": "Sexual offences, individuals 16+, victim-level",
+      "sapsCategory": "sexual_offences (source aggregate)",
+      "src": "GPSJS 2024/25 (P0341), Table 37: percentage of individuals who reported all or some incidences of sexual offences to the police, 2024/25 = 56,3%",
+      "crosscheck": "GPSJS 2023/24 = 67,5% in BOTH the 2023/24 release (individual reporting chart, p.18) and GPSJS 2024/25 Table 37. Series: 56,0% (2022/23, sample flagged small) · 67,5% (2023/24) · 56,3% (2024/25).",
+      "caveats": [
+        "FLOOR: victimisation surveys themselves under-capture sexual offences (disclosure to an interviewer is a barrier, and the survey covers only individuals 16+) — GPSJS 2024/25 measures just 60 000 incidences nationally while SAPS records similar volumes REPORTED. The estimate is a floor on the true unreported count, never a measure of it.",
+        "Small survey sample (Table 37 flags earlier years '*: sample too small, CVs too high'); rate swings 56 ↔ 67,5 across three years."
+      ]
+    },
+    "carjacking": {
+      "r": 0.768,
+      "confidence": "medium",
+      "surveyCategory": "Hijacking of a motor vehicle, individuals, victim-level",
+      "sapsCategory": "carjacking (SAPS subcategory of aggravated robbery)",
+      "src": "GPSJS 2024/25 (P0341), Figure 68: 2024/25 reported all 76,8% (no 'some' band published; 23,2% reported none)",
+      "crosscheck": "GPSJS 2023/24 = 65,4% in BOTH the 2023/24 release (individual reporting chart, p.18: 'Hijacking 65,4%') and GPSJS 2024/25 Figure 68.",
+      "caveats": [
+        "Year-to-year swing 65,4% → 76,8% on a small victim base (GPSJS 2024/25: 102 000 hijacking victims nationally) — the operative rate is the latest year, declared as such."
+      ]
+    }
+  },
+  "excluded": {
+    "murder": "Near-fully recorded — GPSJS 2023/24 household reporting chart (p.9): 100,0% of households that experienced murder reported it to the police. No unreported estimate is meaningful; a body is counted whether or not anyone files a report.",
+    "commercial": "Business/commercial crime falls outside the GPSJS household and individual survey scope — no survey reporting rate exists. EXCLUDED, never guessed."
+  },
+  "publications": [
+    {
+      "id": "GPSJS 2024/25",
+      "title": "Governance, Public Safety, and Justice Survey GPSJS 2024/25 (Statistical Release P0341)",
+      "publisher": "Statistics South Africa",
+      "published": "2025-08",
+      "url": "https://www.statssa.gov.za/publications/P0341/P03412025.pdf",
+      "archived": "https://web.archive.org/web/20260403103702/https://www.statssa.gov.za/publications/P0341/P03412025.pdf"
+    },
+    {
+      "id": "GPSJS 2023/24",
+      "title": "Governance, Public Safety and Justice Survey 2023/24, Victims of Crime Release (P0341)",
+      "publisher": "Statistics South Africa",
+      "published": "2024-08",
+      "url": "https://www.statssa.gov.za/publications/P0341/GPSJS%202023_24%20Final%20P0341%20Victims%20of%20Crime%20Release%20%20.pdf",
+      "archived": "https://web.archive.org/web/20250203115018/https://www.statssa.gov.za/publications/P0341/GPSJS%202023_24%20Final%20P0341%20Victims%20of%20Crime%20Release%20%20.pdf"
+    }
+  ]
+}

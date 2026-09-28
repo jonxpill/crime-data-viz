@@ -1,4 +1,5 @@
 import { neighbourCounts } from './density.js';
+import { forensicsStats, LOOK_CLOSER_D } from './forensics.js';
 
 /**
  * Cape Town layouts — the REAL-data instruments. Still just pure functions
@@ -415,7 +416,219 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
     return { positions, density, boundaries, R, cx, cy };
   }
 
-  return { years, count: COUNT, layouts, totals, pieLayout, triPieLayout, resolvePieLayout, monthly, months: MONTH_LABELS };
+  /**
+   * THE FORENSICS STRIP — statistics about the statistics. Every station becomes a thin vertical
+   * ribbon of its 60 MONTHLY RETURNS (one dot = one month's filed tally, NOT one crime: this view
+   * inspects the bookkeeping, so the monthly return itself is the honest unit — the pool could
+   * never hold one-dot-per-crime for 60 months anyway, 101 stations' 5-year totals exceed their
+   * peak-year slots). Columns sort by dispersion D ascending: the most crystalline — suspiciously
+   * regular — land LEFT, the "look closer" end. Within a column, dot m sits at month-row m (Apr
+   * 2021 bottom → Mar 2026 top) and its x-offset is that month's seasonally-adjusted residual in
+   * Poisson units (z = r/√mean, one shared scale): an honest tally wobbles ±~2σ, a rigid series
+   * draws a plumb line — and the plumb line packs its dots tighter, so density = light does the
+   * flagging by itself. Stations with mean < 5/month have no testable signal: they park in a
+   * separate DIM group past a seam ("too small to test"), never ranked, held at flat low density
+   * so tightness there can't masquerade as a look-closer glow. Identity is conserved: dot j of a
+   * station is always month j (same slots across crime flips — the re-sort IS the show); the huge
+   * slot surplus waits at the roosts.
+   */
+  function forensicsLayout(type, { W = 800, H = 440 } = {}) {
+    const stats = forensicsStats(stations, type);
+    const idx = stations.map((_, i) => i);
+    const tested = idx.filter((i) => stats[i].testable).sort((a, b) => stats[a].D - stats[b].D);
+    const small = idx.filter((i) => !stats[i].testable).sort((a, b) => stats[a].D - stats[b].D);
+    const GAP = small.length ? 3 : 0;                       // a visible seam (in columns) before the untested group
+    const ncol = tested.length + small.length;
+    const dx = Math.min(W / (ncol + GAP), 30);              // capped so a 5-station district doesn't stretch absurdly wide
+    const x0 = (-(ncol + GAP) * dx) / 2;
+    const colX = (r) => x0 + (r + 0.5 + (r >= tested.length ? GAP : 0)) * dx;
+    const nM = (stations[0] && stations[0].monthly && stations[0].monthly[type] || []).length;
+    const JIT = 0.5;                                        // base wobble width (a D≈1 tally)
+    const UNTESTED_D = 0.10;                                // flat, dim — excluded means excluded
+
+    const positions = new Float32Array(COUNT * 2);
+    const density = new Float32Array(COUNT);
+    const activeXY = [], activeIdx = [], activeTested = [];
+    const columns = [];
+    const ordered = tested.concat(small);
+    let reports = 0;
+    for (const s of stations) for (const v of (s.monthly && s.monthly[type]) || []) reports += v;
+    for (let r = 0; r < ordered.length; r++) {
+      const si = ordered[r], sl = slots[si], st = stats[si];
+      const x = colX(r);
+      columns.push({ si, x, D: st.D, testable: st.testable });
+      // Width IS the verdict: the z-scores are σ-normalized, which ERASES per-station variance by
+      // construction (every ribbon came out the same width — the strip read as uniform). Scale the
+      // wobble back by √D: a tally (D≈1) keeps the base width, Bishop Lavis (D≈13) visibly
+      // thrashes across its neighbours, an under-dispersed row draws a tight plumb line.
+      const gw = st.testable ? Math.min(3.6, Math.sqrt(Math.max(st.D, 0.2))) : 0.7;
+      const n = Math.min(sl.K, nM);                         // every station's K ≥ 193 ≥ 60, so n = 60 in practice
+      for (let j = 0; j < sl.K; j++) {
+        const p = sl.base + j;
+        if (j < n) {
+          const zc = Math.max(-3, Math.min(3, st.z[j]));    // clamp the rare wild month to the column edge
+          const px = x + (zc / 3) * dx * JIT * gw;
+          const py = -H / 2 + ((j + 0.5) / nM) * H;
+          positions[p * 2] = px; positions[p * 2 + 1] = py;
+          activeXY.push(px, py); activeIdx.push(p); activeTested.push(st.testable);
+        } else {                                            // surplus waits at its own roost (invisible)
+          positions[p * 2] = roostPos[p * 2]; positions[p * 2 + 1] = roostPos[p * 2 + 1];
+        }
+      }
+    }
+    // density = local crowding, ONE gMax across the whole strip (a crystalline plumb line stacks
+    // tight → glows hot; an honest wobble spreads → stays cool). The untested group is HELD at a
+    // flat dim value instead: we refused to test it, so its tightness must not glow "look closer".
+    // Colour IS the verdict too — not local crowding (whose differences were invisible at 150
+    // columns). Each ribbon takes ONE colour from log-D through the existing cool→molten ramp:
+    // tally-like sits calm blue; batching-noisy climbs to molten at the right edge. DECLARED in
+    // the hint (colour = statistical liveliness, never crime volume). Untested stays flat-dim.
+    const dLo = Math.log(0.55), dHi = Math.log(14);
+    const dOf = (D) => {
+      const v = (Math.log(Math.max(D, 0.3)) - dLo) / (dHi - dLo);
+      return 0.16 + 0.8 * Math.pow(Math.max(0, Math.min(1, v)), 0.85);
+    };
+    let k2 = 0;
+    for (let r2 = 0; r2 < ordered.length; r2++) {
+      const st2 = stats[ordered[r2]];
+      const v2 = st2.testable ? dOf(st2.D) : UNTESTED_D;
+      const nDots = Math.min(slots[ordered[r2]].K, nM);
+      for (let j2 = 0; j2 < nDots; j2++) density[activeIdx[k2++]] = v2;
+    }
+    // The frame spec (grey skeleton + captions downstream): zone extents, the boundary seams, and
+    // the D = 1 reference tick interpolated into the sorted ranks (clamped to an edge when every
+    // testable station sits on one side of 1 — with real SAPS data none sit below 0.77, so the
+    // look-closer zone can be honestly EMPTY).
+    const zones = [];
+    const nLook = tested.filter((i) => stats[i].D < LOOK_CLOSER_D).length;
+    if (nLook) zones.push({ x0: colX(0) - dx / 2, x1: colX(nLook - 1) + dx / 2, n: nLook, label: `quieter than a tally — look closer · D < ${LOOK_CLOSER_D}` });
+    if (tested.length > nLook) zones.push({ x0: colX(nLook) - dx / 2, x1: colX(tested.length - 1) + dx / 2, n: tested.length - nLook, label: 'behaves like a tally' });
+    if (small.length) zones.push({ x0: colX(tested.length) - dx / 2, x1: colX(ncol - 1) + dx / 2, n: small.length, label: 'too small to test' });
+    const edges = [];
+    if (nLook && tested.length > nLook) edges.push(colX(nLook) - dx / 2);
+    if (small.length && tested.length) edges.push(x0 + (tested.length + GAP / 2) * dx); // mid-seam
+    let d1x = null;
+    if (tested.length) {
+      const D0 = stats[tested[0]].D, Dn = stats[tested[tested.length - 1]].D;
+      if (D0 >= 1) d1x = colX(0) - dx / 2;
+      else if (Dn < 1) d1x = colX(tested.length - 1) + dx / 2;
+      else for (let r = 1; r < tested.length; r++) {
+        const a = stats[tested[r - 1]].D, b = stats[tested[r]].D;
+        if (b >= 1) { d1x = colX(r - 1) + ((1 - a) / (b - a)) * dx; break; }
+      }
+    }
+    const frame = { x0, x1: x0 + (ncol + GAP) * dx, baseY: -H / 2 - 16, topY: H / 2, edges, d1x, zones };
+    return { positions, density, columns, stats, frame, W, H, reports, active: activeIdx.length, threshold: LOOK_CLOSER_D };
+  }
+
+  // slotRanges: station i's contiguous [base, K] in this build's buffer (same order as data.stations)
+  // — lets a downstream post-pass (the suburb focus dim) address ONE station's dots without the
+  // builder knowing what "focus" means. Identical across raw/percapita (K is sized to the max of both).
+  const slotRanges = slots.map((sl) => [sl.base, sl.K]);
+
+  return { years, count: COUNT, layouts, totals, slotRanges, pieLayout, triPieLayout, resolvePieLayout, forensicsLayout, monthly, months: MONTH_LABELS };
+}
+
+/**
+ * THE UNLIT FIELD — layouts for the THIRD semantic role: ESTIMATED ABSENCE. Per station-year the
+ * survey-implied unreported count U = R × (1 − r) / r (R = SAPS reported, r = the GPSJS national
+ * reporting rate from data/vocs-reporting.json — every rate cited there, uniformity declared in
+ * the app). Same conserved-slot grammar as the data build (fixed slots sized to the peak, surplus
+ * at an off-screen roost) so U condenses in / disperses out as a swarm, and the year scrub reads
+ * as the shadow breathing alongside the reported field. Density is FLAT-dim: the estimate must
+ * never fake a density read — its only honest channel is dot COUNT.
+ *
+ * Crimes without a survey rate (murder, commercial) return null — EXCLUDED, never guessed; the
+ * app shows a note instead of dots.
+ */
+export function buildUnlitLayouts(data, ratesSpec, { types, roost = 700, dim = 0.32 } = {}) {
+  const years = data.meta.years;
+  const stations = data.stations;
+  const rng = mulberry32(0x11a7e5); // own seed — the shadow's jitter must not echo the data's
+  const included = types.filter((ty) => ratesSpec.rates[ty]);
+
+  const est = (s, type, y) => { // U for one station-year — the exact number the tooltip shows
+    const spec = ratesSpec.rates[type];
+    const R = (s.crimes[type] && s.crimes[type][y]) || 0;
+    return Math.round((R * (1 - spec.r)) / spec.r);
+  };
+  const dotsOf = (s, type, y, mode) => {
+    const u = est(s, type, y);
+    return mode === 'percapita' ? Math.round((u / s.pop) * PC_SCALE) : u; // same PC_SCALE as the data → rates stay comparable
+  };
+
+  // Slots sized to the busiest (crime, year, mode) SINGLE crime — the unlit field never joins the
+  // compare views, so the pool needs the max, not the sum. Both modes share the buffer (like the
+  // data build) so raw ⇄ per-capita morphs instead of resizing.
+  const slots = stations.map((s) => {
+    let peak = 0;
+    for (const ty of included) for (const y of years) peak = Math.max(peak, dotsOf(s, ty, y, 'raw'), dotsOf(s, ty, y, 'percapita'));
+    const K = peak;
+    const offs = new Float32Array(K * 2);
+    for (let j = 0; j < K; j++) {
+      // HIGH jitter (0.75·r vs the data's 0.5·r) — a diffuse halo AROUND the reported cluster,
+      // reading as shadow-population, never as a second data core.
+      const ang = rng() * TAU;
+      const rad = Math.abs(gauss(rng)) * 0.75 * s.r;
+      offs[j * 2] = Math.cos(ang) * rad;
+      offs[j * 2 + 1] = Math.sin(ang) * rad;
+    }
+    return { s, K, offs };
+  });
+  let base = 0;
+  for (const sl of slots) { sl.base = base; base += sl.K; }
+  const COUNT = base;
+
+  // Roosts — same off-frame grammar as the data pool: each slot waits out past the frame edge in
+  // its station's direction, so toggling U condenses the shadow IN and disperses it OUT.
+  const roostPos = new Float32Array(COUNT * 2);
+  for (const sl of slots) {
+    const central = Math.hypot(sl.s.x, sl.s.y) < 30;
+    const baseAng = Math.atan2(sl.s.y, sl.s.x);
+    for (let j = 0; j < sl.K; j++) {
+      const idx = sl.base + j;
+      const ang = central ? rng() * TAU : baseAng + (rng() - 0.5) * 0.9;
+      const rr = roost * (0.8 + rng() * 0.5);
+      roostPos[idx * 2] = Math.cos(ang) * rr;
+      roostPos[idx * 2 + 1] = Math.sin(ang) * rr;
+    }
+  }
+  const dispersePose = { positions: roostPos, density: new Float32Array(COUNT) };
+
+  // Lazy, single-residency cache (the monthly() pattern): 18 year-layouts per (crime, mode) is
+  // ~14 MB — keep exactly one combination resident.
+  const cache = new Map();
+  function layout(type, yiArg, mode = 'raw') {
+    if (!ratesSpec.rates[type]) return null; // excluded (murder/commercial) — the caller shows the note
+    const key = type + '|' + mode;
+    let got = cache.get(key);
+    if (!got) {
+      cache.clear();
+      got = years.map((y) => {
+        const positions = new Float32Array(COUNT * 2);
+        const density = new Float32Array(COUNT);
+        for (const sl of slots) {
+          const n = Math.min(sl.K, dotsOf(sl.s, type, y, mode));
+          for (let j = 0; j < sl.K; j++) {
+            const idx = sl.base + j;
+            if (j < n) {
+              positions[idx * 2] = sl.s.x + sl.offs[j * 2];
+              positions[idx * 2 + 1] = sl.s.y + sl.offs[j * 2 + 1];
+              density[idx] = dim; // FLAT — count is the only channel; no emergent-density claim
+            } else {
+              positions[idx * 2] = roostPos[idx * 2];
+              positions[idx * 2 + 1] = roostPos[idx * 2 + 1];
+            }
+          }
+        }
+        return { positions, density };
+      });
+      cache.set(key, got);
+    }
+    return got[yiArg];
+  }
+
+  return { count: COUNT, layout, disperse: () => dispersePose };
 }
 
 /**
@@ -492,6 +705,157 @@ export function triPieFrameLayout(n, { centers = [], R = 120, boundaries = [], f
     density[k] = 0;
   }
   return { positions, density, z };
+}
+
+/**
+ * THE TOLL — data endpoints for the 18-year murder accumulation ceremony (docs/plans/toll.md).
+ * Every recorded murder EVENT gets its OWN pool dot, allocated GLOBALLY in chronological order:
+ * dot k = the k-th murder, oldest year first (year-major). The murder-map layouts reuse one
+ * station slot across years, so eighteen years at once need this fresh allocation. Honesty:
+ * counts to the digit (M = Σ murder[y], asserted loudly); one dot per recorded murder throughout.
+ *
+ * BORN FROM TIME, NOT PLACE. There is no map source — during the sweep there is no dimmed province
+ * and no leftover cluster. SOURCE = born on the dial RING inside the event's OWN YEAR'S arc (0 =
+ * 2008/09 at twelve, clockwise, 360/Y per year), density 0 (invisible until time launches it), so
+ * as the hand sweeps past a year's tick, that year's dead EMERGE from its arc and stream inward.
+ *
+ * DISC = a RADIAL CUMULATIVE of the dead: radius ∝ running total, so each year adds a BAND whose
+ * THICKNESS is that year's toll (a heavy year sits visibly wider than a light one) and the outer
+ * radius IS all M — growth rings of loss, year one at the core, and it never resets. A thin dark
+ * SEAM gaps each ring so they're countable. This trades the pie's equal-AREA fill for
+ * equal-THICKNESS-per-death — the honest channel the eye can actually read (see docs/CONTINUITY).
+ * A monotone AGE tint (cool/deep core → warm/bright rim) shows the mass ageing; it says only AGE.
+ * Target angle is UNIFORM over 360° so each year's arc-block FANS from its birth arc into its ring.
+ * Dots the toll doesn't use sit at the caller's `park` pose in BOTH endpoints (invisible, still).
+ *
+ * @returns {{ source, disc, M:number, perYear:number[], cum:number[], seamRadii:number[],
+ *             r0:number, R:number, cx:number, cy:number } | null} null (loudly) if pool < M.
+ */
+export function tollLayouts(stations, { years, count, park = null, cx = 0, cy = 0, R = 240, dialR = 278 } = {}) {
+  const rng = mulberry32(0x70115eed);
+  const Y = years.length, arc = TAU / Y;
+  const perYear = years.map((y) => stations.reduce((a, s) => a + ((s.crimes.murder && s.crimes.murder[y]) || 0), 0));
+  const cum = [0];
+  for (const n of perYear) cum.push(cum[cum.length - 1] + n);
+  const M = cum[cum.length - 1];
+  console.info(`[toll] M = ${M.toLocaleString()} recorded murders · ${years[0]}–${years[Y - 1]} · pool ${count.toLocaleString()}`);
+  if (M > count) { console.error('[toll] the pool cannot hold the toll', { M, count }); return null; }
+
+  const r0 = R * 0.05;                                // small inner offset — no singular pile-up at the centre
+  const GAP = 2.0;                                    // dark seam between rings (err visible; tune by eye)
+  // Age tint: ONE monotone gradient across the Y rings — oldest cooler+deeper at the core, newest
+  // warmer+brighter at the rim (density drives the ramp cool→molten). It declares nothing but AGE.
+  const yearDensity = years.map((_, y) => 0.42 + 0.5 * (Y > 1 ? y / (Y - 1) : 0));
+
+  const source = { positions: new Float32Array(count * 2), density: new Float32Array(count) };
+  const disc = { positions: new Float32Array(count * 2), density: new Float32Array(count) };
+  if (park) { source.positions.set(park); disc.positions.set(park); }
+
+  // Event k = the k-th murder, year-major (chronological). Track the year as k crosses the cum's.
+  let yy = 0;
+  for (let k = 0; k < M; k++) {
+    while (yy < Y - 1 && k >= cum[yy + 1]) yy++;
+    // SOURCE — born ON THE DIAL RING within year yy's arc (same sin/cos convention as the hand +
+    // ticks: angle 0 = twelve, clockwise). Density 0 → invisible until its window opens under the
+    // sweeping hand, then it ignites inward. Time sheds the dead; place is gone.
+    const aBirth = (yy + 0.5) * arc + (rng() - 0.5) * arc * 0.9;   // within its own arc (±~half-arc)
+    const rBirth = dialR * (0.985 + rng() * 0.03);                  // on the ring, just outside the disc
+    source.positions[k * 2] = cx + Math.sin(aBirth) * rBirth;
+    source.positions[k * 2 + 1] = cy + Math.cos(aBirth) * rBirth;
+    source.density[k] = 0;
+    // DISC — the year's band by cumulative toll (thickness ∝ this year's count), inset by the seam
+    // gap so the ring is countable; target angle uniform 360° (the fan). Warm by age.
+    const rIn = r0 + (R - r0) * (cum[yy] / M), rOut = r0 + (R - r0) * (cum[yy + 1] / M);
+    const frac = (k - cum[yy] + rng()) / perYear[yy];               // position within the year's band
+    const dr = (rIn + GAP * 0.5) + frac * Math.max(0, rOut - rIn - GAP);
+    const da = rng() * TAU;
+    disc.positions[k * 2] = cx + Math.cos(da) * dr;
+    disc.positions[k * 2 + 1] = cy + Math.sin(da) * dr;
+    disc.density[k] = yearDensity[yy];
+  }
+  const seamRadii = [];
+  for (let y = 1; y < Y; y++) seamRadii.push(r0 + (R - r0) * (cum[y] / M));
+  return { source, disc, M, perYear, cum, seamRadii, r0, R, cx, cy };
+}
+
+/**
+ * Structure frame for the toll: the YEAR-DIAL — outer ring, 18 calendar ticks (2008/09 at
+ * twelve, clockwise), faint stratum seams where each year's annulus will end, and a HAND whose
+ * slice the caller rewrites as the sweep advances (`hand: { start, count }` indexes this same
+ * pool; tollHandLayout builds one pose of it). pieFrameLayout's contract: only `frameDots` draw
+ * the skeleton, the surplus parks off-screen (invisible, no pile-up).
+ */
+export function tollFrameLayout(n, { cx = 0, cy = 0, R = 240, dialR = 278, ticks = 18, seamRadii = [], frameDots = 200000, thin = 0.22, handN = 600 } = {}) {
+  const positions = new Float32Array(n * 2), density = new Float32Array(n), z = new Float32Array(n);
+  const rng = mulberry32(0x5eed1e);
+  const used = Math.min(n, frameDots);
+  const RING = Math.floor(used * 0.30);
+  const TICK = Math.floor(used * 0.07);
+  const SEAM = Math.floor(used * 0.42);              // the year seams carry the countability — budget them well
+  const HAND = Math.min(handN, Math.max(0, used - RING - TICK - SEAM));
+  let k = 0;
+  for (; k < RING; k++) {                            // the dial ring — a thin crisp circle
+    const a = rng() * TAU, r = dialR + gauss(rng) * thin;
+    positions[k * 2] = cx + Math.cos(a) * r;
+    positions[k * 2 + 1] = cy + Math.sin(a) * r;
+    density[k] = 0.5;
+  }
+  const tickEnd = k + TICK;                          // 18 short radial dashes crossing the ring
+  for (; k < tickEnd; k++) {
+    const i = (k - RING) % ticks;
+    const a = (i / ticks) * TAU;                     // 0 = twelve, clockwise (the hand's arc)
+    const r = dialR * (0.965 + rng() * 0.07);
+    const off = gauss(rng) * thin;
+    positions[k * 2] = cx + Math.sin(a) * r + Math.cos(a) * off;
+    positions[k * 2 + 1] = cy + Math.cos(a) * r - Math.sin(a) * off;
+    density[k] = 0.55;
+  }
+  // Stratum seams — a crisp grey ring line sitting IN each dark data-gap (structure isn't bloomed,
+  // so it stays sharp where the glowing bands bleed). Dots per seam ∝ its radius → even line weight.
+  // These are what you COUNT: one line per year boundary. Grey, matte, recessive, but legible.
+  const seamEnd = RING + TICK + SEAM;
+  const seamTotal = seamRadii.reduce((a, r) => a + r, 0) || 1;
+  for (const sr of seamRadii) {
+    const end = Math.min(k + Math.round(SEAM * (sr / seamTotal)), seamEnd);
+    for (; k < end; k++) {
+      const a = rng() * TAU, r = sr + gauss(rng) * thin * 1.1;
+      positions[k * 2] = cx + Math.cos(a) * r;
+      positions[k * 2 + 1] = cy + Math.sin(a) * r;
+      density[k] = 0.34;                             // reads as a grey ring in the gap (not a whisper)
+    }
+  }
+  const hand = { start: k, count: HAND };
+  const h = tollHandLayout(HAND, { cx, cy, R, dialR, angle: 0, thin });
+  positions.set(h.positions, k * 2);
+  density.set(h.density, k);
+  k += HAND;
+  for (; k < n; k++) {                               // surplus → off-screen roost, invisible
+    const a = rng() * TAU, r = 900 * (0.8 + rng() * 0.5);
+    positions[k * 2] = cx + Math.cos(a) * r;
+    positions[k * 2 + 1] = cy + Math.sin(a) * r;
+    density[k] = 0;
+  }
+  return { positions, density, z, hand };
+}
+
+/**
+ * One pose of the toll's HAND — a short radial pointer OUTSIDE the disc (structure must never
+ * cross the data), from the disc's edge to the dial ring at `angle` (0 = twelve, clockwise).
+ * Seeded rng: every pose jitters identically, so the hand turns as one solid thing.
+ */
+export function tollHandLayout(count, { cx = 0, cy = 0, R = 240, dialR = 278, angle = 0, thin = 0.22 } = {}) {
+  const positions = new Float32Array(count * 2), density = new Float32Array(count);
+  const rng = mulberry32(0xd1a1);
+  const r0 = R * 1.02, r1 = dialR * 0.995;
+  const sa = Math.sin(angle), ca = Math.cos(angle);
+  for (let k = 0; k < count; k++) {
+    const r = r0 + (k / count) * (r1 - r0) + (rng() - 0.5) * 0.8;
+    const off = gauss(rng) * thin * 0.9;
+    positions[k * 2] = cx + sa * r + ca * off;
+    positions[k * 2 + 1] = cy + ca * r - sa * off;
+    density[k] = 0.9;                                // brighter than ring (0.5) + ticks (0.55) — it must READ
+  }
+  return { positions, density };
 }
 
 /**
@@ -581,9 +945,325 @@ export function bandFor(data, terr, { band = 0.4 } = {}) {
   return { positions, density, z };
 }
 
+/**
+ * THE CANYON — time as the landform. A rate SURFACE over a (years × precincts) grid: x = the SAPS
+ * years, y = the stations (district blocks kept in input order, north→south within each), height +
+ * colour = PER-CAPITA rate. Dots are SAMPLES of the surface — a declared mode (dot count carries NO
+ * volume; every cell gets the same budget) — bilinearly smoothed between cell centres so the range
+ * reads as relief, not a bar chart. Normalised ONCE per crime across ALL years×stations (never per
+ * frame, never per year) through the codebase's pow-0.55 compression: monotone, so "2020/21 is the
+ * lowest" survives, but the heavy per-capita tail (harbour-sized populations) can't flatten the
+ * whole range into one spike. Fills a fixed pool `n` (sized upstream to the biggest region); each
+ * build spreads that budget evenly over its own cells (area-constant sampling, so glow-per-px stays
+ * comparable across regions), surplus parks at an off-frame roost (density 0, invisible).
+ *
+ * @returns {{ positions:Float32Array, density:Float32Array, z:Float32Array,
+ *             anchors:{name:string,yi:number,x:number,y:number,z:number,rate:number}[],
+ *             grid:{x0:number,y0:number,cellW:number,cellH:number,cols:number,rows:number},
+ *             seams:number[], maxRate:number }}
+ *   anchors — one per (station, year) cell centre; hover snaps to these (z is the LIFTED 0..1 height).
+ *   grid    — x0/y0 = LEFT/TOP edge; rows run north→south downward. seams = rows where a district starts.
+ */
+export function canyonLayout(n, stations, years, type, box, { zPow = 0.55 } = {}) {
+  const { w: W, h: H } = box;
+  const rng = mulberry32(0xca9109);
+  // y-order: keep the input's district blocks (the province list arrives district-ordered), sort
+  // north→south (y descending) WITHIN each block — metro stays adjacent, rows read like the map.
+  const blocks = new Map();
+  for (const s of stations) {
+    const k = (s.dc || '').toLowerCase().trim();
+    if (!blocks.has(k)) blocks.set(k, []);
+    blocks.get(k).push(s);
+  }
+  const order = [], seams = [];
+  for (const group of blocks.values()) {
+    if (order.length) seams.push(order.length);
+    order.push(...group.slice().sort((a, b) => b.y - a.y));
+  }
+  const rows = order.length, cols = years.length;
+  const cellW = W / cols, cellH = H / rows;
+  const x0 = -W / 2, y0 = H / 2;
+
+  // The rate surface at the cell centres (the nodes), normalised once across every cell of THIS
+  // crime — then lifted through the monotone pow curve. Height and colour both ride this value.
+  const rate = new Float32Array(rows * cols);
+  let maxRate = 0;
+  for (let r = 0; r < rows; r++) {
+    const s = order[r];
+    for (let c = 0; c < cols; c++) {
+      const v = ((s.crimes[type][years[c]] || 0) / s.pop) * 100000;
+      rate[r * cols + c] = v;
+      if (v > maxRate) maxRate = v;
+    }
+  }
+  const lifted = new Float32Array(rows * cols);
+  for (let k = 0; k < rate.length; k++) lifted[k] = Math.pow(rate[k] / (maxRate || 1), zPow);
+
+  // Bilinear sample of the LIFTED node grid at continuous cell coords (clamped at the edges) — the
+  // surface passes exactly through each node, so a cell centre reads its own true value.
+  const cR = (v) => (v < 0 ? 0 : v > rows - 1 ? rows - 1 : v);
+  const cC = (v) => (v < 0 ? 0 : v > cols - 1 ? cols - 1 : v);
+  const sample = (gc, gr) => {
+    const gcc = cC(gc), gcr = cR(gr);
+    const c0 = Math.floor(gcc), r0 = Math.floor(gcr);
+    const c1 = Math.min(cols - 1, c0 + 1), r1 = Math.min(rows - 1, r0 + 1);
+    const fx = gcc - c0, fy = gcr - r0;
+    const a = lifted[r0 * cols + c0], b = lifted[r0 * cols + c1];
+    const c = lifted[r1 * cols + c0], d = lifted[r1 * cols + c1];
+    return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+  };
+
+  const positions = new Float32Array(n * 2), density = new Float32Array(n), z = new Float32Array(n);
+  const anchors = [];
+  const perCell = Math.max(1, Math.floor(n / (rows * cols)));
+  let idx = 0;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const cx = x0 + (c + 0.5) * cellW, cy = y0 - (r + 0.5) * cellH;
+      // rate recomputed in float64 — the tooltip must match crimes/pop×100k to the digit (the
+      // Float32Array node grid is for the GPU; its rounding must never reach the readout).
+      anchors.push({
+        name: order[r].name, yi: c, x: cx, y: cy, z: lifted[r * cols + c],
+        rate: ((order[r].crimes[type][years[c]] || 0) / order[r].pop) * 100000,
+      });
+      for (let j = 0; j < perCell && idx < n; j++, idx++) {
+        const u = rng() - 0.5, v = rng() - 0.5;       // jitter within the cell
+        const px = cx + u * cellW, py = cy + v * cellH;
+        const h = sample(c + u, r + v);               // the smoothed surface at THIS dot
+        positions[idx * 2] = px; positions[idx * 2 + 1] = py;
+        z[idx] = h;
+        density[idx] = ACTIVE_FLOOR + (1 - ACTIVE_FLOOR) * h; // colour = height = the rate (one channel, two reads)
+      }
+    }
+  }
+  for (; idx < n; idx++) {                            // surplus → off-frame roost, invisible
+    const a = rng() * TAU, rr = 900 * (0.8 + rng() * 0.5);
+    positions[idx * 2] = Math.cos(a) * rr;
+    positions[idx * 2 + 1] = Math.sin(a) * rr;
+  }
+  return { positions, density, z, anchors, grid: { x0, y0, cellW, cellH, cols, rows }, seams, maxRate };
+}
+
+/**
+ * Structure graticule for the canyon: one thin line per year boundary (vertical) + one per district
+ * seam (horizontal, plus the top/bottom edges). Grey/matte, flat at z=0 — the frame the rate surface
+ * rises from. Same contract as pieFrameLayout: only `frameDots` draw the lines (split ∝ line length,
+ * so verticals and horizontals read equally thin), surplus parks off-frame (density 0).
+ */
+export function canyonFrameLayout(n, { grid, seams = [], frameDots = 42000, thin = 0.5 } = {}) {
+  const { x0, y0, cellW, cellH, cols, rows } = grid;
+  const W = cellW * cols, H = cellH * rows;
+  const positions = new Float32Array(n * 2), density = new Float32Array(n), z = new Float32Array(n);
+  const rng = mulberry32(0x5eed1e);
+  const lines = [];
+  for (let c = 0; c <= cols; c++) lines.push({ x: x0 + c * cellW, len: H, vert: true });
+  for (const r of [0, ...seams, rows]) lines.push({ y: y0 - r * cellH, len: W, vert: false });
+  const totalLen = lines.reduce((a, l) => a + l.len, 0);
+  const used = Math.min(n, frameDots);
+  let k = 0;
+  for (const l of lines) {
+    const m = Math.min(used - k, Math.round(used * (l.len / totalLen)));
+    for (let j = 0; j < m; j++, k++) {
+      const t = rng() * l.len, off = gauss(rng) * thin;
+      positions[k * 2] = l.vert ? l.x + off : x0 + t;
+      positions[k * 2 + 1] = l.vert ? y0 - t : l.y + off;
+      density[k] = 0.5;
+    }
+  }
+  for (; k < n; k++) {                                // surplus → off-frame roost, invisible
+    const a = rng() * TAU, r = 1100 * (0.8 + rng() * 0.5);
+    positions[k * 2] = Math.cos(a) * r;
+    positions[k * 2 + 1] = Math.sin(a) * r;
+  }
+  return { positions, density, z };
+}
+
+/**
+ * THE FLOCK — 8 murmuration keyframes for "release the field" (the province-only play state).
+ *
+ * Pure + seeded like every layout, but POSITIONS ONLY: the flight carries whatever density the live
+ * map had at take-off (the caller snapshots it), so no density is fabricated here. Each frame is a
+ * murmuration silhouette: 3–5 anisotropic gaussian lobes, each stretched along its own direction of
+ * travel, whose centres drift along seeded two-frequency Lissajous paths across the box. A dot joins
+ * ONE lobe for the whole flight with a FIXED unit offset, so consecutive frames morph coherently —
+ * the flock wheels as one organism instead of reshuffling — and the engine's per-dot stagger turns
+ * each frame-to-frame morph into the traveling wave that IS the murmuration. INTEGER path
+ * frequencies close the cycle, so the frame 7 → frame 0 wrap is as smooth as any other beat.
+ *
+ * Bounds are provable, not hoped-for: unit offsets are truncated at ±2.3σ, and with the amplitudes
+ * below the worst case is |x| ≤ (0.3 + 0.5)·halfW + 2.3·2.0·(0.10·1.2·1.4)·S ≈ 1.57·halfW (y is
+ * tighter still) where S = min(halfW, halfH) — inside a 1.6×-box stage for ANY box aspect. ~15% of
+ * dots get a 2× halo spread so the silhouette's edge feathers instead of ending on a gaussian cliff.
+ *
+ * @returns {Array<{positions:Float32Array}>} 8 frames; a `.halo` Uint8Array mask rides along on the
+ *          array for the node-level verification (the app never reads it).
+ */
+export function flockLayouts(count, box, seed = 0xf10c) {
+  const rng = mulberry32(seed);
+  const halfW = box.w / 2, halfH = box.h / 2, S = Math.min(halfW, halfH);
+  const FRAMES = 8, HALO = 0.15, TRUNC = 2.3, HALO_MULT = 2.0;
+
+  // 3–5 lobes: each a Lissajous drift path + a breathing, travel-stretched gaussian spread.
+  const nL = 3 + Math.floor(rng() * 3);
+  const lobes = [];
+  for (let li = 0; li < nL; li++) {
+    lobes.push({
+      cx0: (rng() - 0.5) * 0.6 * halfW,                 // path centre… (|cx0| ≤ 0.3·halfW)
+      cy0: (rng() - 0.5) * 0.5 * halfH + 0.08 * halfH,  // …with a small upward bias — wheeling OVER the land
+      ax: (0.25 + rng() * 0.25) * halfW,                // path amplitude ≤ 0.5·halfW
+      ay: (0.2 + rng() * 0.25) * halfH,                 // ≤ 0.45·halfH
+      fx: 1 + Math.floor(rng() * 2),                    // INTEGER frequencies → the 8-frame cycle closes
+      fy: 1 + Math.floor(rng() * 2),
+      px: rng() * TAU, py: rng() * TAU,                 // path phases
+      sig: (0.065 + rng() * 0.035) * S,                 // base spread ≤ 0.10·S (breath ×1.2 · stretch ×1.4 → ≤ 0.168·S)
+      sph: rng() * TAU,                                 // breath phase
+      w: 0.5 + rng(),                                   // share of the pool
+    });
+  }
+
+  // A dot's whole flight identity, chosen ONCE: its lobe, its truncated unit offset, core or halo.
+  const wSum = lobes.reduce((a, l) => a + l.w, 0);
+  const lobeOf = new Uint8Array(count), ux = new Float32Array(count), uy = new Float32Array(count);
+  const halo = new Uint8Array(count);
+  const trunc = (g) => (g < -TRUNC ? -TRUNC : g > TRUNC ? TRUNC : g);
+  for (let i = 0; i < count; i++) {
+    let r = rng() * wSum, li = 0;
+    while (li < nL - 1 && r > lobes[li].w) { r -= lobes[li].w; li++; }
+    lobeOf[i] = li;
+    halo[i] = rng() < HALO ? 1 : 0;
+    ux[i] = trunc(gauss(rng));
+    uy[i] = trunc(gauss(rng));
+  }
+
+  const frames = [];
+  for (let k = 0; k < FRAMES; k++) {
+    const ph = (k / FRAMES) * TAU;
+    // Each lobe at this beat: centre on its path, spread breathing, stretched along the travel
+    // tangent (long thin bird-stream in the direction of flight, not a static blob).
+    const beat = lobes.map((l) => {
+      const breath = 0.75 + 0.45 * Math.sin(2 * ph + l.sph);
+      const dx = l.ax * l.fx * Math.cos(l.fx * ph + l.px), dy = l.ay * l.fy * Math.cos(l.fy * ph + l.py);
+      const ang = Math.atan2(dy, dx);
+      return {
+        cx: l.cx0 + l.ax * Math.sin(l.fx * ph + l.px),
+        cy: l.cy0 + l.ay * Math.sin(l.fy * ph + l.py),
+        ca: Math.cos(ang), sa: Math.sin(ang),
+        sA: l.sig * breath * 1.4,   // along-travel — the streaming body
+        sC: l.sig * breath * 0.65,  // cross-travel — thin
+      };
+    });
+    const positions = new Float32Array(count * 2);
+    for (let i = 0; i < count; i++) {
+      const b = beat[lobeOf[i]], m = halo[i] ? HALO_MULT : 1;
+      const oA = ux[i] * b.sA * m, oC = uy[i] * b.sC * m;
+      positions[2 * i] = b.cx + b.ca * oA - b.sa * oC;
+      positions[2 * i + 1] = b.cy + b.sa * oA + b.ca * oC;
+    }
+    frames.push({ positions });
+  }
+  frames.halo = halo;
+  return frames;
+}
+
+/**
+ * Person-grid layout — "One in Forty-Three": ONE precinct's population standing up as a rough grid
+ * inside its jitter radius (the same "around here" honesty as the crime dots). The CALLER declares
+ * the scale on screen (1 dot = 100 residents); this only places n dots. Pool-shaped like every
+ * layout: the first n slots form the grid, the rest park invisible (density 0). Deterministic
+ * (seeded) so the same precinct always stands the same way.
+ */
+export function personGridLayout({ x, y, r }, n, poolN) {
+  const positions = new Float32Array(poolN * 2), density = new Float32Array(poolN);
+  for (let k = 0; k < poolN; k++) { positions[k * 2] = x; positions[k * 2 + 1] = y; } // parked default
+  n = Math.min(n, poolN);
+  if (n <= 0) return { positions, density };
+  const rng = mulberry32(0x50e0b1e);
+  // Spacing from the circle's area; shrink until the lattice holds ≥ n points, then thin the surplus
+  // EVENLY (never truncate row-major — that would chop the bottom off the circle).
+  let sp = Math.sqrt((Math.PI * r * r) / n);
+  let pts = [];
+  for (let tries = 0; tries < 24 && pts.length < n; tries++) {
+    pts = [];
+    const half = Math.ceil(r / sp);
+    for (let gj = -half; gj <= half; gj++) for (let gi = -half; gi <= half; gi++) {
+      const px = gi * sp, py = gj * sp;
+      if (px * px + py * py <= r * r) pts.push([px, py]);
+    }
+    if (pts.length < n) sp *= 0.96;
+  }
+  const stride = pts.length / n;
+  for (let k = 0; k < n; k++) {
+    const p = pts[Math.floor(k * stride)];
+    positions[k * 2] = x + p[0] + (rng() - 0.5) * sp * 0.35;     // rough grid, not a sterile lattice
+    positions[k * 2 + 1] = y + p[1] + (rng() - 0.5) * sp * 0.35;
+    density[k] = 0.4;                                            // quiet and even — people are frame, never data
+  }
+  return { positions, density };
+}
+
+/** The One-in-N caption line — pure (and node-importable) so the checks can assert it to the digit. */
+export function suburbCaptionLine(pop, n, crimeLabel, yearLabel) {
+  return n > 0
+    ? `${pop.toLocaleString()} residents · ${n.toLocaleString()} reported ${crimeLabel} in ${yearLabel} — 1 for every ${Math.round(pop / n).toLocaleString()} residents`
+    : `${pop.toLocaleString()} residents · no reported ${crimeLabel} in ${yearLabel}`;
+}
+
 function gauss(rng) {
   let u = 0, v = 0;
   while (u === 0) u = rng();
   while (v === 0) v = rng();
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v);
+}
+
+/**
+ * textLayout(word, count, box) — STRUCTURE-role arrangement that spells `word` in dots. The word is
+ * rendered to an offscreen canvas, its filled pixels sampled, and each dot handed one (jittered) as
+ * its target — so the field can morph into typography. Used ONLY in the structure substance (grey,
+ * matte, non-glow): a word is a LABEL/title, never a data claim. Honest by role, not by position.
+ * `cx,cy` shift the word's centre in world units (default: origin); `aspect` lets a caller pre-shape
+ * the sampling box independent of the map box (so "MURDER" isn't stretched by a tall province box).
+ */
+export function textLayout(word, count, box, { fontFrac = 0.5, jitter = 0.9, weight = 800, seed = 0x7057, cx = 0, cy = 0, spanFrac = 0.9, fontWorld = 0 } = {}) {
+  const { w: W, h: H } = box;
+  const CW = 1024, CH = Math.max(64, Math.round(CW * H / W));
+  const cvs = (typeof OffscreenCanvas !== 'undefined')
+    ? new OffscreenCanvas(CW, CH)
+    : Object.assign(document.createElement('canvas'), { width: CW, height: CH });
+  const ctx = cvs.getContext('2d', { willReadFrequently: true });
+  ctx.clearRect(0, 0, CW, CH);
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // fontWorld (world units) pins an EXACT size — several words set at one shared size; else fit to spanFrac.
+  let fs = fontWorld > 0 ? fontWorld * CH / H : Math.round(CH * fontFrac);
+  const setFont = () => { ctx.font = `${weight} ${fs}px ui-monospace, "SF Mono", Menlo, monospace`; };
+  setFont();
+  if (!(fontWorld > 0)) while (ctx.measureText(word).width > CW * spanFrac && fs > 8) { fs -= 4; setFont(); }
+  ctx.fillText(word, CW / 2, CH / 2);
+  const data = ctx.getImageData(0, 0, CW, CH).data;
+  const on = [];
+  let minX = CW, maxX = 0, minY = CH, maxY = 0;        // the word's true INK extent (for callers that flank it)
+  for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++) if (data[(y * CW + x) * 4 + 3] > 128) {
+    on.push(x, y);
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+  }
+  const nOn = on.length / 2;
+  const rng = mulberry32(seed);
+  const positions = new Float32Array(count * 2), density = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    if (!nOn) { positions[i * 2] = cx; positions[i * 2 + 1] = cy; density[i] = 0; continue; }
+    const k = Math.floor(rng() * nOn) * 2;
+    positions[i * 2] = cx + (on[k] / CW - 0.5) * W + (rng() - 0.5) * 2 * jitter;
+    positions[i * 2 + 1] = cy + (0.5 - on[k + 1] / CH) * H + (rng() - 0.5) * 2 * jitter;
+    density[i] = 0.4;
+  }
+  // bounds: the rendered word's WORLD-space box (centre + size), from the actual sampled ink. Extra prop —
+  // the engine's {positions, density} contract is untouched; flanking captions project this to the screen.
+  const bounds = nOn
+    ? { cx: cx + (((minX + maxX) / 2) / CW - 0.5) * W, cy: cy + (0.5 - ((minY + maxY) / 2) / CH) * H,
+        w: ((maxX - minX) / CW) * W, h: ((maxY - minY) / CH) * H }
+    : { cx, cy, w: 0, h: 0 };
+  // ink: lit canvas pixels — two words from the same box compare by it (match their dots-per-ink density).
+  return { positions, density, bounds, ink: nOn };
 }

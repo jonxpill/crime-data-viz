@@ -52,6 +52,11 @@ export class PointField {
     geometry.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
     // Per-point terrain height (0 for flat fields; the terrain field fills it).
     geometry.setAttribute('aZ', new THREE.BufferAttribute(new Float32Array(count), 1));
+    // Per-point ORDERED SPIN (0 = still). A signed angular rate + a per-point onset time turn a
+    // SETTLED target field into a slow orrery: once a dot has landed, its target rotates about
+    // uSpinCentre by rate·(uSpinTime − onset). Off by default; the engine knows nothing of why.
+    geometry.setAttribute('aSpinRate', new THREE.BufferAttribute(new Float32Array(count), 1));
+    geometry.setAttribute('aSpinOnset', new THREE.BufferAttribute(new Float32Array(count), 1));
     // BufferGeometry needs *some* `position`; we drive xy ourselves, keep z=0.
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
     geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1e6);
@@ -84,7 +89,17 @@ export class PointField {
         // frame breathes like faint stars. Data has its own twinkle; these are ignored there.
         uShimmer: { value: 0.9 },      // amplitude (0 = still; ~0.3 gentle, ~0.45 present, ~0.9 dramatic)
         uShimmerSpeed: { value: 0.8 }, // how fast the breath cycles (slow = calm)
+        // Ordered spin — a real-time clock (uSpinTime, seconds) + the centre to rotate targets
+        // about; per-point aSpinRate/aSpinOnset carry the sign + start. uSpinOn gates the whole
+        // feature off (0) so no other view pays for it.
+        uSpinTime: { value: 0 },
+        uSpinCentre: { value: new THREE.Vector2(0, 0) },
+        uSpinOn: { value: 0 },
         uZScale: { value: 0 }, // terrain vertical scale (0 = flat map; raised = relief)
+        // Flow field — continuous curl advection for RELEASED/play states. 0 in every truthful view;
+        // a play mode ramps it up so dots stream between morph waypoints instead of ever resting.
+        uFlow: { value: 0 },
+        uFlowSpeed: { value: 1 },
         uOpacity: { value: 1 }, // global fade — cross-fades map structure ↔ terrain relief
         uRampCool: { value: ramp[0] },
         uRampMid: { value: ramp[1] },
@@ -141,6 +156,32 @@ export class PointField {
   setDriftSpeed(mult) { this.material.uniforms.uDriftSpeed.value = mult; }
   /** Per-dot transition stagger (0 = all move together; ~0.6 = a cascading swarm). */
   setStagger(w) { this.material.uniforms.uStagger.value = w; }
+  /** Replace the per-point seed buffer (twinkle/drift phase AND stagger order). Random seeds =
+   *  an organic flock; ORDERED seeds turn a staggered morph into a strict procession — dot k
+   *  crosses at uT ≈ fract(seed_k / 2π). Callers restore the old array to return to randomness. */
+  setSeeds(seeds) {
+    const a = this.points.geometry.getAttribute('aSeed');
+    a.copyArray(seeds);
+    a.needsUpdate = true;
+  }
+  /** Ordered per-point SPIN: a LANDED dot's target slowly rotates about uSpinCentre by
+   *  sign·rate·(uSpinTime − onset), gated to only bite near lt≈1 — the inbound morph stays a clean
+   *  path and the rotation is pure about the centre, so each dot's RADIUS is preserved (it implies
+   *  nothing). `rates` are signed (opposite signs = counter-rotating groups); `onsets` (seconds)
+   *  start each dot from angle 0 at its own settle. Generic: any caller can turn a settled target
+   *  field into an orrery. Pair with setSpinCentre/setSpinTime and setSpinOn(true). */
+  setSpin(rates, onsets) {
+    const g = this.points.geometry;
+    g.getAttribute('aSpinRate').copyArray(rates).needsUpdate = true;
+    g.getAttribute('aSpinOnset').copyArray(onsets).needsUpdate = true;
+  }
+  /** Advance the spin's REAL-time clock (seconds) — independent of the morph's uT, so a settled
+   *  field keeps turning even when the morph is paused. */
+  setSpinTime(s) { this.material.uniforms.uSpinTime.value = s; }
+  /** The point that targets rotate about (radius from here is the invariant). */
+  setSpinCentre(x, y) { this.material.uniforms.uSpinCentre.value.set(x, y); }
+  /** Master gate — false (default) = no spin anywhere; true = ordered spin per aSpinRate/aSpinOnset. */
+  setSpinOn(on) { this.material.uniforms.uSpinOn.value = on ? 1 : 0; }
   /** DATA per-dot brightness curve: floor (lone-ember glow) + gain (density dependence; low = tamer cores). */
   setDataFloor(v) { this.material.uniforms.uDataFloor.value = v; }
   setDataGain(v) { this.material.uniforms.uDataGain.value = v; }
@@ -152,6 +193,11 @@ export class PointField {
     if (mid) u.uRampMid.value.set(mid);
     if (warm) u.uRampWarm.value.set(warm);
   }
+  /** Flow-field advection for play states: amp in world units (0 = off), optional speed multiplier.
+   *  Keep speed FIXED while amp > 0 — the flow is a function of time, so a speed change mid-flight
+   *  snaps every dot's phase; ramp the amplitude instead. */
+  setFlow(amp, speed) { this.material.uniforms.uFlow.value = amp; if (speed != null) this.material.uniforms.uFlowSpeed.value = speed; }
+
   /** Terrain vertical scale — 0 = flat map, higher lifts each point's aZ into relief. */
   setZScale(s) { this.material.uniforms.uZScale.value = s; }
   /** Global opacity 0..1 — for cross-fading fields (map mesh ↔ terrain). */
@@ -170,7 +216,12 @@ const VERT = /* glsl */ `
   uniform float uShimmer;
   uniform float uShimmerSpeed;
   uniform float uZScale;
+  uniform float uFlow;
+  uniform float uFlowSpeed;
   uniform float uMaxSize;
+  uniform float uSpinTime;
+  uniform vec2 uSpinCentre;
+  uniform float uSpinOn;
 
   attribute vec2 aSource;
   attribute vec2 aTarget;
@@ -178,6 +229,8 @@ const VERT = /* glsl */ `
   attribute float aTargetDensity;
   attribute float aSeed;
   attribute float aZ;
+  attribute float aSpinRate;
+  attribute float aSpinOnset;
 
   varying float vDensity;
   varying float vTwinkle;
@@ -188,9 +241,25 @@ const VERT = /* glsl */ `
     // crosses over a window w of uT, starting at a seed-based offset. Endpoints are
     // preserved (everyone is fully at source at uT=0, fully at target at uT=1).
     float seed01 = fract(aSeed * 0.1591549431);
-    float w = max(uStagger, 0.02);
+    // The floor only guards the division — keep it an EPSILON, not a taste value: per-dot windows
+    // of a few 1e-4 are legitimate (thousands of ordered dots crossing one at a time).
+    float w = max(uStagger, 1.0e-4);
     float lt = clamp((uT - seed01 * (1.0 - w)) / w, 0.0, 1.0);
-    vec2 pos = mix(aSource, aTarget, lt);
+
+    // Ordered spin — a LANDED dot's target rotates about uSpinCentre on a real-time clock. gate ≈ 0
+    // until lt≈1, so a still-inbound dot keeps its clean path (the spiral pour is untouched); the
+    // angle grows from ZERO at the dot's own onset (max(0, …)), so a ring eases into motion with no
+    // jerk and keeps turning while the morph is paused. Pure rotation → radius is preserved exactly.
+    vec2 tgt = aTarget;
+    if (uSpinOn > 0.5) {
+      float gate = smoothstep(0.86, 1.0, lt);
+      float ang = aSpinRate * max(0.0, uSpinTime - aSpinOnset) * gate;
+      float cs = cos(ang), sn = sin(ang);
+      vec2 d = aTarget - uSpinCentre;
+      tgt = uSpinCentre + vec2(d.x * cs - d.y * sn, d.x * sn + d.y * cs);
+    }
+
+    vec2 pos = mix(aSource, tgt, lt);
     float density = mix(aSourceDensity, aTargetDensity, lt);
     vDensity = density;
 
@@ -203,6 +272,21 @@ const VERT = /* glsl */ `
     float wander = uDrift * (1.3 - 0.5 * density);
     pos.x += wander * (sin(tt * 0.5 + ph) + 0.5 * sin(tt * 1.1 + ph * 2.0));
     pos.y += wander * (cos(tt * 0.43 + ph * 1.3) + 0.5 * cos(tt * 0.9 + ph * 1.7));
+
+    // FLOW FIELD — divergence-free curl advection for released/play states (uFlow is 0 in every
+    // truthful view). Sampled from POSITION + time, never per-dot randomness, so neighbours ride the
+    // same stream — coherent turning waves, not jitter. Two octaves of the analytic curl
+    // (∂ψ/∂y, −∂ψ/∂x) of trig potentials: swirls that never bunch the field up.
+    if (uFlow > 0.0) {
+      float ft = uTime * uFlowSpeed;
+      vec2 q1 = pos * 0.011;
+      vec2 f1 = vec2(-1.30 * sin(q1.x + ft * 0.90) * sin(q1.y * 1.30 - ft * 0.63),
+                     -cos(q1.x + ft * 0.90) * cos(q1.y * 1.30 - ft * 0.63));
+      vec2 q2 = pos * 0.033;
+      vec2 f2 = vec2(-0.80 * sin(q2.x - ft * 1.70) * sin(q2.y * 0.80 + ft * 1.10),
+                     -cos(q2.x - ft * 1.70) * cos(q2.y * 0.80 + ft * 1.10));
+      pos += uFlow * (f1 + 0.5 * f2);
+    }
 
     // Per-point breath. Data: a gentle twinkle. Structure: each dot fades slightly in/out on
     // its OWN phase (never brighter than base), so the frame shimmers like faint stars.

@@ -89,11 +89,37 @@
       #about-card .src { color: #77839a; font-size: 11.5px; }
       #about-card a { color: #ffce86; text-decoration: none; }
       #about-card a:hover { text-decoration: underline; }
-      #about-close {
+      #about-close, #locate-close {
         position: absolute; top: 10px; right: 12px; appearance: none; background: none; border: 0;
         color: #8792a6; font: 16px ui-monospace, monospace; cursor: pointer; padding: 4px 8px; border-radius: 5px;
       }
-      #about-close:hover { background: rgba(140, 170, 210, 0.12); color: #d4dcef; }
+      #about-close:hover, #locate-close:hover { background: rgba(140, 170, 210, 0.12); color: #d4dcef; }
+
+      /* Locate overlay (H) — the about card's quieter sibling: one field, one button, one promise. */
+      #locate { position: fixed; inset: 0; z-index: 40; display: none;
+        background: rgba(4, 6, 10, 0.72); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+      #locate.open { display: flex; align-items: center; justify-content: center; }
+      #locate-card {
+        position: relative; width: 340px; margin: 18px; padding: 22px 24px; border-radius: 10px;
+        background: rgba(10, 13, 20, 0.94); border: 1px solid rgba(140, 170, 210, 0.16);
+        font: 12.5px/1.7 ui-monospace, "SF Mono", Menlo, monospace; color: #a8b2c6;
+      }
+      #locate-card h2 { margin: 0 0 2px; font-size: 13px; font-weight: 600; letter-spacing: 0.3em; color: #e6ebf5; }
+      #locate-card .tag { margin: 0 0 12px; color: #77839a; font-size: 11px; }
+      #locate-input {
+        width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px;
+        background: rgba(6, 8, 13, 0.8); border: 1px solid rgba(140, 170, 210, 0.22); color: #e4ebf4;
+        font: 13px ui-monospace, "SF Mono", Menlo, monospace; outline: none;
+      }
+      #locate-input:focus { border-color: rgba(255, 206, 134, 0.45); }
+      #locate-match { min-height: 19px; margin: 8px 0 10px; color: #ffce86; font-size: 11.5px; }
+      #locate-me {
+        appearance: none; width: 100%; padding: 7px 10px; border-radius: 6px; cursor: pointer;
+        background: rgba(140, 170, 210, 0.10); border: 1px solid rgba(140, 170, 210, 0.22);
+        color: #d4dcef; font: inherit;
+      }
+      #locate-me:hover { background: rgba(140, 170, 210, 0.18); }
+      #locate-card .priv { margin: 10px 0 0; color: #77839a; font-size: 10.5px; }
 
       #fps {
         position: fixed; right: 14px; top: 12px; z-index: 10;
@@ -102,6 +128,19 @@
         background: rgba(6, 8, 13, 0.6);
         backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
       }
+
+      /* The unlit legend chip — the estimate's on-screen declaration, shown only while U is active.
+         Violet-voiced (the third role's hue), quiet, and it MUST carry the sexoff floor caveat. */
+      #unlit-chip {
+        position: fixed; right: 14px; top: 44px; z-index: 10; display: none;
+        max-width: 340px; text-align: right;
+        font: 11.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; color: #9c8fc0;
+        padding: 7px 11px; border-radius: 8px;
+        background: rgba(8, 7, 14, 0.66); border: 1px solid rgba(150, 130, 190, 0.16);
+        backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+        pointer-events: none; user-select: none;
+      }
+      #unlit-chip b { font-weight: 500; }
     </style>
   </head>
   <body>
@@ -123,7 +162,9 @@
         <p>Glow is crime; grey is geography. Colour is local density — cool and sparse through molten and dense.
           Click a district to bloom into it. <span class="hint" style="color:#ffce86">N</span> breathes month by
           month, <span style="color:#ffce86">C</span> shows rates per 100k people,
-          <span style="color:#ffce86">T</span> raises the land itself.</p>
+          <span style="color:#ffce86">T</span> raises the land itself.
+          <span style="color:#ffce86">H</span> stands you in your suburb: the field dims to your precinct and
+          its residents rise as grey dots, one per hundred people — count your neighbours per burglary.</p>
         <p class="hon"><b style="color:#b9c4d8">Honesty notes.</b> Counts are real; positions are jittered within
           each precinct (volume is true, street addresses are not). Raw counts largely follow population — per-capita
           (<span style="color:#ffce86">C</span>) is the fairer read (denominators: WorldPop 2020). 2025/26 is the sum
@@ -132,11 +173,34 @@
           boundaries that contain them. Carjacking is also a subcategory of aggravated robbery, so it appears inside
           the robbery lens too. And throughout: these are <i>reported</i> crimes — what reaches a police station, not
           all that happens.</p>
+        <p class="hon"><b style="color:#b9c4d8">The unlit field (<span style="color:#ffce86">U</span>).</b> On any map
+          view, <span style="color:#ffce86">U</span> condenses a second population out of the dark: slate-violet dots
+          that never glow — an <i>estimate</i> of the crimes that never reached a police station. Per precinct-year it
+          draws R×(1−r)/r unlit dots beside the R reported ones, where r is the national reporting rate from Stats SA's
+          Governance, Public Safety and Justice Survey (GPSJS 2024/25, cross-checked against 2023/24): housebreaking
+          43,4% · street robbery 36,3% · sexual offences 56,3% · hijacking 76,8%. The rate is national and applied
+          uniformly — the true geography of underreporting is unknown, so the estimate carries the reported field's
+          shape by construction. Sexual offences are a <b>floor</b>: surveys themselves under-capture them, so the true
+          unlit count is higher than drawn. Murder (near-fully recorded) and commercial crime (outside household
+          surveys) get no estimate — excluded, never guessed.</p>
         <p class="src">Crime: <a href="https://doi.org/10.25828/5MAW-4H90" target="_blank" rel="noopener">SAPS Annual
           Crime Records 2008–2023 via DataFirst (CC-BY)</a> + SAPS annual &amp; quarterly releases 2023–2026
           (saps.gov.za). Boundaries: Western Cape Government GIS. Population: WorldPop 2020. Terrain: AWS Terrain
-          Tiles. Built on three.js with a custom GPU point-field engine — one buffer of points, every view a pure
-          layout function. By Jonx Pillemer.</p>
+          Tiles. Reporting rates: <a href="https://www.statssa.gov.za/publications/P0341/P03412025.pdf" target="_blank"
+          rel="noopener">Stats SA GPSJS 2024/25 (P0341)</a> cross-checked against the GPSJS 2023/24 release. Built on
+          three.js with a custom GPU point-field engine — one buffer of points, every view a pure layout function. By
+          Jonx Pillemer.</p>
+      </div>
+    </div>
+    <div id="locate">
+      <div id="locate-card">
+        <button id="locate-close" aria-label="close">✕</button>
+        <h2>STAND IN YOUR SUBURB</h2>
+        <p class="tag">the field dims to your precinct — walk its years</p>
+        <input id="locate-input" type="text" autocomplete="off" spellcheck="false" placeholder="suburb or police precinct…" />
+        <div id="locate-match">…</div>
+        <button id="locate-me">◎ find me</button>
+        <p class="priv">“find me” is matched on your device only — your location is never sent, never stored</p>
       </div>
     </div>
     <div class="hud">
@@ -151,15 +215,22 @@
           data-act="months"><span class="hint">N</span> months</button></span><span class="gsep">│</span><span
         class="grp"><button data-act="crimeUp" class="arr"><span class="hint">&uarr;</span></button><button
           data-act="crimeDown" class="arr"><span class="hint">&darr;</span></button><span class="glabel">crime</span><button
-          data-act="percapita"><span class="hint">C</span> per-capita</button></span><span class="gsep">│</span><span
+          data-act="percapita"><span class="hint">C</span> per-capita</button><button
+          data-act="unlit"><span class="hint">U</span> unlit</button><button
+          data-act="suburb"><span class="hint">H</span> my suburb</button></span><span class="gsep">│</span><span
         class="grp"><button data-act="map"><span class="hint">M</span> map</button><button
           data-act="pie"><span class="hint">P</span> pie</button><button
           data-act="compare"><span class="hint">3</span> compare</button><button
-          data-act="terrain"><span class="hint">T</span> terrain</button></span><span class="gsep">│</span><span
+          data-act="terrain"><span class="hint">T</span> terrain</button><button
+          data-act="canyon"><span class="hint">V</span> canyon</button><button
+          data-act="forensics"><span class="hint">X</span> forensics</button><button
+          data-act="toll"><span class="hint">K</span> the toll</button><button
+          data-act="release"><span class="hint">F</span> release</button></span><span class="gsep">│</span><span
         class="grp"><button data-act="about"><span class="hint">?</span> about</button></span><span class="passive">&thinsp;<span class="hint">scroll</span> zoom&thinsp;·&thinsp;<span class="hint">drag</span> pan</span>
       </div>
       <div id="flag" style="color:#5e6a52; margin-top:4px;">◆ real SAPS robbery</div>
     </div>
+    <div id="unlit-chip"></div>
     <div id="fps"></div>
     <script type="module" src="/src/wcExplore.js"></script>
   </body>

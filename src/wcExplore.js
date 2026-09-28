@@ -6,7 +6,9 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointField } from './engine/PointField.js';
-import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor } from './layouts/capeTown.js';
+import { loadCapeTown, buildCrimeLayouts, buildUnlitLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor, tollLayouts, tollFrameLayout, tollHandLayout, textLayout, canyonLayout, canyonFrameLayout, flockLayouts, personGridLayout, suburbCaptionLine } from './layouts/capeTown.js';
+import RATES from '../data/vocs-reporting.json'; // GPSJS reporting rates + citations — bundled, so the offline single-file build needs no fetch
+import { forensicsFrameLayout, forensicsStats, LOOK_CLOSER_D, TESTABLE_MEAN, DIGIT_MIN_N } from './layouts/forensics.js';
 
 /*
  * THE APP — a Western Cape crime field you drill into Cape Town from. (Was the single-region Cape Town app
@@ -110,6 +112,7 @@ function render() {
 // ---- the ONE data pool + ONE structure pool ---------------------------------
 let field = null;          // DATA (glow). Province = all 150; a district view = its own contiguous SLICE of the field.
 let structField = null;    // STRUCTURE (grey matte). Province outline ⇄ the active district's outline. One conserved pool.
+let wordField = null; const WORD_N = 22000; // the toll's memorial WORD — a dim structure backdrop BEHIND the disc
 let COUNT = 0;             // total data slots. Field is ordered BY DISTRICT (Cape Town first); each district a slice.
 let awayAll = null;        // ALL province dots pushed out ×2.5 (density 0) — the base a district's lift() overwrites.
 let structN = 0;           // structure dot budget (the province outline's) — the shared pool's size.
@@ -155,6 +158,22 @@ let pulseMode = false, mi = 0, pulseData = null, monthLabels = null;
 const PULSE_MS = 480, PULSE_HOLD = 70; // month crossing + hold → ~1.8 months/sec, full sweep ≈ 33s (maker-tuned: calmer)
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const fmtMonth = (label) => { const [y, m] = label.split('-'); return `${MONTH_NAMES[+m - 1]} ${y}`; };
+// ---- FOCUS (stand in your suburb, H) — one precinct lit, the rest of the field dimmed --------------
+// Mirrors the pulse's mode grammar (enter/exit through the same at-rest machinery), but the dimming is
+// a pure density post-pass (focusLayout) riding EVERY door write — so year scrubs, crime flips and
+// per-capita all stay focused for free. Exits: H, Esc, M; drills/pulse/pies exit focus first (snap,
+// the drill-from-pulse precedent). Never composes with the pulse or the pies.
+let focusMode = false, focusStation = -1;   // index into activeStations() (== the build's slotRanges)
+const FOCUS_DIM = 0.12;                     // every OTHER station's density ×0.12 — dim, never hidden
+let focusScratch = null, focusPing = 0;     // two COUNT-sized density buffers (a door write needs src+tgt)
+let beaconField = null;                     // small structure-voiced ring marking the focused station
+const BEACON_N = 420;
+// "One in Forty-Three" — the focused precinct's POPULATION stands up as a rough grey grid among the
+// year's crime dots. 1 grey dot = 100 residents, DECLARED on screen (the caption); STRUCTURE-voiced
+// (matte, no glow — people are scale, never crime). Auto-shown on focus; J hides it if it fights the eye.
+let peopleField = null, peopleOn = true, PEOPLE_N = 0;
+const PEOPLE_PER_DOT = 100;
+let plStart = 0, plProg = 1;                // the stand-up morph's clock (collapsed → grid)
 let morphStart = -1;
 const YEAR_MS = 2200, HOLD_MS = 450;
 let holdUntil = 0;
@@ -168,6 +187,10 @@ let PIE_MS = 2400, PIE_R = 200;
 let pieFrameDots = 200000, pieThin = 0.22;
 let triPieBuilder = null, resolvePieBuilder = null, triPieMode = false, triPieYears = null, lastTriPie = null;
 let TRI_R = 128, TRI_GAP = 320;
+// ---- the FORENSICS STRIP (X) — statistics about the statistics --------------------------------------
+// Stations as ranked ribbons of their 60 monthly returns, sorted by dispersion D (crystalline LEFT).
+// Counts, not rates, are what tallies are — per-capita no-ops here; pies/pulse/terrain guarded off.
+let forensicsBuilder = null, forensicsMode = false, lastForensics = null;
 let hoverCrimeType = '';
 let structDotSize = 1.6;
 
@@ -187,6 +210,39 @@ const bandW = 0.4, terrainDotSize = 2.5, GX = 432, GY = 378; // fixed relief dot
 let terrainTargetLayout = null, terrainCurrent = null;
 let trProg = 1, trStart = 0, trDur = 950, trTo = null;
 
+// ---- the CANYON ('V') — time as the landform ---------------------------------------------------------
+// x = the 18 SAPS years, y = the precincts (district blocks, north→south), height = PER-CAPITA rate;
+// the 2020/21 lockdown reads as ONE valley cutting across the whole range. A separate DATA-role pool
+// (it GLOWS — this is the crime re-arranged, not geography), risen/tilted with the terrain's easing.
+// Per-capita ONLY: raw heights would render population, not story. Dots are SAMPLES of the rate
+// surface — the one view where dot count carries no volume, declared aloud in the hint.
+let canyonField = null, canyonMode = false, canyonZCur = 0, canyonOp = 0;
+let canyonCur = null;                        // the layout on the pool (anchors → hover, grid → labels)
+let canyonCache = { key: '', layout: null }; // ONE (region, crime) build resident — the pulse's cache pattern
+let canyonFlipTo = '';                       // pending crime flip — the swap hides at zero height (see tick)
+let cnProg = 1, cnStart = 0, cnTo = null;    // canyon pool crossfade clock (trProg's pattern)
+const CN_MS = 800, CANYON_DOTS = 48;         // crossfade ms · dots per province cell (150×18×48 = 129,600 pool)
+let canyonZPeak = 260;                       // rate-surface height — a DATA axis, not geography. 90 read as a
+//                                              flat sheet at the framed distance; 260 gives the range walls
+//                                              (maker's eye: tune live via __viz.canyonZ)
+
+// ---- THE UNLIT FIELD — the third role: ESTIMATED ABSENCE -------------------------------------------
+// 'U' on a map view condenses the survey-implied UNREPORTED crimes out of the dark: U = R×(1−r)/r per
+// station-year (rates + full citations in data/vocs-reporting.json; the rate is national and applied
+// uniformly — declared on the chip and the About card). Its own pool: NO glow, normal blending, dim
+// slate-violet, flat density — never data (no glow, no density read), never frame (violet, count-true).
+// Blocked in pies/pulse/terrain (v1); murder + commercial have no survey rate, so U shows a one-line
+// note instead of dots — excluded, never guessed.
+let unlitField = null;
+const unlitProviders = {}; // per region — same conserved-slot grammar as the crime providers
+const unlitSlices = {};    // each district's slot range in the province unlit pool (mirrors `slices`)
+let UNLIT_COUNT = 0;
+let unlitOn = false;       // user INTENT — survives crime flips (an excluded crime shows the note; dots return after)
+let unlitShown = false;    // dots actually condensed (pool visible)
+let unlitProg = 1, unlitStart = 0, unlitPhase = null; // own clock for condense-in / disperse-out
+const UNLIT_MS = 1600;
+let unlitSrc = null, unlitTgt = null; // CPU copies of the live endpoints (mid-flight captures need them)
+
 const yearEl = document.getElementById('year');
 const fpsEl = document.getElementById('fps');
 const crimeEl = document.getElementById('crime');
@@ -199,11 +255,22 @@ const hintEl = document.getElementById('hint');
 let _lastHint = null;
 function refreshHint() {
   if (!hintEl || drilling) return;
-  const txt = terrainMode ? 'T or tap → flat map'
-    : pulseMode ? '←→ month · space play/pause · N or M → years'
-      : (pieMode || triPieMode) ? 'press M for the map'
-        : region !== 'wc' ? 'N months · T terrain · click empty space (or M) to zoom out'
-          : 'N months · T terrain · click any area to zoom in';
+  const txt = flockMode ? (flockPhase === 'land' ? 'the field lands…' : (attractMode ? 'press any key' : 'F or tap → land'))
+    : tollMode
+    ? (tollPhase === 'gather' ? 'the years are gathering…'
+      : tollPhase === 'drain' || tollPhase === 'home' ? 'the murders return to the map…'
+        : tollDone ? 'the toll stands · scrub the dial back · K returns them to the map'
+          : (tollHoldPtr || tollHoldKey) ? 'one recorded murder per second — release to resume the sweep'
+            : tollPaused ? 'paused — space resumes · drag the dial · K ends the toll'
+              : 'drag the dial to scrub · hold the disc (or 1) for one per second · space pauses · K ends the toll')
+    : canyonMode ? 'a surface of rates — height is the data · ↑↓ crime · V or tap → flat map'
+    : terrainMode ? 'T or tap → flat map'
+      : pulseMode ? '←→ month · space play/pause · N or M → years'
+      : focusMode ? '←→ year · scroll in close · J neighbours · H or Esc lets go'
+      : forensicsMode ? 'colour + width = statistical liveliness (D), not volume · ↑↓ crime · hover · X or M → map'
+        : (pieMode || triPieMode) ? 'press M for the map'
+          : region !== 'wc' ? 'N months · T terrain · click empty space (or M) to zoom out'
+            : 'N months · T terrain · click any area to zoom in';
   if (txt !== _lastHint) { hintEl.textContent = txt; _lastHint = txt; }
 }
 
@@ -214,6 +281,7 @@ function repoint() {
   const b = providers[region][dataMode];
   layoutsByType = b.layouts; totalsByType = b.totals;
   pieBuilder = b.pieLayout; triPieBuilder = b.triPieLayout; resolvePieBuilder = b.resolvePieLayout;
+  forensicsBuilder = b.forensicsLayout; // mode-independent inside (tallies are raw counts by construction)
   layouts = layoutsByType[crimeType];
 }
 function applyMode(mode) { dataMode = mode; repoint(); }
@@ -253,10 +321,24 @@ const structRest = () => outlines[region] || outlines.wc;
 // door makes the offset explicit. Boundary crossings (landRegion, startDrill) still write the FULL
 // buffer via lift()/liveMap().
 const sliceStart = () => (region === 'wc' ? 0 : slices[region][0]);
+// While focused, the door itself applies the dim post-pass — one hook, every at-rest write covered.
 function setDataPair(src, tgt) {
   const o = sliceStart();
-  field.setSource(src, o);
-  field.setTarget(tgt, o);
+  field.setSource(focusMode ? focusLayout(src) : src, o);
+  field.setTarget(focusMode ? focusLayout(tgt) : tgt, o);
+}
+// Pure post-pass for the focus dim: same positions, every OTHER station's densities ×factor. Takes any
+// region-sized layout (the door's slice offset decides WHERE it lands in the shared field, so station
+// slot ranges stay build-local). Ping-pongs two pre-allocated scratch buffers — one door write dims
+// src AND tgt, and they must not alias.
+function focusLayout(layout, si = focusStation, factor = FOCUS_DIM) {
+  if (!focusScratch) focusScratch = [new Float32Array(COUNT), new Float32Array(COUNT)];
+  const den = focusScratch[(focusPing ^= 1)];
+  const n = layout.density.length;
+  const [b0, k] = providers[region][dataMode].slotRanges[si];
+  for (let i = 0; i < n; i++) den[i] = layout.density[i] * factor;
+  for (let i = b0, e = b0 + k; i < e; i++) den[i] = layout.density[i];
+  return { positions: layout.positions, density: den.subarray(0, n) };
 }
 // Cycle a detail outline (its own point count) up to structN dots so the frame is a DENSE line, not sparse.
 function cycleOutline(structure, n) {
@@ -352,8 +434,37 @@ async function init() {
   structField.setMaxSize(7);
   fieldGroup.add(structField.points);
 
+  // The toll's memorial WORD: a structure pool (grey, matte, NO glow — a word is a LABEL, never a data
+  // claim) that renders BEHIND everything (renderOrder -2) so the glowing disc always sits in front of
+  // it — "sent backwards", not dimmed into submission. Hidden except during the toll ceremony.
+  wordField = new PointField(WORD_N, { glow: false, size: 1.4, matte: '#3a4656' });
+  wordField.setPixelRatio(renderer.getPixelRatio());
+  wordField.setDrift(0.0);
+  wordField.setMaxSize(6);
+  wordField.points.renderOrder = -2;
+  wordField.points.visible = false;
+  fieldGroup.add(wordField.points);
+
   // Per-dot relief height on the DATA field, filled per region by fillAZ() when terrain is on (0 at rest).
   field.points.geometry.setAttribute('aZ', new THREE.BufferAttribute(new Float32Array(COUNT), 1));
+
+  // The unlit pool — one per-region builder set, exactly the crime providers' pattern: the province
+  // build IS the pool, each district a conserved contiguous slice (byte-identical crime subsets →
+  // identical per-station slot counts; the sum-check guards that assumption like `slices` does).
+  unlitProviders.wc = buildUnlitLayouts(provinceData, RATES, { types: T });
+  for (const rk of DETAIL_REGIONS) unlitProviders[rk] = buildUnlitLayouts(detailData[rk], RATES, { types: T });
+  UNLIT_COUNT = unlitProviders.wc.count;
+  let uc = 0;
+  for (const rk of DETAIL_REGIONS) { unlitSlices[rk] = [uc, unlitProviders[rk].count]; uc += unlitProviders[rk].count; }
+  if (uc !== UNLIT_COUNT) console.warn('[unlit] district slices don\'t sum to the pool', { uc, UNLIT_COUNT });
+
+  unlitField = new PointField(UNLIT_COUNT, { glow: false, size: 1.55, matte: '#55496b' }); // dim slate-violet — apart from structure slate AND every data ramp hue
+  unlitField.setPixelRatio(renderer.getPixelRatio());
+  unlitField.setDrift(0.0);      // still, like the frame — a drifting shadow would read as data
+  unlitField.setShimmer(0.35);   // calmer than the frame's breath: present, not twinkling
+  unlitField.setMaxSize(7);
+  unlitField.points.visible = false;
+  fieldGroup.add(unlitField.points);
 
   // regionData: the DATA object (with terrain DEM + box) per drillable region — the terrain code reads the
   // CURRENT region's relief here. Province + Cape Town got their elev via loadCapeTown; the five districts
@@ -372,9 +483,46 @@ async function init() {
   fieldGroup.add(terrainField.points);
   reseedTerrain();
 
+  // The canyon pool ('V') — DATA role: it glows and blooms (crime re-shaped, never structure). Sized
+  // ONCE to the province's cells; a district build re-spreads the same budget over its fewer, taller
+  // cells (area-constant sampling in canyonLayout), so no region ever needs a resize. Hidden until V.
+  canyonField = new PointField(stationsByRegion.wc.length * years.length * CANYON_DOTS, { glow: true, size: 1.9 });
+  canyonField.setPixelRatio(renderer.getPixelRatio());
+  canyonField.setDrift(0.25); // a landform breathes less than the map swarm
+  canyonField.setMaxSize(7);
+  canyonField.points.layers.enable(BLOOM_LAYER);
+  canyonField.points.visible = false;
+  fieldGroup.add(canyonField.points);
+  // FOCUS beacon — a thin grey ring (structure voice: matte, NO glow) at the focused station; its
+  // "pulse" is the existing structure shimmer, just breathing faster. Hidden until H focuses somewhere.
+  beaconField = new PointField(BEACON_N, { glow: false, size: 1.7, matte: '#566d78' });
+  beaconField.setPixelRatio(renderer.getPixelRatio());
+  beaconField.setDrift(0.0);
+  beaconField.setMaxSize(7);
+  beaconField.setShimmer(0.85);     // a felt beat — the beacon must be findable from province zoom
+  beaconField.setShimmerSpeed(2.4);
+  beaconField.points.visible = false;
+  fieldGroup.add(beaconField.points);
+
+  // People pool — sized once to the most populous precinct (Mitchells Plain ≈ 243k → ~2.4k dots at
+  // 1:100); every focus fills round(pop/100) of it and parks the rest. All 300 baked station records
+  // are drawn from these same 150 stations, so the province list bounds every region's needs.
+  const maxPop = Math.max(...stationsByRegion.wc.map((s) => s.pop || 0));
+  PEOPLE_N = Math.round(maxPop / PEOPLE_PER_DOT);
+  peopleField = new PointField(PEOPLE_N, { glow: false, size: 1.3, matte: '#566d78' });
+  peopleField.setPixelRatio(renderer.getPixelRatio());
+  peopleField.setDrift(0.0);
+  peopleField.setMaxSize(7);
+  peopleField.setShimmer(0.3);      // barely breathing — a standing crowd, not a twinkle
+  peopleField.setShimmerSpeed(0.6);
+  peopleField.points.visible = false;
+  fieldGroup.add(peopleField.points);
+
   applyMode('raw');
   frameUnion(wcRaw.meta.box, ctRaw.meta.box);
   landRegion(); // seed the province at rest
+  enterFlock(true); // the page OPENS released — a nameless swarm; any key or tap lands it into the data
+  lastInputAt = performance.now();
 
   refreshHud();
   updateFlag();
@@ -437,9 +585,10 @@ function startTerrainTransition(toLayout) {
 // coincident band, rise band → relief; on the way back, sink to band, then tick swaps the outline back.
 function toggleTerrain() {
   const d = regionData[region];
-  if (!d || !d.terrain || !d.terrain.elev || pieMode || triPieMode || drilling) return; // any region WITH a DEM
+  if (!d || !d.terrain || !d.terrain.elev || pieMode || triPieMode || drilling || tollMode || canyonMode || flockMode || forensicsMode) return; // any region WITH a DEM
   terrainMode = !terrainMode;
   if (terrainMode) {
+    unlitBlock(); // no estimate on the relief (v1) — flat maps only
     structField.points.visible = false;
     terrainField.points.visible = true;
     terrainTargetLayout = terrainRelief();
@@ -497,6 +646,158 @@ function reseedTerrain() {
   }
 }
 
+// ---- the canyon: enter/exit + the (region, crime) build ---------------------------------------------
+// Build (or reuse) THIS (region, crime)'s rate surface. One build resident at a time — a flip or a
+// later re-entry after a drill evicts it (the pulse's monthly() cache is the pattern; a build is
+// ~130k dots × bilinear sampling, cheap to redo, expensive to hoard).
+function canyonRates() {
+  const key = region + '·' + crimeType;
+  if (canyonCache.key !== key) {
+    canyonCache = {
+      key,
+      layout: canyonLayout(canyonField.count, stationsByRegion[region], years, crimeType, regionData[region].meta.box),
+    };
+  }
+  return canyonCache.layout;
+}
+// 'V' on a flat map toggles the canyon. The map's data swarm parks away off-frame (the drill's
+// break-away grammar — the canyon IS the same crime re-shaped, so showing both would double-count
+// it); the canyon pool fades in flat and RISES via the terrain's zScale easing; the structure pool
+// reconfigures into the year/district graticule. Exit reverses all three.
+function toggleCanyon() {
+  if (!canyonField || !field || pieMode || triPieMode || pulseMode || terrainMode || tollMode || flockMode || forensicsMode || drilling || flipping) return;
+  canyonMode = !canyonMode;
+  playing = false; morphStart = -1;
+  if (canyonMode) {
+    unlitBlock();                              // the estimate leaves with the map it shadows
+    if (focusMode) exitFocus(false);           // the canyon re-shapes the whole crime — no single precinct to stand in
+    canyonCur = canyonRates();
+    canyonField.setSource(canyonCur);
+    canyonField.setTarget(canyonCur);
+    canyonField.setT(1);
+    canyonField.setZScale(0);
+    canyonField.setOpacity(0);                 // fades in as it rises (tick's canyon block)
+    canyonField.points.visible = true;
+    field.setSource(liveMap(region));          // park the map swarm from its LIVE pose (mid-morph safe)
+    field.setTarget(awayAll);
+    field.setStagger(0.6);
+    structField.setSize(PIE_LINE_SIZE);
+    startStructTransition(canyonFrameLayout(structN, { grid: canyonCur.grid, seams: canyonCur.seams }));
+  } else {
+    if (canyonFlipTo) { // a pending flip leaves WITH you — never a stale swap ticking under the map
+      crimeType = canyonFlipTo; canyonFlipTo = '';
+      layouts = layoutsByType[crimeType];
+    }
+    field.setSource(awayAll);                  // the swarm flies home to the map it left
+    field.setTarget(region === 'wc' ? layouts[yi] : lift(region, layouts[yi]));
+    field.setStagger(0.6);
+    structField.setSize(structDotSize);
+    startStructTransition(structRest());
+  }
+  t = 0; pieMorphStart = performance.now(); pieMorphing = true; // completion re-anchors the year pair on exit
+  refreshHud();
+  updateFlag();
+}
+
+// ---- the unlit field: toggle + morphs ----------------------------------------------------------
+// Pool-sized layout for the CURRENT region at year index yiArg — a district's build is lifted into
+// its conserved slice, every other slot parked at the province roosts (lift()'s grammar, own pool).
+function unlitLift(regionKey, l) {
+  const d = unlitProviders.wc.disperse();
+  const positions = new Float32Array(UNLIT_COUNT * 2), density = new Float32Array(UNLIT_COUNT);
+  positions.set(d.positions, 0);
+  const start = unlitSlices[regionKey][0];
+  positions.set(l.positions, start * 2);
+  density.set(l.density, start);
+  return { positions, density };
+}
+function unlitL(yiArg, type = crimeType, mode = dataMode) {
+  const l = unlitProviders[region].layout(type, yiArg, mode);
+  return region === 'wc' ? l : unlitLift(region, l);
+}
+const unlitRoost = () => (region === 'wc' ? unlitProviders.wc.disperse() : unlitLift(region, unlitProviders[region].disperse()));
+// The one door for the pool's GPU endpoints — keeps CPU copies so a mid-flight change can capture
+// the live pose instead of snapping (liveMap's job, for this pool).
+function unlitSet(a, b) {
+  unlitSrc = a; unlitTgt = b;
+  unlitField.setSource(a); unlitField.setTarget(b);
+}
+function unlitLive() { // current interpolated pose (stagger ignored — same approximation as liveMap)
+  if (!unlitSrc) return unlitRoost();
+  const p = unlitProg < 1 ? swarmEase(unlitProg) : t;
+  const positions = new Float32Array(UNLIT_COUNT * 2), density = new Float32Array(UNLIT_COUNT);
+  for (let i = 0; i < UNLIT_COUNT; i++) {
+    positions[2 * i] = unlitSrc.positions[2 * i] + (unlitTgt.positions[2 * i] - unlitSrc.positions[2 * i]) * p;
+    positions[2 * i + 1] = unlitSrc.positions[2 * i + 1] + (unlitTgt.positions[2 * i + 1] - unlitSrc.positions[2 * i + 1]) * p;
+    density[i] = unlitSrc.density[i] + (unlitTgt.density[i] - unlitSrc.density[i]) * p;
+  }
+  return { positions, density };
+}
+function unlitAnchorPair() { // fall in step with the year pair — the shadow scrubs WITH the reported field
+  unlitSet(unlitL(yi), unlitL((yi + 1) % years.length));
+  unlitField.setT(t);
+}
+function unlitCondense() { // in from the roosts (or from mid-disperse — the live capture reverses smoothly)
+  const from = unlitShown ? unlitLive() : unlitRoost();
+  unlitShown = true;
+  unlitField.points.visible = true;
+  unlitField.setStagger(0.6);
+  unlitSet(from, unlitL(yi));
+  unlitPhase = 'in'; unlitStart = performance.now(); unlitProg = 0;
+}
+function unlitDisperse() { // fly home to the roosts, dimming out on the way; tick hides on arrival
+  unlitField.setStagger(0.6);
+  unlitSet(unlitLive(), unlitRoost());
+  unlitPhase = 'out'; unlitStart = performance.now(); unlitProg = 0;
+}
+function hideUnlitNow() {
+  unlitShown = false; unlitPhase = null; unlitProg = 1;
+  if (unlitField) unlitField.points.visible = false;
+}
+// Reconcile the shadow with the CURRENT crime/mode/year/region — called wherever the map re-anchors
+// at rest (setYearPair). Intent survives an excluded crime: the note shows, the dots return on the
+// next included crime.
+function unlitAfterAnchor() {
+  if (!unlitField || !unlitOn) { updateUnlitChip(); return; }
+  if (pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode || flockMode || focusMode || forensicsMode || drilling) return;
+  if (!RATES.rates[crimeType]) { if (unlitShown) hideUnlitNow(); }
+  else if (!unlitShown || unlitPhase === 'out') unlitCondense();
+  else unlitAnchorPair();
+  updateUnlitChip();
+}
+function unlitBlock() { // a blocked view opens (pie/pulse/terrain/drill) — the estimate leaves with it
+  if (!unlitField) return;
+  if (unlitShown && unlitPhase !== 'out') unlitDisperse();
+  unlitOn = false;
+  updateUnlitChip();
+}
+function toggleUnlit() {
+  if (!unlitField || drilling || flipping || pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode || flockMode || focusMode || forensicsMode) return;
+  unlitOn = !unlitOn;
+  if (!unlitOn) { if (unlitShown) unlitDisperse(); }
+  else if (RATES.rates[crimeType]) {
+    morphStart = -1; holdUntil = performance.now() + UNLIT_MS + 400; // the condense gets its beat before the years resume
+    setYearPair(yi); // clean re-anchor at rest; the hook condenses the shadow in
+  }
+  updateUnlitChip();
+}
+// The legend chip — the estimate's on-screen declaration, visible the whole time it's active.
+// Sexual offences ALWAYS carry the floor caveat; excluded crimes state their reason instead of dots.
+function updateUnlitChip() {
+  const chip = document.getElementById('unlit-chip');
+  if (!chip) return;
+  const active = unlitOn && !pieMode && !triPieMode && !pulseMode && !terrainMode && !tollMode && !canyonMode && !flockMode && !forensicsMode;
+  if (!active) { chip.style.display = 'none'; return; }
+  const spec = RATES.rates[crimeType];
+  chip.innerHTML = !spec
+    ? (crimeType === 'murder'
+      ? '◌ murder is near-fully recorded — no unreported estimate (GPSJS)'
+      : '◌ commercial crime sits outside household surveys — no estimate')
+    : `◌ estimated unreported (survey-based) · GPSJS national r=${Math.round(spec.r * 100)}%` +
+      (spec.floor ? ' · <b style="color:#b3a4d6">floor — surveys under-capture sexual offences</b>' : '');
+  chip.style.display = 'block';
+}
+
 // ---- the pulse: month-scrub control ------------------------------------------------------------
 // Mirrors the year grammar exactly: a pair of monthly layouts (mi → mi+1), lifted into the region's
 // conserved slice when drilled in; tick's playing branch advances it at pulse cadence, looping.
@@ -514,8 +815,10 @@ function buildPulse() {
   return !!p;
 }
 function enterPulse() {
-  if (pulseMode || !monthLabels || !field || pieMode || triPieMode || drilling) return;
+  if (pulseMode || !monthLabels || !field || pieMode || triPieMode || drilling || tollMode || canyonMode || flockMode || forensicsMode) return;
   if (!buildPulse()) return;
+  unlitBlock(); // no estimate in the pulse (v1) — it disperses as the months take over
+  if (focusMode) exitFocus(false); // the two lenses don't compose — N trades focus for the pulse (setMonthPair below rewrites the pair)
   pulseMode = true;
   playing = true; morphStart = -1; holdUntil = performance.now();
   setMonthPair(mi);
@@ -535,6 +838,433 @@ function stepMonth(dir) {
   setMonthPair(mi + dir);
 }
 
+// ---- THE TOLL — the 18-year accumulation the reading can't show (murders only) ----------------------
+// K on the province map: a thin grey YEAR-DIAL sweeps once (~75 s, scrubable — the dial IS the
+// scrubber); every recorded murder pours OUT of the dimmed map into a growing central disc — one
+// stratum ring per year, growth rings of loss — and it never resets. Press-and-hold on the disc
+// (or key 1) drops the pour to exactly ONE PER SECOND (the Reading's soul as a gesture). It is
+// ONE morph with ORDERED seeds (dot k = the k-th murder chronologically, window at uT ≈ k/M) and
+// uT driven by the dial clock; the engine never learns what a ceremony is. Counts are RAW
+// recorded murders, whatever the display mode.
+let tollMode = false, tollPhase = '';                // '' | 'gather' | 'toll' | 'drain' | 'home'
+let tollT = 0;                                       // the ceremony's uT — the dial reads/writes THIS
+let tollPaused = false, tollHoldKey = false, tollHoldPtr = false, tollScrubbing = false;
+let tollData = null;                                 // { source, disc, M, perYear, cum, seamRadii } from tollLayouts
+let tollFrame = null, tollHand = null;               // the dial structure layout + its hand slice
+let tollSeeds = null, tollSeedsSaved = null;         // ordered seeds of dot k + the randoms restored on exit
+let tollCount = -1, tollYearShown = -1, tollDone = false;
+let tollPhaseStart = 0, tollLastNow = 0, tollDrainFrom = 0, tollHandAngle = -1, tollSpinStart = 0;
+let tollHoldTimer = 0;
+const TOLL_SWEEP_MS = 75000, TOLL_GATHER_MS = 2400, TOLL_DRAIN_MS = 1400, TOLL_HOME_MS = 2000;
+const TOLL_FLIGHT_S = 1.2;                           // one dot's map→disc flight at sweep speed
+const TOLL_HOLD_MS = 350;                            // press-and-hold threshold on the disc
+let TOLL_SPIN_RATE = 0.028;                          // settled-ring spin (rad/s) ≈ 1 rev / 3.7 min — very slow, tune by eye
+// Per-dot stagger window: at sweep speed (uT/s = 1000/TOLL_SWEEP_MS) a window w is a w·75 s flight.
+const tollW = () => Math.min(0.95, TOLL_FLIGHT_S / (TOLL_SWEEP_MS / 1000));
+
+// Ceremony geometry, in the province map frame: the disc slightly below map centre, the dial
+// ring just outside it. (The plan's constants; the maker's eye owns the ratios.)
+function tollGeom() {
+  const box = regionData.wc.meta.box;
+  const R = Math.min(box.w, box.h) * 0.32;
+  return { cx: 0, cy: -box.h * 0.06, R, dialR: R * 1.16 };
+}
+
+// The memorial WORD behind the toll. Grey structure, no glow, renderOrder -2 → the disc sits in front.
+// Centred a touch ABOVE the disc (yFrac of box.h); all params live-tunable via __viz.word() by eye.
+let tollWord = 'MURDER';
+let tollWordOpts = { fontFrac: 0.14, jitter: 0.8, weight: 800, yFrac: 0.41, spanFrac: 0.46 }; // "title above" — the word crowns the dial, its base just dipping into the outer ring
+function showTollWord() {
+  if (!wordField) return;
+  if (!tollWord) { wordField.points.visible = false; return; }
+  const box = regionData.wc.meta.box;
+  const { cy } = tollGeom();
+  const o = tollWordOpts;
+  const lay = textLayout(tollWord, WORD_N, box, {
+    fontFrac: o.fontFrac, jitter: o.jitter, weight: o.weight, spanFrac: o.spanFrac,
+    cx: 0, cy: cy + o.yFrac * box.h,
+  });
+  wordField.setSource(lay); wordField.setTarget(lay); wordField.setT(1);
+  wordField.points.visible = true;
+}
+function hideTollWord() { if (wordField) wordField.points.visible = false; }
+
+// Bake the field's CURRENT on-screen pose (the vertex shader's per-dot staggered mix, minus the
+// cosmetic drift) into a plain layout, so a new morph can begin from EXACTLY what the eye sees —
+// mid-transition, any seeds, any stagger. Mirrors the shader: fract(aSeed/2π), epsilon floor, and
+// Math.fround so float32 seeds resolve the same way they do on the GPU.
+function bakeFieldPose() {
+  const g = field.points.geometry;
+  const src = g.getAttribute('aSource').array, tgt = g.getAttribute('aTarget').array;
+  const sd = g.getAttribute('aSourceDensity').array, td = g.getAttribute('aTargetDensity').array;
+  const seeds = g.getAttribute('aSeed').array;
+  const uT = field.material.uniforms.uT.value;
+  const w = Math.max(field.material.uniforms.uStagger.value, 1e-4);
+  const positions = new Float32Array(COUNT * 2), density = new Float32Array(COUNT);
+  for (let i = 0; i < COUNT; i++) {
+    const s01 = Math.fround(seeds[i] * 0.1591549431) % 1;
+    const lt = Math.min(1, Math.max(0, (uT - s01 * (1 - w)) / w));
+    positions[2 * i] = src[2 * i] + (tgt[2 * i] - src[2 * i]) * lt;
+    positions[2 * i + 1] = src[2 * i + 1] + (tgt[2 * i + 1] - src[2 * i + 1]) * lt;
+    density[i] = sd[i] + (td[i] - sd[i]) * lt;
+  }
+  return { positions, density };
+}
+
+// The counter and the disc are ONE formula: a murder is counted the moment its dot LANDS
+// (lt = 1 — the reading counted at its line, lt = 0.5; the toll has no line, so the count is the
+// dots visibly IN the disc, never more). Binary search calling the shader's own math — lt at a
+// fixed uT is non-increasing in k for ordered seeds — so the count CANNOT disagree with the
+// pixels (step-tested exact at 1,501 sweep steps, float32 seeds included).
+function tollCountAt(uT) {
+  const w = tollW();
+  let lo = 0, hi = tollData.M;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    const s01 = Math.fround(tollSeeds[mid] * 0.1591549431) % 1;
+    if ((uT - s01 * (1 - w)) / w >= 1) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+
+// The dial's two clocks reconciled: uT counts EVENTS (dot k crosses at uT ≈ k/M), the dial shows
+// CALENDAR (18 equal ticks). Mapping through the cumulative counts keeps both honest — the pour
+// runs at one constant density of loss, so the hand LINGERS through the heavy years.
+function tollYearFrac(uT) {
+  const { cum, perYear, M } = tollData;
+  const km = Math.min(uT, 1) * M;
+  let y = 0; while (y < years.length - 1 && km >= cum[y + 1]) y++;
+  const f = perYear[y] ? Math.min(1, (km - cum[y]) / perYear[y]) : 0;
+  return { y, f, frac: (y + f) / years.length };
+}
+function tollFracToT(frac) {                         // dial arc (0..1 from twelve, cw) → uT
+  const { cum, perYear, M } = tollData;
+  const yf = Math.min(Math.max(frac, 0), 1) * years.length;
+  const y = Math.min(years.length - 1, Math.floor(yf));
+  return (cum[y] + (yf - y) * perYear[y]) / M;
+}
+
+function enterToll() {
+  if (tollMode || !field || drilling || pieMorphing || flipping || pieMode || triPieMode || pulseMode || terrainMode || canyonMode || flockMode || forensicsMode) return;
+  if (region !== 'wc') return;                       // province-only: the toll is the WHOLE province's 18 years
+  const { cx, cy, R, dialR } = tollGeom();
+  // Province-only full-pool CEREMONY: the pool IS the province (sliceStart() = 0), and tollLayouts
+  // returns full COUNT-sized endpoints by construction — full-buffer writes at offset 0 are the
+  // correct door here (startDrill is the precedent). Raw murder counts, whatever the display mode.
+  tollData = tollLayouts(stationsByRegion.wc, { years, count: COUNT, park: awayAll.positions, cx, cy, R, dialR });
+  if (!tollData) return;                             // tollLayouts asserted loudly (M > pool)
+  unlitBlock();                                      // the estimate leaves with the map (the toll counts the recorded dead)
+  if (focusMode) exitFocus(false);                   // the toll is the whole province's dead — focus lets go first
+  playing = false; morphStart = -1;
+  tollMode = true; tollPhase = 'gather'; tollPaused = false; tollDone = false;
+  tollT = 0; tollCount = -1; tollYearShown = -1; tollHandAngle = -1;
+  tollHoldKey = tollHoldPtr = tollScrubbing = false;
+  controls.enabled = false;                          // the dial owns the pointer while tolling
+  field.setSource(bakeFieldPose());                  // from exactly what the eye sees (any crime, mid-morph)
+  field.setTarget(tollData.source);
+  field.setStagger(0.55);
+  t = 0; tollPhaseStart = performance.now();
+  tollFrame = tollFrameLayout(structN, { cx, cy, R, dialR, ticks: years.length, seamRadii: tollData.seamRadii, frameDots: pieFrameDots, thin: pieThin });
+  tollHand = tollFrame.hand;
+  structField.setSize(PIE_LINE_SIZE);
+  startStructTransition(tollFrame, TOLL_GATHER_MS, 0.6);
+  showTollWord();                                    // the memorial word appears behind the ceremony
+  refreshHud();
+}
+
+// The gather has landed: impose the ORDER (dot k's window at uT ≈ k/M), then let the dial walk.
+function beginTollClock(now) {
+  tollSeedsSaved = Float32Array.from(field.points.geometry.getAttribute('aSeed').array);
+  const seeds = Float32Array.from(tollSeedsSaved);
+  const M = tollData.M;
+  tollSeeds = new Float32Array(M);
+  for (let k = 0; k < M; k++) {
+    tollSeeds[k] = (k / M) / 0.1591549431;           // fract(seed · 1/2π) = k/M (the reading's seed math)
+    seeds[k] = tollSeeds[k];                         // event k IS pool dot k (chronological allocation)
+  }
+  field.setSeeds(seeds);
+  field.setSource(tollData.source);
+  field.setTarget(tollData.disc);
+  field.setStagger(tollW());
+  bakeTollSpin();                                     // the settled rings will turn (a real-time clock)
+  field.setSpinTime(0); field.setSpinOn(true); tollSpinStart = now;
+  tollPhase = 'toll';
+  tollT = 0; tollLastNow = now; t = 0;
+  refreshHud();
+}
+
+// Bake the ORDERED SPIN: once a year's ring has settled it turns VERY slowly, and ADJACENT rings
+// turn OPPOSITE ways (parity by year index) — a nested orrery. Onset = when dot k lands at the
+// DEFAULT sweep speed, so each ring eases from angle 0 the instant it settles; the engine gates
+// the spin by landed-ness, so scrubbing back lifts dots and stops them cleanly. Radius-preserving,
+// so it changes no year/count — ambient living-motion, like the idle drift.
+function bakeTollSpin() {
+  if (!tollData) return;
+  const M = tollData.M, rates = new Float32Array(COUNT), onsets = new Float32Array(COUNT);
+  const sweepS = TOLL_SWEEP_MS / 1000, w = tollW();
+  let yy = 0;
+  for (let k = 0; k < M; k++) {
+    while (yy < years.length - 1 && k >= tollData.cum[yy + 1]) yy++;
+    onsets[k] = ((k / M) * (1 - w) + w) * sweepS;     // seconds until this dot lands at sweep speed
+    rates[k] = TOLL_SPIN_RATE * ((yy & 1) ? -1 : 1);  // adjacent rings counter-rotate
+  }
+  field.setSpin(rates, onsets);
+  field.setSpinCentre(tollData.cx, tollData.cy);       // rotate about the DISC centre → radius invariant
+}
+
+// K/M/Esc/tap outside the dial: the pour REVERSES — a fast eased drain back into the dimmed map,
+// then the ordinary morph home to the truthful map (re-anchored via setYearPair, like the pies).
+function exitToll() {
+  if (!tollMode || tollPhase === 'drain' || tollPhase === 'home') return;
+  clearTimeout(tollHoldTimer); tollHoldPtr = false; tollScrubbing = false;
+  if (tollPhase === 'gather') {                      // no order imposed yet — morph straight home
+    field.setSource(bakeFieldPose());
+    beginTollHome();
+    return;
+  }
+  if (tollT <= 0) { field.setSource(tollData.source); beginTollHome(); return; }
+  tollDrainFrom = tollT; tollPhase = 'drain'; tollPhaseStart = performance.now();
+  refreshHud();
+}
+function beginTollHome() {
+  // At uT = 0 the pose IS the source, so restoring the random seeds is invisible here.
+  if (tollSeedsSaved) { field.setSeeds(tollSeedsSaved); tollSeedsSaved = null; }
+  field.setSpinOn(false);                            // stop the orrery BEFORE the map target lands (never spin the map)
+  hideTollWord();                                    // the memorial word leaves with the disc
+  hideTollRoll();                                    // and the ring caption goes with it
+  field.setTarget(layouts[yi]);                      // the truthful map (current crime, year yi)
+  field.setStagger(0.55);
+  t = 0; tollT = 0; tollPhase = 'home'; tollPhaseStart = performance.now();
+  structField.setSize(structDotSize);
+  startStructTransition(structRest(), TOLL_HOME_MS, 0.6);
+  controls.enabled = true;
+  refreshHud();
+}
+function tollPauseToggle() {
+  if (!tollMode || tollPhase !== 'toll') return;
+  tollPaused = !tollPaused;
+  refreshHud();
+}
+
+// The ceremony's HUD line — year under the hand · that year's running count · cumulative total.
+// Writes only when a count or the hand's year changes (called every frame while tolling).
+function updateTollHud(force = false) {
+  if (!countEl || !tollData) return;
+  const M = tollData.M;
+  const counting = tollPhase === 'toll' || tollPhase === 'drain';
+  const n = counting ? tollCountAt(tollT) : 0;
+  const { y } = tollYearFrac(counting ? tollT : 0);
+  if (!force && n === tollCount && y === tollYearShown) return;
+  tollCount = n; tollYearShown = y;
+  if (yearEl) yearEl.textContent = yearLabels[y];
+  const total = M.toLocaleString();
+  if (tollPhase === 'gather') {
+    countEl.textContent = `${total} recorded murders · Apr 2008 – Mar 2026`;
+  } else if (n >= M) {
+    countEl.textContent = `${total} recorded murders · Western Cape · Apr 2008 – Mar 2026`;
+    if (!tollDone) { tollDone = true; refreshHud(); } // the hand rests; the hint flips once
+  } else {
+    const inYear = Math.max(0, n - tollData.cum[y]); // landings lag the hand — never more than the year holds
+    countEl.textContent = `${inYear.toLocaleString()} this year · ${n.toLocaleString()} recorded murders so far`;
+    if (tollDone) { tollDone = false; refreshHud(); } // scrubbed back below complete
+  }
+}
+
+// The hand rides the dial: rewrite ONLY its slice of the structure pool (both endpoints, so the
+// pose survives the next full-buffer transition), leaving ring/ticks/seams untouched. Writing
+// into tollFrame's own arrays keeps structCurrent truthful — the exit morph starts from the
+// hand's REAL angle, not a stale twelve.
+function updateTollHand(uT) {
+  if (!tollHand || strProg < 1 || structCurrent !== tollFrame) return;
+  const angle = tollYearFrac(uT).frac * Math.PI * 2;
+  if (Math.abs(angle - tollHandAngle) < 6e-4) return;
+  tollHandAngle = angle;
+  const { cx, cy, R, dialR } = tollGeom();
+  const h = tollHandLayout(tollHand.count, { cx, cy, R, dialR, angle, thin: pieThin });
+  tollFrame.positions.set(h.positions, tollHand.start * 2);
+  tollFrame.density.set(h.density, tollHand.start);
+  const slice = {
+    positions: tollFrame.positions.subarray(tollHand.start * 2, (tollHand.start + tollHand.count) * 2),
+    density: tollFrame.density.subarray(tollHand.start, tollHand.start + tollHand.count),
+  };
+  structField.setSource(slice, tollHand.start);
+  structField.setTarget(slice, tollHand.start);
+}
+
+// Ring rollover: hover a year-stratum to name its year + that year's murder count. Structure-voiced —
+// grey, small, pointer-transparent; a memorial caption that follows the pointer over the disc.
+let tollRollEl = null;
+function tollRoll() {
+  if (!tollRollEl) {
+    tollRollEl = document.createElement('div');
+    tollRollEl.style.cssText = 'position:fixed;pointer-events:none;z-index:20;color:#8b98ac;' +
+      'font:12px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em;' +
+      'opacity:0;transition:opacity .25s';
+    app.appendChild(tollRollEl);
+  }
+  return tollRollEl;
+}
+function hideTollRoll() { if (tollRollEl) tollRollEl.style.opacity = '0'; }
+function updateTollRollover(clientX, clientY) {
+  // Only while the disc exists (not gather/home), and never mid-scrub — rollover is pure hover.
+  if (!tollMode || tollPhase === 'gather' || tollPhase === 'home' || tollScrubbing || !tollData) {
+    hideTollRoll(); return;
+  }
+  const { cx, cy } = tollGeom();                       // fieldGroup local == world here (same as the pointer grammar)
+  const p = tollWorldAt(clientX, clientY);
+  const r = Math.hypot(p.x - cx, p.y - cy);
+  if (r < tollData.r0 || r > tollData.R) { hideTollRoll(); return; }  // off the disc band → nothing to name
+  let y = 0;                                           // radius → year; the orrery spin preserves radius, so it's unaffected
+  while (y < tollData.seamRadii.length && r >= tollData.seamRadii[y]) y++;
+  const el = tollRoll();
+  el.textContent = `${yearLabels[y]} · ${tollData.perYear[y].toLocaleString()} recorded`;
+  el.style.opacity = '1';
+  const w = el.offsetWidth, h = el.offsetHeight;       // clamp so the caption never runs off the viewport edge
+  el.style.left = Math.max(8, Math.min(clientX + 14, window.innerWidth - w - 8)) + 'px';
+  el.style.top = Math.max(8, Math.min(clientY - 10, window.innerHeight - h - 8)) + 'px';
+}
+
+// ---- the dial's pointer grammar: drag the ring scrubs, hold the disc drips 1:1, tap outside exits ----
+function tollWorldAt(clientX, clientY) {             // screen → the flat map plane (z = 0 while tolling)
+  const rect = renderer.domElement.getBoundingClientRect();
+  _hv.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1, 0.5)
+    .unproject(camera);
+  const dir = _hv.sub(camera.position).normalize();
+  const k = -camera.position.z / dir.z;
+  return { x: camera.position.x + dir.x * k, y: camera.position.y + dir.y * k };
+}
+function tollScrubTo(clientX, clientY) {
+  const { cx, cy } = tollGeom();
+  const p = tollWorldAt(clientX, clientY);
+  const ang = Math.atan2(p.x - cx, p.y - cy);        // 0 at twelve, clockwise positive
+  let frac = ang / (Math.PI * 2); if (frac < 0) frac += 1;
+  const cur = tollYearFrac(tollT).frac;              // unwrap: the dial can't teleport across twelve
+  if (frac - cur > 0.5) frac -= 1;
+  if (cur - frac > 0.5) frac += 1;
+  tollT = tollFracToT(Math.min(1, Math.max(0, frac)));
+  t = tollT;
+  updateTollHud();
+}
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (!tollMode || tollPhase !== 'toll') return;
+  const { cx, cy, R, dialR } = tollGeom();
+  const p = tollWorldAt(e.clientX, e.clientY);
+  const r = Math.hypot(p.x - cx, p.y - cy);
+  if (r <= R * 1.02) {                               // the disc: press-and-hold → one per second
+    clearTimeout(tollHoldTimer);
+    tollHoldTimer = setTimeout(() => { tollHoldPtr = true; refreshHud(); }, TOLL_HOLD_MS);
+  } else if (r <= dialR * 1.3) {                     // the ring: the dial IS the scrubber
+    tollScrubbing = true;
+    tollScrubTo(e.clientX, e.clientY);
+  }
+});
+window.addEventListener('pointermove', (e) => {
+  if (tollScrubbing) tollScrubTo(e.clientX, e.clientY);
+  updateTollRollover(e.clientX, e.clientY);           // pure hover — name the ring under the pointer
+});
+window.addEventListener('pointerup', (e) => {
+  if (!tollMode) return;
+  clearTimeout(tollHoldTimer);
+  const wasHolding = tollHoldPtr, wasScrubbing = tollScrubbing;
+  if (tollHoldPtr) { tollHoldPtr = false; refreshHud(); }
+  tollScrubbing = false;
+  // a quick tap OUTSIDE the dial ends the toll (the drill's tap-to-leave grammar)
+  if (wasHolding || wasScrubbing) return;
+  if (Math.hypot(e.clientX - _downX, e.clientY - _downY) > 6) return;
+  const { cx, cy, dialR } = tollGeom();
+  const p = tollWorldAt(e.clientX, e.clientY);
+  if (Math.hypot(p.x - cx, p.y - cy) > dialR * 1.3) exitToll();
+});
+
+// ---- THE FLOCK — release the field (province map only) ----------------------------------------------
+// Press F and all ~180k dots FORGET the map: the field lifts into a province-scale murmuration
+// wheeling over the grey outline — a chain of 8 precomputed flock keyframes (flockLayouts) morphed
+// through in a loop. THE STAGGER IS THE MURMURATION: each dot crosses on its own slice of t, so every
+// frame-to-frame morph ripples through the flock as a turning wave — no physics engine, no per-frame
+// position uploads, the same GPU tween the year-scrub rides. A declared PLAY state: the readouts
+// suspend (no data reading while airborne), the tooltip + labels sleep, and landing always returns
+// every dot to layouts[yi] — the truthful map — then re-anchors the scrub pair.
+let flockMode = false, flockPhase = 'fly', flockIdx = 0, flockStart = 0;
+let flockFrames = null, flockDensity = null;
+const FLOCK_MS = 3200, FLOCK_LAND_MS = 2800; // leg length · the glide home
+// Stagger ≈ 1 keeps EVERY dot in motion for the whole leg (heavy stagger parks each dot outside its
+// own window — that was the stop-start). The turning-wave texture now comes from the flow field.
+const FLOCK_STAGGER = 0.97, FLOCK_LAND_STAGGER = 0.6;
+// Surge easing: t(p) = p − (A/2π)·sin(2πp). Velocity swings smoothly between (1−A) and (1+A) and its
+// SLOPE MATCHES at every leg join (1−A on both sides) — the flock slows into each waypoint, banks,
+// and surges out, but never stops and never steps. This is the anti-jerk.
+const FLOCK_SURGE = 0.62;
+const surgeEase = (p) => p - (FLOCK_SURGE / (2 * Math.PI)) * Math.sin(2 * Math.PI * p);
+// Continuous-motion levers: the curl flow + boosted idle drift keep every dot streaming BETWEEN
+// waypoints (amplitudes are eased in the tick; speeds are set only while amplitudes are tiny —
+// a speed change mid-flight snaps orbit/flow phase).
+const FLOCK_FLOW = 15, FLOCK_FLOW_SPEED = 1.05, FLOCK_DRIFT = 5.5, FLOCK_DRIFT_SPEED = 2.4;
+// The ATTRACT state: the page LANDS released (a nameless swarm over the dark terrain) and any input
+// wakes it into the data; long idleness on the resting province releases it again.
+const IDLE_RELEASE_MS = 75000;
+let attractMode = false, lastInputAt = 0;
+let flowCur = 0, flockDriftCur = 0.4;
+
+// Pair a flock frame (positions only) with the density snapshotted at take-off — each dot KEEPS its
+// warmth through the flight, so the hot-core dots streak as warm threads across the sky.
+const withFlockDensity = (frame) => ({ positions: frame.positions, density: flockDensity });
+
+function enterFlock(attract = false) {
+  // Province map only: in a district most of the pool is parked-away with density 0 — flying it would
+  // materialize dots that aren't in the view's truth. And only from the FLAT map with nothing else in
+  // flight (no pie/pulse/terrain, nothing mid-morph) — self-guarding, like toggleTerrain.
+  if (flockMode || region !== 'wc' || !field || pieMode || triPieMode || pulseMode || terrainMode
+    || tollMode || canyonMode || forensicsMode || drilling || flipping || pieMorphing) return;
+  unlitBlock();                                      // the estimate leaves with the map it shadows
+  if (focusMode) exitFocus(false);                   // the whole field flies — the focus dim can't ride along
+  if (!flockFrames) flockFrames = flockLayouts(COUNT, regionData.wc.meta.box, 0xf10c); // seeded → stable per build; built once per session
+  const live = liveMap('wc');     // wherever the map is mid-breath — the flight lifts from HERE
+  flockDensity = live.density;
+  // Full-buffer writes (offset 0), like startDrill: the flock is a PROVINCE-ONLY full-pool state — no
+  // district slice is at rest, so the whole COUNT-sized field is legitimately re-pointed.
+  field.setSource(live);
+  field.setTarget(withFlockDensity(flockFrames[0]));
+  field.setStagger(FLOCK_STAGGER);
+  field.setDriftSpeed(FLOCK_DRIFT_SPEED); // amp still at-rest tiny here; it ramps in the tick
+  field.setT(0);
+  flockMode = true; flockPhase = 'fly'; flockIdx = 0; flockStart = performance.now();
+  attractMode = attract;
+  playing = false; morphStart = -1; t = 0;
+  refreshHud();
+}
+
+// The exact CURRENT airborne pose — replicating the vertex shader's per-dot stagger window (the same
+// seed01/window arithmetic as PointField's VERT) — because a landing must start from precisely where
+// each dot IS on screen; a uniform-t lerp would snap every dot that had already crossed its window.
+function airbornePose() {
+  const g = field.points.geometry;
+  const src = g.getAttribute('aSource').array, tgt = g.getAttribute('aTarget').array;
+  const seed = g.getAttribute('aSeed').array;
+  const uT = field.material.uniforms.uT.value;
+  const w = Math.max(field.material.uniforms.uStagger.value, 0.02);
+  const out = new Float32Array(COUNT * 2);
+  for (let i = 0; i < COUNT; i++) {
+    const s01 = (seed[i] * 0.1591549431) % 1;
+    let lt = (uT - s01 * (1 - w)) / w;
+    lt = lt < 0 ? 0 : lt > 1 ? 1 : lt;
+    out[2 * i] = src[2 * i] + (tgt[2 * i] - src[2 * i]) * lt;
+    out[2 * i + 1] = src[2 * i + 1] + (tgt[2 * i + 1] - src[2 * i + 1]) * lt;
+  }
+  return out;
+}
+
+// Land: from wherever the chain is, ONE long staggered morph home to the truthful map. tick's flock
+// branch finishes it (flockMode off → setYearPair re-anchor → HUD restore).
+function landFlock() {
+  if (!flockMode || flockPhase === 'land') return;
+  field.setSource({ positions: airbornePose(), density: flockDensity }); // full-buffer: see enterFlock
+  field.setTarget(layouts[yi]);                                          // province layouts are COUNT-sized
+  field.setStagger(FLOCK_LAND_STAGGER);
+  field.setT(0); t = 0;
+  flockPhase = 'land'; flockStart = performance.now();
+  refreshHint();
+}
+
 // ---- year-scrub control -----------------------------------------------------
 function setYearPair(i) {
   yi = (i + years.length) % years.length;
@@ -546,6 +1276,7 @@ function setYearPair(i) {
     setDataPair(layouts[yi], layouts[next]);
   }
   t = 0;
+  unlitAfterAnchor(); // the shadow re-anchors with the reported field (no-op unless active on a map)
   refreshHud();
 }
 function stepYear(dir) {
@@ -576,10 +1307,16 @@ function stepYear(dir) {
 
 // Flip to another crime (dir cycles the list): morph between crimes at the current year, then resume.
 function flipCrime(dir) {
-  if (flipping || crimeTypes.length < 2) return;
+  if (flipping || crimeTypes.length < 2 || flockMode) return;
   const i = crimeTypes.indexOf(crimeType);
   const next = crimeTypes[(i + dir + crimeTypes.length) % crimeTypes.length];
   if (next === crimeType) return;
+  if (canyonMode) { // canyon: sink flat → swap the landform → rise as the new crime. aZ is ONE
+    if (canyonFlipTo) return;                 // attribute (it snaps on setTarget), so the swap hides
+    canyonFlipTo = next;                      // at zero height — tick performs it once the range is flat.
+    refreshHud(next);
+    return;
+  }
   if (pulseMode) { // pulse: cross-fade this month, old crime → new crime (lazy build evicts the old months)
     const from = pulseData.layouts[mi];
     crimeType = next;
@@ -588,6 +1325,18 @@ function flipCrime(dir) {
     setDataPair(from, pulseData.layouts[mi]);
     field.setStagger(0.6);
     t = 0; pieMorphStart = performance.now(); pieMorphing = true; // completion re-anchors to setMonthPair(mi)
+    refreshHud();
+    return;
+  }
+  if (forensicsMode) { // re-sort the strip to the new crime — columns fly to their new ranks
+    crimeType = next;
+    layouts = layoutsByType[crimeType];
+    const prev = lastForensics;
+    lastForensics = forensicsBuilder(crimeType);
+    setDataPair(prev, lastForensics);
+    field.setStagger(0.6);
+    startStructTransition(forensicsFrameLayout(structN, lastForensics.frame, { frameDots: pieFrameDots, thin: pieThin }));
+    t = 0; pieMorphStart = performance.now(); pieMorphing = true;
     refreshHud();
     return;
   }
@@ -608,6 +1357,10 @@ function flipCrime(dir) {
   flipStart = performance.now();
   morphStart = -1;
   setDataPair(layoutsByType[crimeType][yi], layoutsByType[next][yi]);
+  if (unlitField && unlitShown) { // the shadow flips WITH the reported field — or flies home if the next crime has no rate
+    unlitField.setStagger(0.6);
+    unlitSet(unlitLive(), RATES.rates[next] ? unlitL(yi, next) : unlitRoost());
+  }
   t = 0;
   refreshHud(next);
 }
@@ -615,9 +1368,22 @@ function flipCrime(dir) {
 // HUD text for a crime + the current year (defaults to the live crime).
 function refreshHud(type = crimeType) {
   const rate = dataMode === 'percapita';
-  if (regionEl) regionEl.textContent = (REGION_META[region] || REGION_META.wc).name;
+  const focusS = focusMode && focusStation >= 0 ? activeStations()[focusStation] : null;
+  if (regionEl) regionEl.textContent = focusS ? focusS.name : (REGION_META[region] || REGION_META.wc).name;
   refreshHint();
+  updateCaption(); // the One-in-N line rides every HUD refresh (year scrubs, crime flips, focus moves)
   refreshChips();
+  if (tollMode) {
+    if (crimeEl) crimeEl.textContent = 'murder · the toll';
+    updateTollHud(true); // the dial clock owns yearEl + countEl
+    return;
+  }
+  if (flockMode) { // airborne: the readouts suspend — no data reading while the field is released
+    if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + (rate ? ' · per 100k' : '');
+    if (yearEl) yearEl.textContent = '— released —';
+    if (countEl) countEl.textContent = '';
+    return;
+  }
   if (triPieMode) {
     if (crimeEl) crimeEl.textContent = `all ${crimeTypes.length} crimes` + (rate ? ' · per capita' : '');
     if (yearEl) yearEl.textContent = yearLabels[yi];
@@ -630,18 +1396,34 @@ function refreshHud(type = crimeType) {
     if (countEl) countEl.textContent = ((pulseData && pulseData.totals[mi]) || 0).toLocaleString();
     return;
   }
+  if (canyonMode) { // all 18 years at once — the canyon has no single year or count to name
+    if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + ' · per 100k';
+    if (yearEl) yearEl.textContent = `${yearLabels[0]}–${yearLabels.at(-1)}`;
+    if (countEl) countEl.textContent = `${(stationsByRegion[region] || stationsByRegion.wc).length} precincts × ${years.length} years`;
+    return;
+  }
+  if (forensicsMode) { // the strip: every station's 60 monthly returns at once — counts, never rates
+    if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + ' · monthly returns';
+    if (yearEl) yearEl.textContent = monthLabels ? `${fmtMonth(monthLabels[0])} – ${fmtMonth(monthLabels.at(-1))}` : '';
+    if (countEl) countEl.textContent = lastForensics ? `${lastForensics.reports.toLocaleString()} reported` : '';
+    return;
+  }
   if (yearEl) yearEl.textContent = yearLabels[yi];
   if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + (rate ? ' · per 100k' : '');
-  if (countEl) countEl.textContent = ((totalsByType[type] && totalsByType[type][yi]) || 0).toLocaleString();
+  if (countEl) countEl.textContent = focusS
+    ? ((focusS.crimes[type] && focusS.crimes[type][years[yi]]) || 0).toLocaleString() // the station's OWN count
+    : ((totalsByType[type] && totalsByType[type][yi]) || 0).toLocaleString();
 }
 // Data-source credit line — names the population source too once per-capita is in play.
 function updateFlag() {
   const flagEl = document.getElementById('flag');
   if (!flagEl || !yearLabels.length) return;
-  const span = pulseMode
+  const span = (pulseMode || forensicsMode) // both run on the monthly series — credit the quarterlies
     ? `${fmtMonth(monthLabels[0])}–${fmtMonth(monthLabels.at(-1))} monthly (SAPS quarterlies, unaudited)`
-    : `${yearLabels[0]}–${yearLabels.at(-1)}` + (dataMode === 'percapita' ? '' : ' (25/26 unaudited)');
-  flagEl.textContent = dataMode === 'percapita'
+    : canyonMode
+      ? `${yearLabels[0]}–${yearLabels.at(-1)} · rates surface · per 100k`
+      : `${yearLabels[0]}–${yearLabels.at(-1)}` + (dataMode === 'percapita' ? '' : ' (25/26 unaudited)');
+  flagEl.textContent = dataMode === 'percapita' || canyonMode // the canyon is per-capita by construction
     ? `◆ crime: SAPS (DataFirst + saps.gov.za) · population: WorldPop 2020 · ${span}`
     : `◆ SAPS crime records · DataFirst + saps.gov.za · ${span}`;
 }
@@ -649,10 +1431,12 @@ function updateFlag() {
 // Morph off the map into a robbery pie and back. Data swarms into the wedges, structure into the ring
 // + spokes — conserved, staggered, no fades.
 function togglePie() {
-  if (!pieBuilder || !field) return;
+  if (!pieBuilder || !field || canyonMode || flockMode || forensicsMode) return;
+  if (focusMode) exitFocus(false); // pies read the whole field — the write below replaces the pair
   pieMode = !pieMode;
   playing = false;
   if (pieMode) {
+    unlitBlock(); // no estimate in the pies (v1)
     pieYears = years.map((_, i) => pieBuilder(crimeType, i, { cx: 0, cy: 0, R: PIE_R }));
     const pie = pieYears[yi];
     lastPie = pie;
@@ -672,12 +1456,14 @@ function togglePie() {
 
 // Break the single pie into THREE — robbery · burglary · murder, same year, side by side.
 function toggleTriPie() {
-  if (!triPieBuilder || !field) return;
+  if (!triPieBuilder || !field || canyonMode || flockMode || forensicsMode) return;
+  if (focusMode) exitFocus(false); // pies read the whole field — the write below replaces the pair
   const wasPie = pieMode;
   triPieMode = !triPieMode;
   playing = false;
   if (triPieMode) {
     pieMode = false;
+    unlitBlock(); // no estimate in the compare view (v1)
     triPieYears = years.map((_, i) => triPieBuilder(i, { gap: TRI_GAP, R: TRI_R }));
     const tp = triPieYears[yi]; lastTriPie = tp;
     const dataSrc = wasPie && lastPie ? lastPie : layoutsByType[crimeType][yi];
@@ -695,10 +1481,38 @@ function toggleTriPie() {
   refreshHud();
 }
 
+// The forensics strip ('X'): the field morphs off the map into ranked ribbons of monthly returns
+// and back. Entered from the FLAT MAP only (pies/pulse/terrain each have their own exits first);
+// inside it, ↑↓ re-sorts to another crime — the re-sort IS the show. Data swarms to the columns,
+// structure to the baseline + seams + D=1 tick — conserved, staggered, no fades (pie grammar).
+function toggleForensics() {
+  if (!forensicsBuilder || !field || drilling) return;
+  if (!forensicsMode && (pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode || flockMode)) return;
+  forensicsMode = !forensicsMode;
+  playing = false;
+  if (forensicsMode) {
+    unlitBlock();                                   // the strip reads the recorded returns — the estimate leaves
+    if (focusMode) exitFocus(false);                // the whole province re-sorts — focus lets go first
+    lastForensics = forensicsBuilder(crimeType);
+    setDataPair(layoutsByType[crimeType][yi], lastForensics);
+    field.setStagger(0.6);
+    structField.setSize(PIE_LINE_SIZE);
+    startStructTransition(forensicsFrameLayout(structN, lastForensics.frame, { frameDots: pieFrameDots, thin: pieThin }));
+  } else {
+    setDataPair(lastForensics, layoutsByType[crimeType][yi]);
+    field.setStagger(0.55);
+    structField.setSize(structDotSize);
+    startStructTransition(structRest());
+  }
+  t = 0; pieMorphStart = performance.now(); pieMorphing = true;
+  refreshHud();
+  updateFlag(); // the strip runs on the monthly series — credit the quarterlies while inside
+}
+
 // Toggle raw ⇄ per-capita ('C'). The DATA field morphs to the same view in the new mode — dense
 // townships shrink, low-population hotspots swell, because rate ≠ count. Works in every view + region.
 function toggleMode() {
-  if (!field) return;
+  if (!field || canyonMode || flockMode || forensicsMode) return; // the canyon is per-capita ONLY; the strip's tallies are counts, not rates
   const newMode = dataMode === 'raw' ? 'percapita' : 'raw';
   const oldMapLayout = layoutsByType[crimeType][yi];
   applyMode(newMode);
@@ -725,6 +1539,10 @@ function toggleMode() {
     // map: only the DATA redistributes; the geography frame is identical in both modes.
     setDataPair(oldMapLayout, layoutsByType[crimeType][yi]);
     field.setStagger(0.55);
+    if (unlitField && unlitShown) { // the estimate re-budgets with the mode (same pop denominators)
+      unlitField.setStagger(0.55);
+      unlitSet(unlitLive(), unlitL(yi));
+    }
   }
   t = 0; pieMorphStart = performance.now(); pieMorphing = true;
   refreshHud();
@@ -750,8 +1568,13 @@ function resolveTriToPie(ci) {
 
 // The `M` key: from a pie/3-pie → swarm home to the map. On the Cape Town map → drill back out.
 function goToMap() {
+  if (tollMode) { exitToll(); return; }         // the toll drains home first
+  if (canyonMode) { toggleCanyon(); return; }   // canyon → flat map (exits exactly like terrain)
+  if (flockMode) { landFlock(); return; }       // airborne → land (M is an exit everywhere)
   if (terrainMode) { toggleTerrain(); return; } // terrain → flat first (then M again exits pulse / drills out)
   if (pulseMode) { exitPulse(); return; }       // pulse → back to the years
+  if (focusMode) { exitFocus(); return; }       // focused → the whole field first (M again drills out)
+  if (forensicsMode) { toggleForensics(); return; } // strip → swarm home to the map
   if (triPieMode) { toggleTriPie(); return; }
   if (pieMode) {
     pieMode = false;
@@ -772,7 +1595,8 @@ function goToMap() {
 // STRUCTURE: the province outline reconfigures into Cape Town's outline. Nothing fades except the rural
 // crime that genuinely has no detail to zoom into; the lens never moves.
 function startDrill(to) {
-  if (drilling || to === region || pieMode || triPieMode) return;
+  if (drilling || to === region || pieMode || triPieMode || tollMode || canyonMode || flockMode || forensicsMode) return; // exit the canyon first — a drill mid-relief would strand the graticule
+  if (focusMode) exitFocus(false); // drilling exits focus first (like the pulse); liveMap below rewrites the whole pair
   if (pulseMode) { pulseMode = false; playing = false; updateFlag(); } // drill flies on the YEARLY field (liveMap below); land re-seeds yearly
   if (terrainMode) { // never drill mid-relief — snap flat first (normal input exits terrain before this)
     terrainMode = false; zScaleCur = 0; tiltCur = 0; fieldGroup.rotation.x = 0; trProg = 1;
@@ -789,15 +1613,211 @@ function startDrill(to) {
   structField.setSource(structCurrent);
   structField.setTarget(outlines[to]);
   structField.setStagger(0.62);
+  if (unlitField && unlitShown) { // the estimate can't survive the region change — it flies home with the drill
+    unlitField.setStagger(0.62);
+    unlitSet(unlitLive(), unlitRoost());
+    unlitOn = false;
+    updateUnlitChip();
+  }
 }
 
+// ---- FOCUS: stand in your suburb (H) ---------------------------------------------------------------
+// Enter writes the ONE asymmetric pair (undimmed → dimmed) while the flag is still off — so the door
+// can't double-dim it — then flips the flag; every later at-rest write lands pre-dimmed. The morph
+// rides the pieMorphing clock, whose completion re-anchors setYearPair(yi) exactly like a pie/flip.
+function enterFocus(si) {
+  if (!field || si < 0 || drilling || pieMode || triPieMode || tollMode || canyonMode || flockMode || forensicsMode || flipping) return;
+  unlitBlock();                      // the estimate doesn't compose with the focus dim — it leaves
+  if (pulseMode) exitPulse();        // focus reads the YEARLY field (the drill's same snap)
+  if (focusMode) exitFocus(false);   // refocus = clean slate; the write below re-dims for the new station
+  playing = false;
+  focusStation = si;
+  peopleOn = true;                   // the residents auto-show on each fresh focus (J hides them)
+  const dim = focusLayout(layouts[yi], si);
+  setDataPair(layouts[yi], dim);     // flag still false → the door passes both through untouched
+  focusMode = true;
+  field.setStagger(0.55);
+  t = 0; pieMorphStart = performance.now(); pieMorphing = true;
+  seedBeacon();
+  seedPeople();
+  refreshHud();
+}
+function exitFocus(animate = true) {
+  if (!focusMode) return;
+  const dim = focusLayout(layouts[yi]);  // the dimmed pose, composed while the flag is still on
+  focusMode = false; focusStation = -1;
+  if (beaconField) beaconField.points.visible = false;
+  hidePeople();
+  if (animate) {                     // fade back up; completion re-anchors the undimmed year pair.
+    setDataPair(dim, layouts[yi]);   // animate:false = a boundary caller (drill/pulse/pie) immediately
+    field.setStagger(0.55);          //   rewrites the whole pair itself, so no write here.
+    t = 0; pieMorphStart = performance.now(); pieMorphing = true;
+  }
+  refreshHud();
+}
+// ---- One in Forty-Three: the people stand up --------------------------------------------------------
+function seedPeople() {
+  if (!peopleField || focusStation < 0) return;
+  const s = activeStations()[focusStation];
+  const n = Math.round((s.pop || 0) / PEOPLE_PER_DOT);   // 1 grey dot = 100 residents, exactly
+  const grid = personGridLayout({ x: s.x, y: s.y, r: Math.max(8, s.r) }, n, PEOPLE_N);
+  // They RISE: same dots huddled dark at the centre → the standing grid (dot count never lies).
+  const from = { positions: new Float32Array(PEOPLE_N * 2), density: new Float32Array(PEOPLE_N) };
+  for (let i = 0; i < PEOPLE_N; i++) {
+    from.positions[i * 2] = s.x + (grid.positions[i * 2] - s.x) * 0.12;
+    from.positions[i * 2 + 1] = s.y + (grid.positions[i * 2 + 1] - s.y) * 0.12;
+  }
+  peopleField.setSource(from);
+  peopleField.setTarget(grid);
+  peopleField.setStagger(0.6);
+  plStart = performance.now(); plProg = 0;
+  peopleField.points.visible = true;
+  updateCaption();
+}
+function hidePeople() {
+  if (peopleField) peopleField.points.visible = false;
+  updateCaption();
+}
+function togglePeople() { // J — only meaningful while focused
+  if (!focusMode) return;
+  peopleOn = !peopleOn;
+  if (peopleOn) seedPeople(); else hidePeople();
+}
+
+// The caption — the money line, with its own honesty attached: the 1:100 scale, the population
+// source, and 'reported' (these are reports that reached a station, not victims).
+const captionEl = document.createElement('div');
+captionEl.id = 'suburb-caption';
+captionEl.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:10;' +
+  'max-width:min(92vw,640px);text-align:center;font:12px/1.6 ui-monospace,"SF Mono",Menlo,monospace;' +
+  'color:#a8b2c6;padding:7px 14px;border-radius:8px;background:rgba(6,8,13,.66);' +
+  'border:1px solid rgba(140,170,210,.10);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);' +
+  'pointer-events:none;user-select:none;opacity:0;transition:opacity .4s';
+document.body.appendChild(captionEl);
+function updateCaption() {
+  const on = focusMode && peopleOn && focusStation >= 0;
+  captionEl.style.opacity = on ? '1' : '0';
+  if (!on) return;
+  const s = activeStations()[focusStation];
+  const n = (s.crimes[crimeType] && s.crimes[crimeType][years[yi]]) || 0;
+  const line = suburbCaptionLine(s.pop, n, crimeLabels[crimeType] || crimeType, yearLabels[yi]);
+  captionEl.innerHTML = line.replace(/^([\d,]+ residents)/, '<b style="color:#d4dcef">$1</b>') +
+    '<br><span style="color:#77839a;font-size:10.5px">each grey dot ≈ 100 residents · WorldPop 2020 · reported crimes only</span>';
+}
+
+// The beacon ring sits just outside the precinct's jitter radius; the shimmer is its pulse.
+function seedBeacon() {
+  const s = activeStations()[focusStation];
+  const R = Math.max(9, s.r * 1.15);
+  const pos = new Float32Array(BEACON_N * 2), den = new Float32Array(BEACON_N).fill(0.55);
+  for (let i = 0; i < BEACON_N; i++) {
+    const a = (i / BEACON_N) * Math.PI * 2;
+    const r = R + (Math.random() - 0.5) * 1.6;
+    pos[i * 2] = s.x + Math.cos(a) * r;
+    pos[i * 2 + 1] = s.y + Math.sin(a) * r;
+  }
+  const ring = { positions: pos, density: den };
+  beaconField.setSource(ring); beaconField.setTarget(ring); beaconField.setT(1);
+  beaconField.points.visible = true;
+}
+
+// ---- the locate overlay (H): "your suburb… or find me" ----------------------------------------------
+// Text matches the CURRENT region's station names — case/space/punct-insensitive, prefix beats
+// contains, shorter name beats longer (most specific wins). "Find me" is CLIENT-SIDE ONLY: the
+// coordinate lives in one callback for one nearest-station pass and is never transmitted or stored
+// (the card says so). Outside the reach of every station here (>60 km) → say so kindly, stay put.
+const locateEl = document.getElementById('locate');
+const locateInput = document.getElementById('locate-input');
+const locateMatch = document.getElementById('locate-match');
+const fold = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+function matchStation(q) {
+  const f = fold(q);
+  if (!f) return -1;
+  const sts = activeStations();
+  let best = -1, bestRank = Infinity;
+  for (let i = 0; i < sts.length; i++) {
+    const n = fold(sts[i].name);
+    const rank = n.startsWith(f) ? n.length : (n.includes(f) || f.includes(n)) ? 1000 + n.length : -1;
+    if (rank >= 0 && rank < bestRank) { bestRank = rank; best = i; }
+  }
+  return best;
+}
+function haversineKm(lng1, lat1, lng2, lat2) {
+  const R = 6371, toR = Math.PI / 180;
+  const dLat = (lat2 - lat1) * toR, dLng = (lng2 - lng1) * toR;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * toR) * Math.cos(lat2 * toR) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function openLocate() {
+  if (!locateEl || drilling || pieMode || triPieMode || tollMode || canyonMode || flockMode || forensicsMode) return; // focus is a map-view lens (pulse ok — confirm exits it)
+  locateEl.classList.add('open');
+  if (locateInput) locateInput.value = '';
+  if (locateMatch) locateMatch.textContent = `matching ${(REGION_META[region] || REGION_META.wc).name}’s precincts…`;
+  locateInput && locateInput.focus();
+}
+function closeLocate() { if (locateEl) locateEl.classList.remove('open'); }
+locateInput && locateInput.addEventListener('input', () => {
+  const si = matchStation(locateInput.value);
+  locateMatch.textContent = si < 0
+    ? (fold(locateInput.value) ? 'no match here yet — keep typing, or try the police-station name' : '…')
+    : '→ ' + activeStations()[si].name;
+});
+locateInput && locateInput.addEventListener('keydown', (e) => {
+  if (e.code !== 'Enter') return;
+  const si = matchStation(locateInput.value);
+  if (si < 0) { locateMatch.textContent = 'nothing matches — try the nearest big suburb, or ◎ find me'; return; }
+  closeLocate();
+  enterFocus(si);
+});
+document.getElementById('locate-me')?.addEventListener('click', () => {
+  if (!navigator.geolocation) { locateMatch.textContent = 'no location on this device — type your suburb instead'; return; }
+  locateMatch.textContent = 'asking your browser…';
+  navigator.geolocation.getCurrentPosition((p) => {
+    // The coordinate never leaves this callback: one nearest-station pass, then it's gone.
+    const lng = p.coords.longitude, lat = p.coords.latitude;
+    const sts = activeStations();
+    let best = -1, bestKm = Infinity;
+    for (let i = 0; i < sts.length; i++) {
+      const d = haversineKm(lng, lat, sts[i].lng, sts[i].lat);
+      if (d < bestKm) { bestKm = d; best = i; }
+    }
+    if (best < 0 || bestKm > 60) {
+      locateMatch.textContent = region === 'wc'
+        ? 'you seem to be outside the Western Cape — the field stays put (type a suburb to visit one anyway)'
+        : `nothing within 60 km of ${REGION_META[region].name} — M zooms back out to the whole province`;
+      return;
+    }
+    closeLocate();
+    enterFocus(best);
+  }, () => { locateMatch.textContent = 'location unavailable — type your suburb instead'; }, { timeout: 8000, maximumAge: 60000 });
+});
+document.getElementById('locate-close')?.addEventListener('click', closeLocate);
+locateEl && locateEl.addEventListener('click', (e) => { if (e.target === locateEl) closeLocate(); });
+
 window.addEventListener('keydown', (e) => {
+  lastInputAt = performance.now();
   if (aboutEl && aboutEl.classList.contains('open')) { // the about card swallows keys; Esc closes
     if (e.code === 'Escape') { e.preventDefault(); toggleAbout(false); }
     return;
   }
+  if (locateEl && locateEl.classList.contains('open')) { // the locate prompt swallows keys (typing!); Esc closes
+    if (e.code === 'Escape') { e.preventDefault(); closeLocate(); }
+    return;
+  }
   if (e.key === '?' || e.code === 'Slash') { e.preventDefault(); toggleAbout(); return; } // ? opens the card from ANY state
+  if (tollMode) { // the toll swallows the toolkit: space pauses, 1 holds the 1:1 drip, K/M/Esc end it
+    if (e.code === 'Space') { e.preventDefault(); tollPauseToggle(); }
+    else if (e.code === 'Digit1') { e.preventDefault(); if (!tollHoldKey) { tollHoldKey = true; refreshHud(); } }
+    else if (e.code === 'KeyK' || e.code === 'KeyM' || e.code === 'Escape') { e.preventDefault(); exitToll(); }
+    return;
+  }
   if (drilling) return; // input is quiet mid-transition
+  if (flockMode) { // airborne: ANY key lands the field (it's the attract state — input means "wake")
+    e.preventDefault();
+    landFlock();
+    return;
+  }
+  if (e.code === 'KeyH') { e.preventDefault(); if (focusMode) exitFocus(); else openLocate(); return; }
   if (pulseMode) { // the pulse has its own clock: arrows step months, N/M return to years
     if (e.code === 'KeyN' || e.code === 'KeyM') { e.preventDefault(); exitPulse(); }
     else if (e.code === 'Space') { e.preventDefault(); playing = !playing; if (playing) { holdUntil = performance.now(); morphStart = -1; } }
@@ -809,7 +1829,22 @@ window.addEventListener('keydown', (e) => {
     else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); }
     return;
   }
+  if (canyonMode) { // the canyon's own quiet toolkit: flip the landform's crime, or leave
+    if (e.code === 'KeyV' || e.code === 'KeyM') { e.preventDefault(); toggleCanyon(); }
+    else if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
+    else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
+    return;
+  }
+  if (forensicsMode) { // the strip's own keys: ↑↓ re-sorts to another crime, X or M swarms home
+    if (e.code === 'KeyX' || e.code === 'KeyM') { e.preventDefault(); toggleForensics(); }
+    else if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
+    else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
+    return;
+  }
+  if (e.code === 'KeyX') { e.preventDefault(); toggleForensics(); return; }
   if (e.code === 'KeyN') { e.preventDefault(); enterPulse(); return; }
+  if (e.code === 'KeyK') { e.preventDefault(); enterToll(); return; } // province flat map only (guards itself)
+  if (e.code === 'KeyF') { e.preventDefault(); enterFlock(); return; } // release the field (province map only — guards itself)
   if (e.code === 'KeyC') { e.preventDefault(); toggleMode(); return; }
   if (e.code === 'Digit3') { e.preventDefault(); toggleTriPie(); return; }
   if (triPieMode) {
@@ -826,15 +1861,22 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
   else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
   else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); } // Cape Town relief (no-op in the province)
+  else if (e.code === 'KeyV') { e.preventDefault(); toggleCanyon(); }  // time as the landform (guards itself)
+  else if (e.code === 'KeyU') { e.preventDefault(); toggleUnlit(); }   // the unlit field (map views only)
+  else if (e.code === 'KeyJ') { e.preventDefault(); togglePeople(); } // hide/show the residents (focus only)
+  else if (e.code === 'Escape') { if (focusMode) { e.preventDefault(); exitFocus(); } }
+});
+window.addEventListener('keyup', (e) => { // release the toll's 1:1 hold
+  if (e.code === 'Digit1' && tollHoldKey) { tollHoldKey = false; if (tollMode) refreshHud(); }
 });
 
 // HUD chips → the SAME actions as the keys (touch parity: on a phone the keyboard toolkit doesn't
 // exist). Guards mirror the keydown handler exactly: input is quiet mid-drill, and the 3-pie only
 // listens to map/year/compare/per-capita. Blur after click so a focused chip can't re-fire on Space.
 const CHIP_ACTIONS = {
-  play: () => { if (triPieMode) return; playing = !playing; if (playing) { holdUntil = performance.now(); if (pulseMode) morphStart = -1; else if (pieMode) setYearPair(yi); } },
-  yearPrev: () => (pulseMode ? stepMonth(-1) : stepYear(-1)),
-  yearNext: () => (pulseMode ? stepMonth(1) : stepYear(1)),
+  play: () => { if (triPieMode || canyonMode || forensicsMode) return; if (tollMode) { tollPauseToggle(); return; } playing = !playing; if (playing) { holdUntil = performance.now(); if (pulseMode) morphStart = -1; else if (pieMode) setYearPair(yi); } },
+  yearPrev: () => { if (canyonMode || forensicsMode) return; (pulseMode ? stepMonth(-1) : stepYear(-1)); }, // the canyon holds ALL years at once — no pair to step
+  yearNext: () => { if (canyonMode || forensicsMode) return; (pulseMode ? stepMonth(1) : stepYear(1)); },
   crimeUp: () => { if (triPieMode) return; flipCrime(1); },
   crimeDown: () => { if (triPieMode) return; flipCrime(-1); },
   map: () => goToMap(),
@@ -842,7 +1884,13 @@ const CHIP_ACTIONS = {
   compare: () => { if (pulseMode) return; toggleTriPie(); },
   percapita: () => toggleMode(),
   terrain: () => toggleTerrain(), // guards itself (needs a loaded DEM, no pies, no drill)
+  canyon: () => toggleCanyon(),   // guards itself (flat map views only)
+  unlit: () => toggleUnlit(),     // guards itself (map views only)
   months: () => (pulseMode ? exitPulse() : enterPulse()),
+  toll: () => (tollMode ? exitToll() : enterToll()),
+  release: () => (flockMode ? landFlock() : enterFlock()), // guards itself (province flat map only)
+  suburb: () => (focusMode ? exitFocus() : openLocate()), // same toggle as the H key
+  forensics: () => toggleForensics(), // guards itself (flat map in, X/M out)
   about: () => toggleAbout(),
 };
 
@@ -865,14 +1913,18 @@ for (const ev of ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart'
 }
 setInterval(() => {
   const asleep = performance.now() - chromeLastActive > CHROME_IDLE_MS
-    && !(aboutEl && aboutEl.classList.contains('open'));
+    && !(aboutEl && aboutEl.classList.contains('open'))
+    && !tollMode; // the counter is the toll's honesty channel — the chrome stays awake
   document.body.classList.toggle('quiet', asleep);
 }, 500);
 const chipEls = {};
 for (const el of document.querySelectorAll('.hud [data-act]')) {
   chipEls[el.dataset.act] = el;
   el.addEventListener('click', () => {
-    if (!drilling) { const f = CHIP_ACTIONS[el.dataset.act]; if (f) f(); }
+    // Airborne, the toolkit sleeps: only the landing chips (F release / M map) + about respond —
+    // mirrors the keydown swallow, so touch and keyboard agree on what a released field ignores.
+    const swallowed = flockMode && !['release', 'map', 'about'].includes(el.dataset.act);
+    if (!drilling && !swallowed) { const f = CHIP_ACTIONS[el.dataset.act]; if (f) f(); }
     el.blur();
   });
 }
@@ -882,12 +1934,29 @@ for (const el of document.querySelectorAll('.hud [data-act]')) {
 // keydown guards exactly; called from refreshHud so every state change repaints it.
 function refreshChips() {
   const off = (act, is) => { const el = chipEls[act]; if (el) el.classList.toggle('off', !!is); };
-  off('play', triPieMode);
-  off('months', pieMode || triPieMode || !monthLabels);
-  off('crimeUp', triPieMode); off('crimeDown', triPieMode);
-  off('pie', triPieMode || pulseMode);
-  off('compare', pulseMode);
-  off('terrain', pieMode || triPieMode || !(regionData[region] && regionData[region].terrain && regionData[region].terrain.elev));
+  off('play', triPieMode || canyonMode);
+  // The toll dims the whole toolkit except play (= pause), map (= end), about — months would
+  // have to exit first anyway, so it dims with the rest. Everything mirrors the keydown swallow.
+  // The canyon holds all 18 years at once and listens only to ↑↓ crime and V/M (its keydown swallow).
+  off('yearPrev', tollMode || canyonMode); off('yearNext', tollMode || canyonMode);
+  off('percapita', tollMode || canyonMode);
+  off('months', pieMode || triPieMode || !monthLabels || tollMode || canyonMode);
+  off('crimeUp', triPieMode || tollMode); off('crimeDown', triPieMode || tollMode);
+  off('pie', triPieMode || pulseMode || tollMode || canyonMode);
+  off('compare', pulseMode || tollMode || canyonMode);
+  off('terrain', pieMode || triPieMode || tollMode || canyonMode || !(regionData[region] && regionData[region].terrain && regionData[region].terrain.elev));
+  off('canyon', !canyonMode && (pieMode || triPieMode || pulseMode || terrainMode || tollMode));
+  off('unlit', pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode);
+  off('suburb', !focusMode && (pieMode || triPieMode || tollMode || canyonMode || forensicsMode));
+  off('forensics', !forensicsMode && (pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode));
+  if (focusMode) off('unlit', true);
+  off('release', !flockMode && (region !== 'wc' || pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode));
+  off('toll', !tollMode && (region !== 'wc' || pieMode || triPieMode || pulseMode || terrainMode || canyonMode || flockMode));
+  // Whole-toolkit dims LAST, so no per-chip rule above can re-light a chip the mode swallows.
+  // Airborne, the toolkit sleeps (the click handler swallows all but release/map/about) — dim to match.
+  if (flockMode) for (const act of Object.keys(chipEls)) if (!['release', 'map', 'about'].includes(act)) off(act, true);
+  // The strip holds all 60 months, counts only, and listens to ↑↓ + X/M — dim the rest to match its keydown swallow.
+  if (forensicsMode) for (const act of ['play', 'yearPrev', 'yearNext', 'months', 'percapita', 'unlit', 'suburb', 'pie', 'compare', 'terrain', 'canyon', 'toll', 'release']) off(act, true);
 }
 
 // Debug hook (region-aware).
@@ -906,6 +1975,29 @@ window.__viz = {
     return { pulseMode, month: monthLabels && monthLabels[mi], total: pulseData && pulseData.totals[mi] };
   },
   t: (v) => { playing = false; t = v; },
+  toll: (p) => { // debug: enter the toll; toll(p) fast-forwards the gather and scrubs to uT = p
+    if (!tollMode) enterToll();
+    if (!tollMode) return 'toll unavailable here (province flat map only)';
+    if (typeof p === 'number') {
+      if (tollPhase === 'gather') beginTollClock(performance.now());
+      tollT = Math.min(Math.max(p, 0), 1); t = tollT;
+      updateTollHud(true);
+    }
+    const counting = tollPhase === 'toll' || tollPhase === 'drain';
+    return { phase: tollPhase, M: tollData.M, count: counting ? tollCountAt(tollT) : 0,
+      tollT, year: yearLabels[tollYearFrac(counting ? tollT : 0).y], paused: tollPaused, spinRate: TOLL_SPIN_RATE };
+  },
+  tollSpin: (rate) => { // debug: live-tune the settled-ring spin rate (rad/s); re-bakes if tolling
+    if (typeof rate === 'number') { TOLL_SPIN_RATE = rate; if (tollMode && tollData) bakeTollSpin(); }
+    return { spinRate: TOLL_SPIN_RATE, revSeconds: TOLL_SPIN_RATE ? (2 * Math.PI / Math.abs(TOLL_SPIN_RATE)).toFixed(0) : Infinity };
+  },
+  word: (w, opts) => { // live-tune the toll's memorial backdrop word. word('') hides; opts: {fontFrac,jitter,weight,yFrac,spanFrac}
+    if (typeof w === 'string') tollWord = w;
+    if (opts) Object.assign(tollWordOpts, opts);
+    if (tollMode) showTollWord();
+    if (wordField && (opts && opts.matte)) wordField.material.uniforms.uMatte.value.set(opts.matte);
+    return { word: tollWord, ...tollWordOpts, matte: '#' + (wordField ? wordField.material.uniforms.uMatte.value.getHexString() : '') };
+  },
   flip: () => flipCrime(1),
   drift: (px) => field && field.setDrift(px),
   driftSpeed: (m) => field && field.setDriftSpeed(m),
@@ -952,6 +2044,52 @@ window.__viz = {
   hideData: (hide = true) => { if (field) field.points.visible = !hide; },
   region: (r) => { if (REGION_META[r]) startDrill(r); return region; }, // debug: force a drill into any region
   terrain: () => { toggleTerrain(); return { terrainMode, region }; },            // debug: toggle the current region's relief
+  canyon: () => { toggleCanyon(); return { canyonMode, region, crime: crimeType }; }, // debug: toggle the rate surface
+  canyonZ: (v) => { if (v != null) canyonZPeak = v; return canyonZPeak; },            // live-tune the surface height
+  canyonState: () => ({ canyonMode, crime: crimeType, flipTo: canyonFlipTo, zCur: canyonZCur, op: canyonOp, region }), // read-only probe
+  unlit: () => { toggleUnlit(); return { unlitOn, unlitShown, pool: UNLIT_COUNT }; }, // debug: toggle the estimated-unreported field
+  unlitDots: (px) => unlitField && unlitField.setSize(px),
+  unlitMatte: (hex) => unlitField && unlitField.material.uniforms.uMatte.value.set(hex),
+  flock: () => { if (flockMode) landFlock(); else enterFlock(); return { flockMode, phase: flockPhase, frame: flockIdx }; }, // debug: release / land the field
+  suburb: (name) => { // debug: focus a precinct by name (no name while focused = exit) — headless testing
+    if (name === undefined) { if (focusMode) { exitFocus(); return 'exited'; } return 'not focused'; }
+    const si = matchStation(String(name));
+    if (si < 0) return 'not found';
+    enterFocus(si);
+    const s = activeStations()[si];
+    const n = (s.crimes[crimeType] && s.crimes[crimeType][years[yi]]) || 0;
+    return { station: s.name, pop: s.pop, personDots: Math.round(s.pop / PEOPLE_PER_DOT), n,
+      caption: suburbCaptionLine(s.pop, n, crimeLabels[crimeType] || crimeType, yearLabels[yi]) };
+  },
+  focusForensic: () => { // verification: is the dim post-pass REALLY on the GPU buffer? Per-station
+    if (!field) return null; // ratio of the field's live target densities vs the undimmed provider
+    const arr = field.points.geometry.getAttribute('aTargetDensity').array; // layout — 1.0 = kept, 0.12 = dimmed.
+    const b = providers[region][dataMode];
+    const und = b.layouts[crimeType][(yi + 1) % years.length].density; // at rest, target = yi+1
+    const o = sliceStart();
+    const sts = activeStations();
+    const ratios = b.slotRanges.map(([b0, k], si) => {
+      let sum = 0, n = 0;
+      for (let j = 0; j < k; j++) { const u = und[b0 + j]; if (u > 0.001) { sum += arr[o + b0 + j] / u; n++; } }
+      return { name: sts[si].name, ratio: n ? sum / n : -1, active: n };
+    });
+    return { focusMode, region, station: focusMode && focusStation >= 0 ? sts[focusStation].name : null, ratios };
+  },
+  peopleForensic: () => ({ // verification: the beacon/people pools' live state
+    beaconVisible: !!(beaconField && beaconField.points.visible),
+    peopleVisible: !!(peopleField && peopleField.points.visible),
+    peopleActive: peopleField ? peopleField.points.geometry.getAttribute('aTargetDensity').array.filter((d) => d > 0).length : 0,
+    pop: focusMode && focusStation >= 0 ? activeStations()[focusStation].pop : 0,
+  }),
+  forensics: (enter) => { // debug/headless: the ranked table for the current region + crime; enter=true/false toggles the strip
+    if (enter === true && !forensicsMode) toggleForensics();
+    else if (enter === false && forensicsMode) toggleForensics();
+    const stats = forensicsStats(activeStations(), crimeType);
+    const zone = (s) => (!s.testable ? 'too small to test' : s.D < LOOK_CLOSER_D ? 'look closer' : 'behaves like a tally');
+    const rows = [...stats].sort((a, b) => (a.testable === b.testable ? a.D - b.D : a.testable ? -1 : 1))
+      .map((s) => ({ name: s.name, D: +s.D.toFixed(4), mean: +s.mean.toFixed(2), testable: s.testable, zone: zone(s), digitN: s.digitN, chi2p: s.chi2p == null ? null : +s.chi2p.toFixed(4) }));
+    return { region, crime: crimeType, threshold: LOOK_CLOSER_D, forensicsMode, testable: rows.filter((r) => r.testable).length, excluded: rows.length - rows.filter((r) => r.testable).length, rows };
+  },
 };
 
 // ---- hover readout — "Nyanga · 2,300 robbery · 2019/20" (works in map AND pie), region-aware ----
@@ -965,6 +2103,12 @@ const _hv = new THREE.Vector3();
 const activeStations = () => stationsByRegion[region] || stationsByRegion.wc;
 function precinctAnchors() {
   const out = [], st = activeStations();
+  if (forensicsMode && lastForensics) { // one anchor ladder per column — hover anywhere on a ribbon
+    for (const col of lastForensics.columns) {
+      for (const fy of [-0.4, -0.2, 0, 0.2, 0.4]) out.push({ si: col.si, x: col.x, y: fy * lastForensics.H });
+    }
+    return out;
+  }
   if (triPieMode && lastTriPie) {
     const dth = (Math.PI * 2) / st.length;
     for (const c of lastTriPie.centers) {
@@ -991,7 +2135,7 @@ function precinctAnchors() {
   return out;
 }
 function hoverPrecinct(clientX, clientY) {
-  if (drilling) return -1;
+  if (drilling || flockMode) return -1; // airborne dots aren't at any precinct — the tooltip sleeps
   const rect = renderer.domElement.getBoundingClientRect();
   const mx = clientX - rect.left, my = clientY - rect.top;
   fieldGroup.updateWorldMatrix(true, false);
@@ -1008,12 +2152,67 @@ function hoverPrecinct(clientX, clientY) {
   return bestD <= (pieMode || triPieMode ? 30 : 40) ? best : -1;
 }
 let mouseX = null, mouseY = null;
+// Canyon hover: snap to the nearest (station, year) cell centre, riding the risen surface. The rate
+// shown is the anchor's own float64 (crimes/pop×100k) — never read back from the GPU arrays.
+function updateCanyonTip() {
+  if (!canyonCur || drilling) { tip.style.opacity = '0'; return; }
+  const rect = renderer.domElement.getBoundingClientRect();
+  const mx = mouseX - rect.left, my = mouseY - rect.top;
+  fieldGroup.updateWorldMatrix(true, false);
+  let best = null, bestD = Infinity;
+  for (const a of canyonCur.anchors) {
+    _hv.set(a.x, a.y, a.z * canyonZCur);
+    fieldGroup.localToWorld(_hv);
+    _hv.project(camera);
+    const sx = (_hv.x * 0.5 + 0.5) * rect.width, sy = (-_hv.y * 0.5 + 0.5) * rect.height;
+    const d = Math.hypot(sx - mx, sy - my);
+    if (d < bestD) { bestD = d; best = a; }
+  }
+  if (!best || bestD > 26) { tip.style.opacity = '0'; return; }
+  tip.innerHTML = `${best.name} · ${crimeLabels[crimeType] || crimeType} · ${yearLabels[best.yi]}` +
+    `<br><span style="color:#9fb0c8">${best.rate.toFixed(1)} per 100k</span>`;
+  tip.style.left = mouseX + 'px';
+  tip.style.top = mouseY + 'px';
+  tip.style.opacity = '1';
+}
+
+// Text-sparkline of the 10-bucket last-digit histogram (digits 0–9 left to right).
+const SPARK = '▁▂▃▄▅▆▇█';
+function digitSpark(hist) {
+  const max = Math.max(1, ...hist);
+  return hist.map((v) => SPARK[Math.round((v / max) * (SPARK.length - 1))]).join('');
+}
 function updateTooltip() {
+  if (tollMode) { tip.style.opacity = '0'; return; } // the tooltip sleeps during the ceremony
   if (mouseX == null) return;
+  if (canyonMode) { updateCanyonTip(); return; }
   const si = hoverPrecinct(mouseX, mouseY);
   if (si < 0) { tip.style.opacity = '0'; return; }
   const s = activeStations()[si];
   const ct = hoverCrimeType || crimeType;
+  if (forensicsMode && lastForensics) {
+    // The forensic readout — wording is load-bearing: a look-closer FLAG, never a finding.
+    const st = lastForensics.stats[si];
+    let body;
+    if (!st.testable) {
+      body = `<span style="color:#9fb0c8">too small to test — ${st.mean.toFixed(1)}/month (below ${TESTABLE_MEAN})</span>`;
+    } else {
+      const digits = st.chi2p != null
+        ? `last digits ${digitSpark(st.digitHist)} · χ² p ${st.chi2p < 0.01 ? '&lt; 0.01' : st.chi2p.toFixed(2)}`
+        : st.digitN > 0
+          ? `last digits ${digitSpark(st.digitHist)} · under ${DIGIT_MIN_N} months ≥ 20 — no χ²`
+          : `counts under 20 — last digits untestable`;
+      body = `<span style="color:#9fb0c8">D ${st.D.toFixed(2)} · ${st.mean.toFixed(1)}/month</span>` +
+        `<br><span style="color:#9fb0c8">${digits}</span>` +
+        `<br><span style="color:#77839a">regularity has innocent causes —</span>` +
+        `<br><span style="color:#77839a">this is a look-closer flag, not a finding</span>`;
+    }
+    tip.innerHTML = `${s.name} · ${crimeLabels[ct] || ct}<br>${body}`;
+    tip.style.left = mouseX + 'px';
+    tip.style.top = mouseY + 'px';
+    tip.style.opacity = '1';
+    return;
+  }
   const n = pulseMode
     ? ((s.monthly && s.monthly[ct] && s.monthly[ct][mi]) || 0)
     : ((s.crimes[ct] && s.crimes[ct][years[yi]]) || 0);
@@ -1021,6 +2220,14 @@ function updateTooltip() {
   const val = dataMode === 'percapita' ? `${rate.toLocaleString()} per 100k` : `${n.toLocaleString()} reported`;
   tip.innerHTML = `${s.name} · ${crimeLabels[ct] || ct} · ${pulseMode ? fmtMonth(monthLabels[mi]) : yearLabels[yi]}` +
     `<br><span style="color:#9fb0c8">${val}</span>`;
+  if (unlitOn && unlitShown && !pulseMode && !pieMode && !triPieMode && RATES.rates[ct]) { // est line leaves WITH the chip — never numbers without the declaration
+    const spec = RATES.rates[ct];
+    const u = Math.round((n * (1 - spec.r)) / spec.r); // the exact math the dots draw — R×(1−r)/r
+    const uval = dataMode === 'percapita'
+      ? `est. +${(s.pop ? Math.round((u / s.pop) * 100000) : 0).toLocaleString()} per 100k unreported`
+      : `est. +${u.toLocaleString()} unreported`;
+    tip.innerHTML += `<br><span style="color:#9c8fc0">${uval} (r=${Math.round(spec.r * 100)}%, GPSJS national${spec.floor ? ' · floor' : ''})</span>`;
+  }
   tip.style.left = mouseX + 'px';
   tip.style.top = mouseY + 'px';
   tip.style.opacity = '1';
@@ -1038,10 +2245,23 @@ labelLayer.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:5
 document.body.appendChild(labelLayer);
 const labelEls = [], LABEL_MAX = 22;
 let labelSpecs = [], labelsRegion = null;
+const labelsKey = () => region + (canyonMode ? '·canyon' : ''); // the canyon swaps the label set without a region change
 function buildLabelSpecs() {
-  labelsRegion = region;
+  labelsRegion = labelsKey();
   const total = (s) => { let n = 0; for (const ty of crimeTypes) for (const y of years) n += (s.crimes[ty] && s.crimes[ty][y]) || 0; return n; };
-  if (region === 'wc') {
+  if (canyonMode && canyonCur) {
+    // The canyon's labels-on-relief exception: the year axis (few, load-bearing — hover names a cell
+    // but can't name a column). Even years outrank odd, so collision-culling on a narrow screen
+    // drops every OTHER label instead of a random scatter; 2020/21 is even, it always survives.
+    const g = canyonCur.grid;
+    labelSpecs = years.map((_, c) => ({
+      name: yearLabels[c],
+      x: g.x0 + (c + 0.5) * g.cellW,
+      y: g.y0 - g.rows * g.cellH - 14, // just south of the grid — the tilted view's near edge
+      rank: c % 2 === 0 ? 2 : 1,
+      big: false,
+    }));
+  } else if (region === 'wc') {
     labelSpecs = DETAIL_REGIONS.map((rk) => {   // six district names, each at the mean of its stations
       const sts = stationsByRegion.wc.filter((s) => norm(s.dc) === REGION_META[rk].dc);
       const x = sts.reduce((a, s) => a + s.x, 0) / sts.length, y = sts.reduce((a, s) => a + s.y, 0) / sts.length;
@@ -1062,10 +2282,12 @@ function buildLabelSpecs() {
 }
 const _lv = new THREE.Vector3();
 function updateLabels() {
-  const show = !drilling && !pieMode && !triPieMode && !terrainMode && strProg >= 1 && trProg >= 1;
+  const show = canyonMode
+    ? strProg >= 1 // year labels ride in once the graticule settles
+    : !drilling && !flockMode && !pieMode && !triPieMode && !forensicsMode && !terrainMode && !tollMode && strProg >= 1 && trProg >= 1;
   labelLayer.style.opacity = show ? '1' : '0';
   if (!show) return;
-  if (labelsRegion !== region) buildLabelSpecs();
+  if (labelsRegion !== labelsKey()) buildLabelSpecs();
   fieldGroup.updateWorldMatrix(true, false);
   const W = window.innerWidth, H = window.innerHeight, placed = [];
   for (let i = 0; i < labelEls.length; i++) {
@@ -1089,10 +2311,12 @@ function updateLabels() {
 // Click: (1) in the 3-pie, resolve to the clicked pie; (2) on the province MAP, clicking Cape Town's
 // cluster drills in; (3) on the Cape Town MAP, a tap drills back out. A tap is told from a pan by move distance.
 let _downX = 0, _downY = 0;
-renderer.domElement.addEventListener('pointerdown', (e) => { _downX = e.clientX; _downY = e.clientY; });
+renderer.domElement.addEventListener('pointerdown', (e) => { lastInputAt = performance.now(); _downX = e.clientX; _downY = e.clientY; });
+window.addEventListener('wheel', () => { lastInputAt = performance.now(); }, { passive: true });
 renderer.domElement.addEventListener('pointerup', (e) => {
-  if (drilling) return;
+  if (drilling || tollMode) return; // the toll's own pointer grammar owns taps while tolling
   if (Math.hypot(e.clientX - _downX, e.clientY - _downY) > 6) return; // a drag (pan), not a click
+  if (flockMode) { landFlock(); return; } // a tap anywhere lands the field — the F/Esc parity for touch
   if (triPieMode && lastTriPie) {
     const rect = renderer.domElement.getBoundingClientRect();
     const mx = e.clientX - rect.left, my = e.clientY - rect.top;
@@ -1107,7 +2331,8 @@ renderer.domElement.addEventListener('pointerup', (e) => {
     if (best >= 0) resolveTriToPie(best);
     return;
   }
-  if (pieMode) return;                               // no drill from the pie
+  if (pieMode || forensicsMode) return;              // no drill from the pie or the strip
+  if (canyonMode) { toggleCanyon(); return; }        // tap in the canyon → back to the flat map
   if (terrainMode) { toggleTerrain(); return; }      // tap in Cape Town terrain → back to the flat map
   if (region === 'wc') {
     const { s, d } = nearestStation(stationsByRegion.wc, e.clientX, e.clientY);
@@ -1158,6 +2383,47 @@ function updateTriLabels() {
   });
 }
 
+// Grey captions for the forensics strip: zone labels along the baseline, the D = 1 tick's name, and
+// the innocent-causes legend. Structure-voiced (grey, small, recessive) and pointer-transparent; the
+// WORDING is load-bearing — descriptive zones and a look-closer flag, never an accusation.
+const forensicsLabels = [];
+function ensureForensicsLabels(n) {
+  while (forensicsLabels.length < n) {
+    const d = document.createElement('div');
+    d.style.cssText = 'position:fixed;pointer-events:none;z-index:19;color:#8b98ac;' +
+      'font:11px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em;' +
+      'opacity:0;transition:opacity .2s;transform:translate(-50%,0);text-align:center;white-space:nowrap';
+    app.appendChild(d);
+    forensicsLabels.push(d);
+  }
+}
+function updateForensicsLabels() {
+  if (!forensicsMode || !lastForensics || strProg < 1) { for (const d of forensicsLabels) d.style.opacity = '0'; return; }
+  const fr = lastForensics.frame;
+  const anchors = [];
+  for (const zn of fr.zones) anchors.push({ x: (zn.x0 + zn.x1) / 2, y: fr.baseY - 12, text: zn.label, dim: false });
+  if (fr.d1x != null) anchors.push({ x: fr.d1x, y: fr.baseY + 16, text: 'D = 1 · a pure tally', dim: true });
+  // the legend: two short stacked rows ABOVE the strip (below the baseline it hides behind the
+  // HUD card at the default framing; one long line overflows narrow screens)
+  const legendX = (fr.x0 + fr.x1) / 2;
+  anchors.push({ x: legendX, y: fr.topY + 46, dim: true, text: `zones are descriptive: D ≈ 1 behaves like a tally · D < ${lastForensics.threshold} → look closer` });
+  anchors.push({ x: legendX, y: fr.topY + 28, dim: true, text: 'regularity has innocent causes (court-driven detections, process-crime quotas, tiny true rates) — a flag, not a finding' });
+  ensureForensicsLabels(anchors.length);
+  const rect = renderer.domElement.getBoundingClientRect();
+  fieldGroup.updateWorldMatrix(true, false);
+  forensicsLabels.forEach((d, i) => {
+    const a = anchors[i];
+    if (!a) { d.style.opacity = '0'; return; }
+    _hv.set(a.x, a.y, 0);
+    fieldGroup.localToWorld(_hv); _hv.project(camera);
+    d.style.left = ((_hv.x * 0.5 + 0.5) * rect.width) + 'px';
+    d.style.top = ((-_hv.y * 0.5 + 0.5) * rect.height) + 'px';
+    if (d.textContent !== a.text) d.textContent = a.text;
+    d.style.color = a.dim ? '#6b7689' : '#8b98ac';
+    d.style.opacity = '1';
+  });
+}
+
 // ---- loop -------------------------------------------------------------------
 const clock = new THREE.Clock();
 let frames = 0, fpsWall = -1;
@@ -1171,9 +2437,11 @@ function tick() {
     const e = drillEase(p);
     field.setT(e); structField.setT(e);
     field.setTime(time); structField.setTime(time);
+    if (unlitField && unlitShown) { unlitField.setT(e); unlitField.setTime(time); } // dispersing with the drill
     if (p >= 1) {
       drilling = false;
       region = drillTo;
+      hideUnlitNow(); // the estimate dispersed with the drill (intent already off) — land clean
       repoint();
       landRegion();                                  // re-seed cleanly at the landed region's map, at rest
       reseedTerrain();                               // rebuild the relief pool for the landed region ('T' shows ITS mountains)
@@ -1186,12 +2454,39 @@ function tick() {
     return;
   }
 
-  if (pieMorphing) {
+  if (flockMode) {
+    // The murmuration chain: fly to the next keyframe (heavy stagger = the turning wave), hold a
+    // breath, then on — wrapping around forever until a landing is asked for. The 'land' leg is the
+    // one morph home; its completion restores the truthful at-rest pair.
+    if (flockPhase === 'land') {
+      const p = Math.min((now - flockStart) / FLOCK_LAND_MS, 1);
+      t = easeInOut(p);
+      if (p >= 1) {
+        flockMode = false;
+        field.setDriftSpeed(1.0); // flow/drift amplitudes have eased ~to rest through the glide
+        setYearPair(yi);   // re-anchor the scrub pair on the truthful map (mirrors pieMorphing's re-anchor) + restore the HUD
+        morphStart = -1; holdUntil = now + HOLD_MS;
+      }
+    } else {
+      // Full legs under the SURGE easing: velocity slides between (1−A) and (1+A) with matched
+      // slope at the joins — the flock slows into each waypoint, banks, surges out; never stops,
+      // never steps. At p=1 (stagger ≈ 1) the pose IS the frame, so the handoff to the next leg is
+      // seamless — no pose-readback needed in flight (airbornePose still serves the landing).
+      const p = Math.min((now - flockStart) / FLOCK_MS, 1);
+      t = surgeEase(p);
+      if (p >= 1) {
+        const next = (flockIdx + 1) % flockFrames.length;
+        field.setSource(withFlockDensity(flockFrames[flockIdx])); // full-buffer: province-only state (see enterFlock)
+        field.setTarget(withFlockDensity(flockFrames[next]));
+        flockIdx = next; flockStart = now; t = 0;
+      }
+    }
+  } else if (pieMorphing) {
     const p = Math.min((now - pieMorphStart) / PIE_MS, 1);
     t = swarmEase(p);
     if (p >= 1) {
       pieMorphing = false;
-      if (!pieMode && !triPieMode) (pulseMode ? setMonthPair(mi) : setYearPair(yi)); // re-anchor the scrub pair on the flat map
+      if (!pieMode && !triPieMode && !canyonMode && !forensicsMode) (pulseMode ? setMonthPair(mi) : setYearPair(yi)); // re-anchor the scrub pair on the flat map (in the canyon the swarm stays parked)
     }
   } else if (flipping) {
     const p = Math.min((now - flipStart) / FLIP_MS, 1);
@@ -1203,6 +2498,42 @@ function tick() {
       setYearPair(yi);
       morphStart = -1;
       holdUntil = now + HOLD_MS;
+    }
+  } else if (tollMode) {
+    if (tollPhase === 'gather') {                    // map → the dimmed 18-year murder map (random seeds)
+      const p = Math.min((now - tollPhaseStart) / TOLL_GATHER_MS, 1);
+      t = swarmEase(p);
+      if (p >= 1) beginTollClock(now);
+    } else if (tollPhase === 'toll') {               // the dial clock: sweep rate, or the 1:1 drip on hold
+      const dt = (now - tollLastNow) / 1000;
+      tollLastNow = now;
+      field.setSpinTime((now - tollSpinStart) / 1000); // real time — the settled disc turns even when paused/complete
+      if (!tollPaused && !tollScrubbing && tollT < 1) {
+        const rate = (tollHoldPtr || tollHoldKey)
+          ? (1 - tollW()) / tollData.M               // exactly one landing per second (seed spacing)
+          : 1000 / TOLL_SWEEP_MS;                    // the ~75 s sweep
+        tollT = Math.min(1, tollT + dt * rate);
+      }
+      t = tollT;
+      updateTollHud();
+      updateTollHand(tollT);
+    } else if (tollPhase === 'drain') {              // the pour reverses — fast, eased, ordered seeds still on
+      const p = Math.min((now - tollPhaseStart) / TOLL_DRAIN_MS, 1);
+      field.setSpinTime((now - tollSpinStart) / 1000); // still-landed dots keep turning; lifting dots stop (gate)
+      tollT = tollDrainFrom * (1 - drillEase(p));
+      t = tollT;
+      updateTollHud();
+      updateTollHand(tollT);
+      if (p >= 1) beginTollHome();
+    } else {                                         // 'home' — the dots morph gently back to the truthful map
+      const p = Math.min((now - tollPhaseStart) / TOLL_HOME_MS, 1);
+      t = swarmEase(p);
+      if (p >= 1) {
+        tollMode = false; tollPhase = '';
+        tollData = null; tollFrame = null; tollHand = null; tollSeeds = null;
+        setYearPair(yi);                             // re-anchor the year pair cleanly, at rest (playing stays off)
+        refreshHud();
+      }
     }
   } else if (playing) {
     const MS = pulseMode ? PULSE_MS : YEAR_MS, HOLD = pulseMode ? PULSE_HOLD : HOLD_MS;
@@ -1228,11 +2559,46 @@ function tick() {
     }
     structField.setTime(time);
   }
+  if (unlitField && unlitShown) {
+    if (unlitProg < 1) { // own clock: condense-in / disperse-out
+      unlitProg = Math.min((now - unlitStart) / UNLIT_MS, 1);
+      unlitField.setT(swarmEase(unlitProg));
+      if (unlitProg >= 1) {
+        if (unlitPhase === 'out') hideUnlitNow();
+        else unlitAnchorPair(); // condensed — fall in step with the year scrub
+        unlitPhase = null;
+      }
+    } else {
+      unlitField.setT(t); // anchored: the shadow rides the SAME t as the reported field
+    }
+    if (unlitShown) unlitField.setTime(time);
+  }
+  // Idle attract: long stillness on the resting province releases the field again (any input wakes it).
+  if (!flockMode && region === 'wc' && !drilling && !pieMode && !triPieMode && !pulseMode
+    && !terrainMode && !tollMode && !canyonMode && !focusMode && !forensicsMode && !flipping && !pieMorphing && lastInputAt > 0 && now - lastInputAt > IDLE_RELEASE_MS) {
+    enterFlock(true);
+  }
+
+  // Released-field motion ramps: flow + boosted drift ease UP on take-off and settle through the
+  // landing glide (amplitudes only — speeds are pinned while amplitudes are live, see FLOCK_ consts).
+  if (field && (flockMode || flowCur > 0.001 || Math.abs(flockDriftCur - 0.4) > 0.01)) {
+    const airborne = flockMode && flockPhase !== 'land';
+    flowCur += ((airborne ? FLOCK_FLOW : 0) - flowCur) * 0.045;
+    flockDriftCur += ((airborne ? FLOCK_DRIFT : 0.4) - flockDriftCur) * 0.045;
+    field.setFlow(flowCur, FLOCK_FLOW_SPEED);
+    field.setDrift(flockDriftCur);
+  }
+
+  if (beaconField) beaconField.setTime(time); // the beacon's pulse IS the shimmer breath
+  if (peopleField) {
+    if (plProg < 1) { plProg = Math.min((now - plStart) / 1100, 1); peopleField.setT(swarmEase(plProg)); }
+    peopleField.setTime(time);
+  }
   // Terrain (Cape Town only): ease the land up/down + the view tilt, advance the band⇄relief swarm, and
   // lift the crime with it. In the province zScaleCur stays 0 (T is a no-op there), so it renders flat.
   if (terrainField) {
     zScaleCur += ((terrainMode ? zPeak : 0) - zScaleCur) * 0.06;
-    tiltCur += ((terrainMode ? tiltAngle : 0) - tiltCur) * 0.06;
+    tiltCur += (((terrainMode || canyonMode) ? tiltAngle : 0) - tiltCur) * 0.06; // the canyon shares the view tilt (one relief grammar)
     if (trProg < 1) {
       trProg = Math.min((now - trStart) / trDur, 1);
       terrainField.setT(swarmEase(trProg));
@@ -1246,11 +2612,38 @@ function tick() {
       structField.points.visible = true;
     }
   }
+  // The canyon: ease the rate surface up/down, fade the pool with it. A pending crime flip parks its
+  // swap at ZERO height — aZ is a single attribute (it snaps on setTarget), so the range sinks flat
+  // as the old crime, swaps unseen, and rises as the new one (density crossfades on the way up).
+  if (canyonField) {
+    canyonZCur += (((canyonMode && !canyonFlipTo) ? canyonZPeak : 0) - canyonZCur) * 0.06;
+    canyonOp += ((canyonMode ? 1 : 0) - canyonOp) * 0.08;
+    if (canyonFlipTo && canyonZCur < canyonZPeak * 0.02) {
+      crimeType = canyonFlipTo; canyonFlipTo = '';
+      layouts = layoutsByType[crimeType];              // the map the exit returns to follows the flip
+      const to = canyonRates();
+      canyonField.setSource(canyonCur);
+      canyonField.setTarget(to);
+      canyonField.setStagger(0.6);
+      cnTo = to; cnStart = now; cnProg = 0;
+      refreshHud();
+    }
+    if (cnProg < 1) {
+      cnProg = Math.min((now - cnStart) / CN_MS, 1);
+      canyonField.setT(swarmEase(cnProg));
+      if (cnProg >= 1 && cnTo) { canyonCur = cnTo; cnTo = null; }
+    }
+    canyonField.setZScale(canyonZCur);
+    canyonField.setOpacity(canyonOp);
+    canyonField.setTime(time);
+    if (!canyonMode && canyonField.points.visible && canyonOp < 0.02) canyonField.points.visible = false;
+  }
   fieldGroup.rotation.x = tiltCur;
   controls.update();
   updateTooltip();
   updateLabels();
   updateTriLabels();
+  updateForensicsLabels();
 
   render();
 
@@ -1273,4 +2666,6 @@ window.addEventListener('resize', () => {
   if (field) field.setPixelRatio(renderer.getPixelRatio());
   if (structField) structField.setPixelRatio(renderer.getPixelRatio());
   if (terrainField) terrainField.setPixelRatio(renderer.getPixelRatio());
+  if (canyonField) canyonField.setPixelRatio(renderer.getPixelRatio());
+  if (unlitField) unlitField.setPixelRatio(renderer.getPixelRatio());
 });

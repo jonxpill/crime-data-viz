@@ -2,6 +2,30 @@
 > Open questions + sparks to *discuss before building*, not commitments. From the idea note's open threads.
 > Promote into BUILD-PLAN once decided.
 
+## Next major direction — THE THREE-PROVINCE TOLL (endorsed 2026-07-14; direction agreed, build gated on data)
+The Toll (18-year murder accumulation as a settled disc) applied to South Africa's three biggest
+provinces **side by side** — **Western Cape · KwaZulu-Natal · Gauteng** — a triptych of discs. Raised while
+imagining "the three major cities next to each other"; resolved to PROVINCES because we've already done one
+(WC), they're self-contained, and the metros (Cape Town ⊂ WC, eThekwini/Durban ⊂ KZN, Joburg ⊂ Gauteng) are
+drill *subsets* the explorer already reaches, so cities come nearly free later.
+- **Data exists — it's a pipeline lift, not a wall.** SAPS crime stats are *national*, per police station,
+  the SAME source + granularity we baked for WC (DataFirst cat. 1012 + saps.gov.za). Extending = each
+  province's station list, precinct geometry (map/source pose), per-year murder counts, and population for
+  per-capita. Data-first rule holds: REAL baked data for all three, no eyeballed fills. This last-mile data
+  work is the real cost; three discs on the shell is the easy part.
+- **Per-capita is the load-bearing crux AND the reason to build it.** Populations ~ Gauteng 15.8M · KZN 11.5M
+  · WC 7.2M — three raw discs would mostly draw *population* ("more people, more murders"). But the Toll is
+  about *raw bodies* (the actual dead), so raw is honest for a memorial. The story likely **flips** on rate:
+  Gauteng leads on volume, WC/Cape Town carries one of the highest murder *rates* in SA. So it must be a
+  raw↔per-capita toggle (raw = human cost, rate = danger) — that flip is the payoff. (Verify rankings against
+  the baked data, don't assert.)
+- **Architecture fit — this is concrete "view #2".** A 3-province Toll is a *view* (or a "compare" mode of the
+  Toll view) fed N province data-modules; the shell + view-registry (being designed 2026-07-14) makes adding
+  a province a *registration*, not a rebuild — the generalization target the view-contract is being tested
+  against.
+- **Sequencing:** standalone shell + WC Toll first (in flight) → KZN + Gauteng **data pipeline** (the gate) →
+  the triptych view on top. National expansion (~1M-point "National Creature" moonshot) is the far horizon.
+
 ## Decide as you build (ripe)
 - **The data→particles pipeline specifics** — the **per-capita spatial join** (population census geography ≠
   police precincts), the **jitter** rules (how to scatter N points within a precinct honestly), and how
@@ -77,6 +101,11 @@
   rollover + flag credit switch with the mode. The population proxy is gone.
 
 - **✅ DONE (2026-07-09) — the Monthly Pulse** shipped: `N months`, 60 months Apr 2021–Mar 2026, looping.
+- **THE POLISH BRAINSTORM (2026-09-28, raised not agreed)** — 30 tweak/transition/UI ideas from a full eye
+  pass over every surface (explorer, all Toll pages, the six experiment branches; desktop + iPad + phone).
+  Top picks: the Frame (one framing door), per-change motion characters, exhibit mode, structure hierarchy,
+  linked compare-pie hover, Toll tree-rings, Canyon ridgelines, suburb framing, touch grammar. Archive:
+  [brainstorms/2026-09-28-polish-brainstorm.md](brainstorms/2026-09-28-polish-brainstorm.md). Verdicts pending.
 - **THE BIG BRAINSTORM (2026-07-10, raised not agreed)** — 126 new-visualization ideas across eight lenses,
   full archive in [brainstorms/2026-07-10-viz-brainstorm.md](brainstorms/2026-07-10-viz-brainstorm.md).
   Maker-shortlist pending; standouts flagged in that session: the Lockdown Canyon (time AS the landform),

@@ -279,3 +279,38 @@ specific instruments (deferred) · where it lives / distribution · a name.
   in the parent; showing it separately needs geometry you don't have. And check whether the child recorded
   separately BEFORE your snapshot's end (Samora Machel since 2018/19) — if so, backfill its history too, or
   the series has a hole exactly where the fold begins. (?)
+- **Point a live counter at what the eye can verify.** A derived count's THRESHOLD is a truth decision,
+  not a math detail: the toll counts dots that have LANDED (lt = 1, the disc the viewer sees), because the
+  reading's mid-flight threshold (lt = 0.5) would let "this year" briefly exceed the year's real total —
+  an impossible number on screen. Choose the formula so the display can never claim more than the pixels.
+- **Sibling labels share a SIZE, never a WIDTH.** Fitting each label to one span makes type size encode
+  string length — a meaningless signal that still reads as hierarchy (GAUTENG set ~2× KWAZULU-NATAL looked
+  like the headline). Solve the shared size once from the longest label; let shorter ones end early.
+- **When a channel can't tween, stage its swap where the channel is invisible.** The engine tweens
+  positions+density between endpoints but `aZ` is ONE attribute — it snaps on `setTarget`. The canyon's
+  crime flip hides that snap by sinking the surface flat (zScale→0), swapping the landform at zero height,
+  and rising as the new crime — the constraint becomes the choreography. Generalises: mask any
+  non-interpolable state change at the moment its visual weight is zero. (?)
+- **When a primary source blocks robots, pull the exact document from the Internet Archive rather than
+  settling for secondary quotes** — a citation must point at the real table (statssa.gov.za sits behind
+  Incapsula; web.archive.org served both GPSJS PDFs intact, rates then read to the digit).
+- **To interrupt a per-element staggered/eased interpolation mid-flight, read back the EXACT pose by
+  replicating the easing math per element — never approximate with the global t.** Elements past their
+  window have arrived, ones before it haven't left; a uniform lerp snaps both. (The flock's landing:
+  airbornePose() mirrors the shader's stagger window on the CPU, so the glide home starts from
+  precisely where every dot is on screen.) (?)
+- **Before changing a generator, run it UNCHANGED and diff against the committed artifact.** A byte-identical
+  baseline (same inputs + same code → same bytes) turns every later "did my change drift anything?" into a
+  one-line proof: rerun, diff the trust lines, hash the untouched outputs, deep-diff the touched ones for
+  exactly the intended delta (+600 lng/lat fields, zero other changes). Without the baseline you can't tell
+  your drift from input drift. (?)
+- **A conflict hunk's boundary lies about who owns the lines around it.** When both sides of a hunk end
+  just before one SHARED closer (a `}`, a `/**`), concatenating the sides silently drops a brace or a
+  comment opener — the merge "resolves" and the file no longer parses. Parse-check every resolution before
+  running it (`node --check`), and read one line past each hunk before deciding it's "keep both".
+- **Preprocessing the data moves the test's own null — recentre the statistic by the residual degrees of
+  freedom, then PIN the null with a synthetic-honest unit test.** Seasonal adjustment (fitting 12 monthly
+  means) before the dispersion test consumed 12 df; dividing the variance by n−1 instead of n−12 would have
+  centred a TRUE Poisson tally on D≈0.81, silently dragging honest stations toward the "look closer" zone —
+  an anomaly detector whose null is off-centre manufactures anomalies. The guard that caught it: a seeded
+  synthetic test asserting the honest case lands dead on the reference value (and a rigged case doesn't). (?)
