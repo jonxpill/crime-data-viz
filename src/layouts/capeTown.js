@@ -38,6 +38,42 @@ function mulberry32(a) {
   };
 }
 
+/**
+ * SKY ROOSTS (packet D4) — where a PARKED (surplus) slot waits: ABOVE the frame, never beside it. Each slot
+ * hangs over its own precinct — x = the station's x plus a plume spread that widens with height — at a varied
+ * height past the top edge of the region's box. So a cooling hotspot's surplus RISES like sparks and a
+ * filling one RAINS back in (before, it sprayed sideways toward arbitrary bearings). Only the PARKED
+ * coordinates live here: slot identity, counts and every active position are untouched, and a parked dot is
+ * invisible (density 0) wherever it waits. `lift`/`span` are × the box height above its top edge, `plume` ×
+ * its width. Seeded on its own stream, so raw ⇄ per-capita builds (same slots) park at identical spots.
+ */
+export const SKY = { lift: 0.22, span: 0.6, plume: 0.09 };
+export function skyRoosts(slots, count, data, { seed = 0x5c1e5, sky = SKY } = {}) {
+  const { top, w, h } = frameOf(data);
+  const rng = mulberry32(seed);
+  const pos = new Float32Array(count * 2);
+  for (const sl of slots) {
+    for (let j = 0; j < sl.K; j++) {
+      const idx = sl.base + j, u = rng();
+      pos[idx * 2] = sl.s.x + gauss(rng) * w * sky.plume * (0.35 + 0.65 * u);   // higher = wider plume
+      pos[idx * 2 + 1] = top + h * (sky.lift + sky.span * u);
+    }
+  }
+  return pos;
+}
+// The region's frame: its baked canvas box (centred on the origin, the projection's own convention), or —
+// for data without one — the stations' own extents.
+function frameOf(data) {
+  const b = data.meta && data.meta.box;
+  if (b) return { top: b.h / 2, w: b.w, h: b.h };
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const s of data.stations) {
+    const r = s.r || 0;
+    x0 = Math.min(x0, s.x - r); x1 = Math.max(x1, s.x + r); y0 = Math.min(y0, s.y - r); y1 = Math.max(y1, s.y + r);
+  }
+  return { top: y1, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
+}
+
 export async function loadCapeTown(url = 'data/capetown.json') {
   // Offline single-file build (pipeline/build-single.mjs) embeds EVERY dataset on the page as
   // window.__CAPE_DATA__ keyed by url (+ the Cape Town DEM as window.__CAPE_DEM__), so NOTHING is fetched —
@@ -78,7 +114,7 @@ export async function loadCapeTown(url = 'data/capetown.json') {
  *             layouts:Record<string,{positions:Float32Array,density:Float32Array}[]>,
  *             totals:Record<string,number[]> }}
  */
-export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {}) {
+export function buildCrimeLayouts(data, { types, mode = 'raw', sky = SKY } = {}) {
   const years = data.meta.years;
   const stations = data.stations;
   const rng = mulberry32(0x1234);
@@ -120,22 +156,11 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
   for (const sl of slots) { sl.base = base; base += sl.K; }
   const COUNT = base;
 
-  // Per-slot "roost" — an OFF-SCREEN waiting spot out past the frame edge, in the
-  // direction of the station (jittered). A parked dot flies OUT to its roost when its
-  // hotspot cools and flies BACK IN when it fills — so the field reads as a living
-  // swarm gathering and dispersing, not points blinking on at a centroid.
-  const roostPos = new Float32Array(COUNT * 2);
-  for (const sl of slots) {
-    const central = Math.hypot(sl.s.x, sl.s.y) < 30; // stations near the centre → random bearing
-    const baseAng = Math.atan2(sl.s.y, sl.s.x);
-    for (let j = 0; j < sl.K; j++) {
-      const idx = sl.base + j;
-      const ang = central ? rng() * TAU : baseAng + (rng() - 0.5) * 0.9;
-      const rr = roost * (0.8 + rng() * 0.5);
-      roostPos[idx * 2] = Math.cos(ang) * rr;
-      roostPos[idx * 2 + 1] = Math.sin(ang) * rr;
-    }
-  }
+  // Per-slot "roost" — an OFF-SCREEN waiting spot in the SKY above the frame, over the slot's own
+  // precinct (skyRoosts). A parked dot RISES to its roost when its hotspot cools and RAINS BACK IN when
+  // it fills — so the field reads as a living swarm gathering and dispersing, not points blinking on at
+  // a centroid. (Until D4 the roost sat out past the frame edge in the station's bearing — a sideways spray.)
+  const roostPos = skyRoosts(slots, COUNT, data, { sky });
 
   // Terrain height under each crime dot (sampled from the baked DEM) so in the terrain view
   // the crime "climbs" the relief — high-ground crime rides the mountains, the flats stay low.
@@ -335,6 +360,7 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
       cy: ((rows - 1) / 2 - Math.floor(ci / cols)) * gap, // first row on top, reading order
     }));
     const activeXY = [], activeIdx = [];
+    const skyTop = Math.max(...centers.map((c) => c.cy)) + R + gap * 0.9; // leftovers wait above the top row
     for (let si = 0; si < slots.length; si++) {
       const sl = slots[si];
       const theta0 = -Math.PI / 2 + si * dtheta;        // this precinct's wedge, same angle in every pie
@@ -354,11 +380,11 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
         }
         cursor += n;
       }
-      for (let j = cursor; j < sl.K; j++) {              // leftover slots park off past the row (invisible)
-        const idx = sl.base + j;
-        const a = rng() * TAU, rr = R + gap * 2.4 + rng() * 200;
-        positions[idx * 2] = Math.cos(a) * rr;
-        positions[idx * 2 + 1] = Math.sin(a) * rr;
+      for (let j = cursor; j < sl.K; j++) {              // leftover slots wait in the SKY above the grid (invisible)
+        const idx = sl.base + j;                         // — exactly two rng() draws, as before, so every
+        const u1 = rng(), u2 = rng();                    //   active dot's jitter stream is unchanged
+        positions[idx * 2] = (u1 - 0.5) * (cols * gap + 2 * R);
+        positions[idx * 2 + 1] = skyTop + (0.6 + 1.6 * u2) * R;
       }
     }
     // GLOBAL crowding normalisation across ALL three pies (pies are gap-separated, so a dot only
@@ -539,7 +565,9 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
   // builder knowing what "focus" means. Identical across raw/percapita (K is sized to the max of both).
   const slotRanges = slots.map((sl) => [sl.base, sl.K]);
 
-  return { years, count: COUNT, layouts, totals, slotRanges, pieLayout, triPieLayout, resolvePieLayout, forensicsLayout, monthly, months: MONTH_LABELS };
+  // roosts: every slot's parked (sky) spot — a caller that parks this pool for its own reasons (the toll's
+  // unused dots) parks them HERE, so a dot never flies between two different waiting spots.
+  return { years, count: COUNT, layouts, totals, slotRanges, pieLayout, triPieLayout, resolvePieLayout, forensicsLayout, monthly, months: MONTH_LABELS, roosts: roostPos };
 }
 
 /**
@@ -554,7 +582,7 @@ export function buildCrimeLayouts(data, { types, mode = 'raw', roost = 700 } = {
  * Crimes without a survey rate (murder, commercial) return null — EXCLUDED, never guessed; the
  * app shows a note instead of dots.
  */
-export function buildUnlitLayouts(data, ratesSpec, { types, roost = 700, dim = 0.32 } = {}) {
+export function buildUnlitLayouts(data, ratesSpec, { types, sky = SKY, dim = 0.32 } = {}) {
   const years = data.meta.years;
   const stations = data.stations;
   const rng = mulberry32(0x11a7e5); // own seed — the shadow's jitter must not echo the data's
@@ -592,20 +620,9 @@ export function buildUnlitLayouts(data, ratesSpec, { types, roost = 700, dim = 0
   for (const sl of slots) { sl.base = base; base += sl.K; }
   const COUNT = base;
 
-  // Roosts — same off-frame grammar as the data pool: each slot waits out past the frame edge in
-  // its station's direction, so toggling U condenses the shadow IN and disperses it OUT.
-  const roostPos = new Float32Array(COUNT * 2);
-  for (const sl of slots) {
-    const central = Math.hypot(sl.s.x, sl.s.y) < 30;
-    const baseAng = Math.atan2(sl.s.y, sl.s.x);
-    for (let j = 0; j < sl.K; j++) {
-      const idx = sl.base + j;
-      const ang = central ? rng() * TAU : baseAng + (rng() - 0.5) * 0.9;
-      const rr = roost * (0.8 + rng() * 0.5);
-      roostPos[idx * 2] = Math.cos(ang) * rr;
-      roostPos[idx * 2 + 1] = Math.sin(ang) * rr;
-    }
-  }
+  // Roosts — the same SKY grammar as the data pool (own seed): each slot waits above the frame over
+  // its station, so toggling U RAINS the shadow in and lets it RISE away.
+  const roostPos = skyRoosts(slots, COUNT, data, { seed: 0x5c1e6, sky });
   const dispersePose = { positions: roostPos, density: new Float32Array(COUNT) };
 
   // Lazy, single-residency cache (the monthly() pattern): 18 year-layouts per (crime, mode) is
