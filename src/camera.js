@@ -78,6 +78,12 @@ export function fitTopDown(points, fovDeg, aspect, ndc) {
     const mid = (lo + hi) / 2, s = solve(mid);
     if (s) { hi = mid; sol = s; } else lo = mid;
   }
+  if (!sol) { // no distance fits this safe rect (degenerate insets) — fall back to a plain centred fit, never throw
+    const xs = points.map((p) => p.x), ys = points.map((p) => p.y);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const hw = (Math.max(...xs) - Math.min(...xs)) / 2 || 1, hh = (Math.max(...ys) - Math.min(...ys)) / 2 || 1;
+    return { tx: cx, ty: cy, dist: zTop + Math.max(hh / tanV, hw / tanH) * 1.08 };
+  }
   return { tx: sol.tx, ty: sol.ty, dist: hi };
 }
 
@@ -90,6 +96,9 @@ export function hudSafeInset(W, H) {
     const r = hud.getBoundingClientRect();
     if (r.height > 0 && r.top < H) bottom = Math.max(bottom, H - r.top + 10);
   }
+  // The HUD may never claim more than 35% of the height: mid-layout (icons not yet sized, a popover open)
+  // it can measure absurdly tall, and a safe frame with no height has no fit at all.
+  bottom = Math.min(bottom, 0.35 * H);
   return { top: Math.max(MARGIN * H, 40), right: MARGIN * W, bottom, left: MARGIN * W };
 }
 
