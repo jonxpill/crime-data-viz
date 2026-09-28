@@ -18,7 +18,19 @@ import * as THREE from 'three';
  *
  * A "layout" is just a function upstream that fills { positions, density }.
  * A new view = a new layout. The engine never grows to know what a view means.
+ *
+ * TONE — an optional per-dot palette index, carried like density (a source + a target value, blended
+ * by the same per-dot lt, so a change of tone BLENDS in flight instead of snapping):
+ *   • DATA pools read `layout.ramp` → which of up to 4 density ramps paints the dot (a caller maps
+ *     crime families onto ramp indices; the engine never learns what a family is).
+ *   • STRUCTURE pools read `layout.role` → which of 8 role colours paints the dot; role 0 = the pool's
+ *     own matte (uMatte), so an untagged pool looks exactly as it always did.
+ *   `ramp`/`role` may be a number (the whole written slice) or a typed array (one per dot, same length as
+ *   the layout's density). Absent → 0. Density is still the ONLY brightness channel inside any ramp.
  */
+export const MAX_RAMPS = 4;
+export const MAX_ROLES = 8;
+
 export class PointField {
   /**
    * @param {number} count number of points
@@ -57,6 +69,11 @@ export class PointField {
     // uSpinCentre by rate·(uSpinTime − onset). Off by default; the engine knows nothing of why.
     geometry.setAttribute('aSpinRate', new THREE.BufferAttribute(new Float32Array(count), 1));
     geometry.setAttribute('aSpinOnset', new THREE.BufferAttribute(new Float32Array(count), 1));
+    // Per-point TONE index (ramp for data, role for structure) at each endpoint — see the class note.
+    // All-zero by default = ramp 0 / the pool's matte, i.e. the look every pool had before tones existed.
+    geometry.setAttribute('aSourceTone', new THREE.BufferAttribute(new Float32Array(count), 1));
+    geometry.setAttribute('aTargetTone', new THREE.BufferAttribute(new Float32Array(count), 1));
+    this._toneUsed = false; // stays false until a non-zero tone is written → untagged pools never re-upload
     // BufferGeometry needs *some* `position`; we drive xy ourselves, keep z=0.
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
     geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1e6);
@@ -101,10 +118,15 @@ export class PointField {
         uFlow: { value: 0 },
         uFlowSpeed: { value: 1 },
         uOpacity: { value: 1 }, // global fade — cross-fades map structure ↔ terrain relief
-        uRampCool: { value: ramp[0] },
-        uRampMid: { value: ramp[1] },
-        uRampWarm: { value: ramp[2] },
+        // Up to MAX_RAMPS density ramps (cool/mid/warm stop arrays); a dot's tone picks one. All start
+        // as the same ramp, so a pool that never tags its dots is untouched.
+        uRampCool: { value: Array.from({ length: MAX_RAMPS }, () => new THREE.Color(ramp[0])) },
+        uRampMid: { value: Array.from({ length: MAX_RAMPS }, () => new THREE.Color(ramp[1])) },
+        uRampWarm: { value: Array.from({ length: MAX_RAMPS }, () => new THREE.Color(ramp[2])) },
         uMatte: { value: matte },
+        // Structure role colours (index 0 unused — role 0 IS uMatte). Default = the matte, so a tagged
+        // dot in a pool nobody has given role colours still draws the pool's own grey.
+        uRoleColors: { value: Array.from({ length: MAX_ROLES }, () => matte.clone()) },
       },
       vertexShader: VERT,
       fragmentShader: FRAG,
@@ -124,12 +146,12 @@ export class PointField {
    *  `offset` (in POINTS) writes a partial layout into a slice of the pool starting there — the rest of
    *  the buffer keeps its previous values. Callers own the slice bookkeeping; offset 0 + full-size
    *  layout is a whole-buffer write (the classic path). */
-  setSource(layout, offset = 0) { this._fill('aSource', 'aSourceDensity', layout, offset); }
+  setSource(layout, offset = 0) { this._fill('aSource', 'aSourceDensity', 'aSourceTone', layout, offset); }
 
   /** Fill the TARGET endpoint from a layout (same offset semantics as setSource). */
-  setTarget(layout, offset = 0) { this._fill('aTarget', 'aTargetDensity', layout, offset); }
+  setTarget(layout, offset = 0) { this._fill('aTarget', 'aTargetDensity', 'aTargetTone', layout, offset); }
 
-  _fill(posAttr, densAttr, layout, offset = 0) {
+  _fill(posAttr, densAttr, toneAttr, layout, offset = 0) {
     const g = this.points.geometry;
     const pos = g.getAttribute(posAttr); pos.array.set(layout.positions, offset * 2); pos.needsUpdate = true;
     const den = g.getAttribute(densAttr); den.array.set(layout.density, offset); den.needsUpdate = true;
@@ -137,6 +159,18 @@ export class PointField {
       const z = layout.z instanceof Float32Array ? layout.z : Float32Array.from(layout.z);
       g.setAttribute('aZ', new THREE.BufferAttribute(z, 1)); // fresh attribute → reliably uploads
     }
+    // Tone: data reads layout.ramp, structure reads layout.role. Absent → 0 over the written slice.
+    this._fillTone(toneAttr, this.glow ? layout.ramp : layout.role, offset, layout.density.length);
+  }
+
+  _fillTone(name, v, offset, n) {
+    if (v == null) v = 0;
+    if (v === 0 && !this._toneUsed) return; // never tagged → the buffer is already all zeros (no upload)
+    const a = this.points.geometry.getAttribute(name);
+    if (typeof v === 'number') a.array.fill(v, offset, offset + n);
+    else a.array.set(v.length > n ? v.subarray(0, n) : v, offset);
+    this._toneUsed = true;
+    a.needsUpdate = true;
   }
 
   /** @param {number} t 0 = source, 1 = target */
@@ -185,13 +219,29 @@ export class PointField {
   /** DATA per-dot brightness curve: floor (lone-ember glow) + gain (density dependence; low = tamer cores). */
   setDataFloor(v) { this.material.uniforms.uDataFloor.value = v; }
   setDataGain(v) { this.material.uniforms.uDataGain.value = v; }
-  /** Density colour ramp — any of cool/mid/warm (hex strings or THREE.Color); a hotter warm keeps dense
-   *  cores COLOURED (molten) instead of white, because a low-blue warm saturates to white far later. */
-  setRamp(cool, mid, warm) {
+  /** Density colour ramp 0 — any of cool/mid/warm (hex strings or THREE.Color); a hotter warm keeps dense
+   *  cores COLOURED (molten) instead of white, because a low-blue warm saturates to white far later.
+   *  (Ramp 0 is what every untagged dot uses; setRamps sets all of them.) */
+  setRamp(cool, mid, warm) { this.setRamps([[cool, mid, warm]]); }
+  /** Up to MAX_RAMPS density ramps: [[cool, mid, warm], …] indexed by a dot's tone (layout.ramp). A
+   *  missing/null entry (or stop) keeps its current value, so sparse arrays set just one ramp. */
+  setRamps(list) {
     const u = this.material.uniforms;
-    if (cool) u.uRampCool.value.set(cool);
-    if (mid) u.uRampMid.value.set(mid);
-    if (warm) u.uRampWarm.value.set(warm);
+    for (let k = 0; k < Math.min(list.length, MAX_RAMPS); k++) {
+      const r = list[k];
+      if (!r) continue;
+      if (r[0]) u.uRampCool.value[k].set(r[0]);
+      if (r[1]) u.uRampMid.value[k].set(r[1]);
+      if (r[2]) u.uRampWarm.value[k].set(r[2]);
+    }
+  }
+  /** The pool's own flat structure colour — role 0 (and every untagged structure dot). */
+  setMatte(c) { this.material.uniforms.uMatte.value.set(c); }
+  /** Structure role colours [c0, c1, … c7] indexed by a dot's tone (layout.role). Entry 0 is IGNORED —
+   *  role 0 is always the pool's matte (setMatte); null entries keep their current value. */
+  setRoleColors(list) {
+    const v = this.material.uniforms.uRoleColors.value;
+    for (let k = 1; k < Math.min(list.length, MAX_ROLES); k++) if (list[k]) v[k].set(list[k]);
   }
   /** Flow-field advection for play states: amp in world units (0 = off), optional speed multiplier.
    *  Keep speed FIXED while amp > 0 — the flow is a function of time, so a speed change mid-flight
@@ -231,9 +281,12 @@ const VERT = /* glsl */ `
   attribute float aZ;
   attribute float aSpinRate;
   attribute float aSpinOnset;
+  attribute float aSourceTone;
+  attribute float aTargetTone;
 
   varying float vDensity;
   varying float vTwinkle;
+  varying vec3 vTone; // x = source tone, y = target tone, z = this dot's lt (the blend between them)
 
   // Smooth, slightly eased blend so the field "settles" rather than slides linearly.
   void main() {
@@ -262,6 +315,7 @@ const VERT = /* glsl */ `
     vec2 pos = mix(aSource, tgt, lt);
     float density = mix(aSourceDensity, aTargetDensity, lt);
     vDensity = density;
+    vTone = vec3(aSourceTone, aTargetTone, lt); // the colour choice travels with the dot, blended by ITS lt
 
     // Idle drift — each point wanders a slow, tiny orbit on its own phase, so the
     // field shimmers like a living swarm even at rest. Two summed frequencies keep
@@ -313,20 +367,37 @@ const FRAG = /* glsl */ `
   uniform float uOpacity;
   uniform float uDataFloor;
   uniform float uDataGain;
-  uniform vec3 uRampCool;
-  uniform vec3 uRampMid;
-  uniform vec3 uRampWarm;
+  uniform vec3 uRampCool[${MAX_RAMPS}];
+  uniform vec3 uRampMid[${MAX_RAMPS}];
+  uniform vec3 uRampWarm[${MAX_RAMPS}];
   uniform vec3 uMatte;
+  uniform vec3 uRoleColors[${MAX_ROLES}];
 
   varying float vDensity;
   varying float vTwinkle;
+  varying vec3 vTone;
 
-  vec3 ramp(float d) {
+  vec3 ramp(float k, float d) {
+    // Pick ramp k (constant-index selects — portable), then the SAME curve as always:
     // cool/dim -> mid -> warm/bright. The cool end is held across the whole
-    // sparse+mid field so the density "journey" is a real blue->gold gradient;
+    // sparse+mid field so the density "journey" is a real cool->warm gradient;
     // warmth arrives only in genuine cores. This gradient IS the read.
-    vec3 lo = mix(uRampCool, uRampMid, smoothstep(0.12, 0.62, d));
-    return mix(lo, uRampWarm, smoothstep(0.62, 0.95, d));
+    vec3 c = uRampCool[0], m = uRampMid[0], w = uRampWarm[0];
+    if (k > 0.5) {
+      if (k < 1.5)      { c = uRampCool[1]; m = uRampMid[1]; w = uRampWarm[1]; }
+      else if (k < 2.5) { c = uRampCool[2]; m = uRampMid[2]; w = uRampWarm[2]; }
+      else              { c = uRampCool[3]; m = uRampMid[3]; w = uRampWarm[3]; }
+    }
+    vec3 lo = mix(c, m, smoothstep(0.12, 0.62, d));
+    return mix(lo, w, smoothstep(0.62, 0.95, d));
+  }
+  vec3 role(float k) {
+    // Role 0 = the pool's own matte; 1..7 = the role colours (a constant-index loop — portable).
+    if (k < 0.5) return uMatte;
+    int i = int(k + 0.5);
+    vec3 c = uRoleColors[1];
+    for (int j = 2; j < ${MAX_ROLES}; j++) if (j == i) c = uRoleColors[j];
+    return c;
   }
 
   void main() {
@@ -344,7 +415,9 @@ const FRAG = /* glsl */ `
       // faint blue ember; warm bright cores emerge from many points STACKING
       // additively, not from any one blown out.
       float glow = core * core;
-      vec3 col = ramp(vDensity);
+      vec3 col = ramp(vTone.x, vDensity);
+      // A tone change (e.g. a crime flip across families) BLENDS by this dot's own lt, in flight.
+      if (vTone.y != vTone.x) col = mix(col, ramp(vTone.y, vDensity), vTone.z);
       float brightness = (uDataFloor + uDataGain * vDensity) * vTwinkle;
       gl_FragColor = vec4(col, glow * brightness);
     } else {
@@ -354,7 +427,9 @@ const FRAG = /* glsl */ `
       if (vDensity < 0.01) discard;              // ocean (density 0) → the land ends at the coast
       float a = smoothstep(1.0, 0.15, r) * 0.92;
       // 0.9 = a 10% overall brightness trim on the grey-green frame (keeps the tonal shape).
-      gl_FragColor = vec4(uMatte * (0.9 * (0.32 + 4.5 * vDensity)) * vTwinkle, a);
+      vec3 col = role(vTone.x);
+      if (vTone.y != vTone.x) col = mix(col, role(vTone.y), vTone.z); // a role change blends in flight too
+      gl_FragColor = vec4(col * (0.9 * (0.32 + 4.5 * vDensity)) * vTwinkle, a);
     }
     gl_FragColor.a *= uOpacity;
   }
