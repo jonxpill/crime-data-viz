@@ -294,3 +294,8 @@ specific instruments (deferred) · where it lives / distribution · a name.
 - **When a primary source blocks robots, pull the exact document from the Internet Archive rather than
   settling for secondary quotes** — a citation must point at the real table (statssa.gov.za sits behind
   Incapsula; web.archive.org served both GPSJS PDFs intact, rates then read to the digit).
+- **To interrupt a per-element staggered/eased interpolation mid-flight, read back the EXACT pose by
+  replicating the easing math per element — never approximate with the global t.** Elements past their
+  window have arrived, ones before it haven't left; a uniform lerp snaps both. (The flock's landing:
+  airbornePose() mirrors the shader's stagger window on the CPU, so the glide home starts from
+  precisely where every dot is on screen.) (?)
