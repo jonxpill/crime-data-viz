@@ -314,3 +314,8 @@ specific instruments (deferred) · where it lives / distribution · a name.
   centred a TRUE Poisson tally on D≈0.81, silently dragging honest stations toward the "look closer" zone —
   an anomaly detector whose null is off-centre manufactures anomalies. The guard that caught it: a seeded
   synthetic test asserting the honest case lands dead on the reference value (and a rigged case doesn't). (?)
+- **A colour token means what RENDERS, not what's authored — push it through the output transform before
+  judging it.** The explorer tone-maps the WHOLE frame (exposure 5.5 + Neutral), so its `#05060a` background
+  actually lands ≈ `#010717` on the canvas and a candidate's `oklch(0.12 0.02 265)` ≈ `#011024`; comparing
+  candidates (or matching page CSS to the canvas) by their authored hex compares the wrong things. Report the
+  on-screen value beside the authored one, or author post-transform. (D2 palette door, 2026-09-28) (?)

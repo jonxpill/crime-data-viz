@@ -64,6 +64,28 @@ Sizes: S (hours) · M (a day) · L (multi-day). Tier = the agent model for execu
 ### Wave 1 — Doors (branch `polish/doors`)
 - **D1 Camera** L · opus — includes The Frame (home framings) + the triptych narrow-window fix. *Checkpoint: maker feels it.*
 - **D2 Palette** M · sonnet build, planner eye — 2–3 candidate sets rendered side by side. *Checkpoint: maker picks.*
+  > **The Palette door (built on `polish/palette`, 2026-09-28 — awaiting the eye pass + the maker's pick).**
+  > - **Tokens live in `src/palette.js`, authored in OKLCH** (a tiny OKLCH→sRGB converter; out-of-gamut tokens
+  >   lose CHROMA at fixed L + h, never channel-clamped, so hues hold). Call sites name crimes and roles, never hexes.
+  > - **Families (SAPS's own grouping) → ramp index:** contact 0 (murder · sexoff · robbery · carjacking) ·
+  >   property 1 (burglary) · commercial 2; `familyOf` / `rampIndexOf`. Unknown crime keys fall to family 0.
+  > - **Luminance rule:** inside a candidate the three family ramps share the SAME OKLCH L at each stop
+  >   (L = 0.70 / 0.81 / 0.76 ≈ today's ramp) — hue = family, light = density; one crime can't out-shine another
+  >   by hue (asserted in `tests/palette.test.mjs`).
+  > - **Engine channel (PointField):** a per-dot TONE index at both endpoints (`aSourceTone`/`aTargetTone`, blended
+  >   by the dot's own lt → a family change blends in flight). Data pools read `layout.ramp` (number or per-dot
+  >   array) into up to 4 ramps (`setRamps`); structure pools read `layout.role` into 8 role colours
+  >   (`setRoleColors`; role 0 = the pool's own matte, `setMatte`). Absent → 0, so untagged pools are unchanged.
+  >   Roles: 0 lace/default · 1 district · 2 coast · 3 frame · 4 words · 5 residents/beacon · 6 unlit · 7 terrain.
+  > - **Apply:** `applyPalette(name, { pools:[{pool, role}], background, document })` paints ramps, roles + each
+  >   pool's matte (= its role's token), the scene bg (a THREE.Color mutated in place) and the HUD CSS vars on
+  >   `:root` (`--bg, --hud-text, --hud-strong, --hud-hint, --hud-dim, --hud-sep, --hud-flag, --brand, --brand-sub,
+  >   --card-*, --fig`; the pages' CSS defaults = today's values). Candidates: `current` (exactly today) · A Ember ·
+  >   B Nocturne · C Spectral — `__viz.palette(name)` or Shift+P (explorer + every Toll page).
+  > - **Add a family:** crime keys → `CRIME_FAMILY`, the family → `FAMILY_ORDER` (≤ 4 — the engine's MAX_RAMPS),
+  >   a hue triple per candidate. **Add a candidate:** a spec in `CANDIDATES` + its name in `PALETTE_CYCLE`.
+  > - Deferred to E1: tagging coast / district / lace INSIDE the outline layouts (the channel exists; today the
+  >   whole outline is role 0 = lace).
 - **D3 Address** M · sonnet.
 - **D4 Motion** L · opus — path modes, meaningful stagger, comet streaks (= [existing: Comet Scrub]), dither.
 - **D5 Input + dock** M · sonnet — incl. year ribbon + breadcrumb; absorbs the Wave-0 chips into groups.
