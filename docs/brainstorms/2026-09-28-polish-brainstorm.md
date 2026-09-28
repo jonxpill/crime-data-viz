@@ -108,3 +108,43 @@
 
 ## Verdicts
 (pending — maker to mark keep / maybe / drop)
+
+---
+
+## Round 2 — after the free camera + the HUD made of light (2026-09-28, second eye pass)
+Four passes over `polish/doors` at 1440×860: scenes at rest · the camera (tilted/close views the free camera
+opened) · transitions mid-flight · palettes against the new HUD.
+
+**What the passes found**
+- The free camera's tilted close-ups are the best frames in the project (Cape Town's peninsula relief with the
+  Cape Flats burning) — but three things break the illusion: foreground dots balloon (perspective size) and
+  spill over the dock; far land is as bright as near (no depth); the relief is one flat grey (no light).
+- Charts (pie, compare, forensics) are flat plates when tilted — the camera has nothing to reveal in them.
+- Sparse districts (Garden Route) read as empty lace with three tiny clusters.
+- The canyon still reads flat even tilted (one glowing ridge at the far edge; the grid dominates).
+- Crime-flip surplus sprays sideways to arbitrary roosts; the drill + map→pie comets are the best motion.
+- The palette candidates soften the molten punch of the dense cores vs today's amber.
+- Bug: a resize mid-glide leaves stale framing (the door only re-fits when exactly at home).
+
+**Ideas** (⭐ = top picks)
+1. ⭐ **Every view gets a height, revealed by tilting** — top-down unchanged; tilt and the data rises: pie/compare
+   wedges lift by count (a crown of spires; six crowns on a table), the flat map's crime lifts by local density
+   ("light rising off a flat land" — the grey land stays flat so it can't be mistaken for terrain), the Toll's
+   years stack into an 18-layer cairn (oldest at the base). Same number, second channel — honest.
+2. ⭐ **Aerial perspective** — distance haze (far dots fade toward the background) + a near-plane fade (dots
+   closer than a threshold dissolve instead of ballooning over the HUD). One shader term each.
+3. ⭐ **Hillshade + feathered edges on terrain** (E6, confirmed urgent by the tilted views): a fixed low sun so
+   Table Mountain and the Outeniqua ridges carry light; land dissolves at the raster box instead of cutting.
+4. **Land texture in quiet places** — a faint relief ghost (structure grey) under the map in sparse districts,
+   so the land isn't empty where crime is rare.
+5. **The canyon as a range** — K1 ridgelines + rows ordered by rate so the surface climbs to the horizon (row
+   order is a grouping, not geography — honest), seen from a low side angle by default.
+6. ⭐ **Surplus goes to the sky** — roosts above the frame: leaving dots rise like sparks, arriving dots rain in.
+   Purposeful instead of a sideways spray; one change to the roost positions.
+7. **The Toll can be turned** — right-drag rotates in the Toll (the dial keeps left-drag), paired with the cairn.
+8. **The ribbon breathes** — during play, the arriving year's column flares briefly (a heartbeat on the time bar).
+9. **A stronger map icon** — the province as its density heat, not a sparse outline.
+10. **Palette punch** — whichever candidate is chosen, lift the contact family's warm-stop chroma so dense cores
+    stay molten (or keep today's amber for contact — the open question).
+11. **Idle drift** — in cinema mode the camera orbits almost imperceptibly (an exhibit-mode ingredient).
+12. Fix: re-fit when a resize lands mid-glide.
