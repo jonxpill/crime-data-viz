@@ -77,6 +77,11 @@
   rollover + flag credit switch with the mode. The population proxy is gone.
 
 - **✅ DONE (2026-07-09) — the Monthly Pulse** shipped: `N months`, 60 months Apr 2021–Mar 2026, looping.
+- **THE POLISH BRAINSTORM (2026-09-28, raised not agreed)** — 30 tweak/transition/UI ideas from a full eye
+  pass over every surface (explorer, all Toll pages, the six experiment branches; desktop + iPad + phone).
+  Top picks: the Frame (one framing door), per-change motion characters, exhibit mode, structure hierarchy,
+  linked compare-pie hover, Toll tree-rings, Canyon ridgelines, suburb framing, touch grammar. Archive:
+  [brainstorms/2026-09-28-polish-brainstorm.md](brainstorms/2026-09-28-polish-brainstorm.md). Verdicts pending.
 - **THE BIG BRAINSTORM (2026-07-10, raised not agreed)** — 126 new-visualization ideas across eight lenses,
   full archive in [brainstorms/2026-07-10-viz-brainstorm.md](brainstorms/2026-07-10-viz-brainstorm.md).
   Maker-shortlist pending; standouts flagged in that session: the Lockdown Canyon (time AS the landform),
