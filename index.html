@@ -22,53 +22,98 @@
       #app { position: fixed; inset: 0; }
       canvas { display: block; }
 
+      /* ---- THE DOCK (D5 pass 1) — the HUD made of light. No box: the field flows under the controls; a soft
+         bottom-edge shade is drawn IN the WebGL frame beneath the engine-drawn ribbon (src/hud/light.js), so
+         the ribbon's own glow stays on top. `.hud` = the bottom zone the camera door keeps clear (camera.js
+         measures its top). Keys are never printed on controls — they live in the help sheet (?). */
       .hud {
-        position: fixed;
-        left: 16px;
-        bottom: 14px;
-        z-index: 10; /* above the place-label layer (z 5) */
+        position: fixed; left: 16px; right: 16px; bottom: 6px; z-index: 10;
         font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
-        color: var(--hud-text);
-        letter-spacing: 0.02em;
-        pointer-events: none;
-        user-select: none;
-        /* Boxed so the legend stays readable even when glowing dots are behind it on a zoom-in. */
-        padding: 9px 13px;
-        border-radius: 8px;
-        background: rgba(6, 8, 13, 0.66);
-        border: 1px solid rgba(140, 170, 210, 0.10);
-        backdrop-filter: blur(3px);
-        -webkit-backdrop-filter: blur(3px);
+        color: var(--hud-text); letter-spacing: 0.02em;
+        pointer-events: none; user-select: none; -webkit-user-select: none;
       }
-      .hud b { color: var(--hud-strong); font-weight: 500; }
-      .hud .hint { color: var(--hud-hint); }
-      /* Control chips: the SAME toolkit the keyboard drives, tappable (touch parity). Buttons opt back
-         into pointer events (the card itself stays click-transparent for the map behind it). */
-      .hud button {
-        pointer-events: auto; appearance: none; background: none; border: 0;
-        padding: 1px 5px; margin: 0 -2px; font: inherit; color: inherit;
-        letter-spacing: inherit; border-radius: 5px; cursor: pointer;
+      .hud button, #topright button {
+        pointer-events: auto; appearance: none; background: none; border: 0; padding: 0; margin: 0;
+        font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent;
       }
-      .hud button:hover { background: rgba(140, 170, 210, 0.12); }
-      .hud button:active { background: rgba(140, 170, 210, 0.24); }
-      .hud button.arr { padding: 1px 3px; }
-      /* Grouped row: TIME │ LENS │ VIEWS │ meta. Invalid-in-this-state chips DIM but hold their
-         ground (stable geometry beats a reflowing row). */
-      .grp { display: inline-flex; align-items: center; gap: 1px; }
-      .glabel { margin: 0 3px 0 1px; }
-      .gsep { color: var(--hud-sep); margin: 0 7px; user-select: none; }
-      .hud button.off { opacity: 0.28; pointer-events: none; }
-      /* CINEMA — after a few idle seconds the chrome bows out; any input brings it back.
-         (body.quiet is driven from wcExplore; the About card pins the chrome awake.) */
-      .hud, #brand, #fps { transition: opacity 1.1s ease; }
-      body.quiet .hud, body.quiet #brand, body.quiet #fps { opacity: 0; }
-      body.quiet .hud button { pointer-events: none; }
+      .hud button:focus-visible, #topright button:focus-visible { outline: 1px dotted var(--hud-dim); outline-offset: 2px; }
+      #dock-top { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 8px 28px; }
+      /* THE SENTENCE — the readout IS the control; a dotted underline = "tap me". */
+      #sentence-wrap { position: relative; pointer-events: auto; padding-top: 2px; }
+      #sentence { font-size: 13px; color: var(--hud-strong); white-space: nowrap; }
+      #sentence .sep, #sentence .crumb-sep { color: var(--hud-dim); }
+      .tap { text-decoration: underline dotted; text-decoration-color: var(--hud-dim);
+        text-underline-offset: 4px; text-decoration-thickness: 1px; }
+      .tap:hover { text-decoration-color: var(--hud-strong); }
+      #sentence .off { pointer-events: none; text-decoration: none; }
+      #lens-unlit { margin-left: 16px; color: var(--hud-text); transition: color .3s, opacity .3s; }
+      #lens-unlit.on { color: var(--hud-strong); }
+      #lens-unlit.off { opacity: 0.28; pointer-events: none; }
+      /* The scene's instructions — transient (~4 s on entering a scene that needs them; hover re-shows). */
+      #caption { position: absolute; left: 0; bottom: 100%; margin-bottom: 5px; white-space: nowrap;
+        font-size: 11.5px; color: var(--card-text); opacity: 0; transition: opacity .7s ease; pointer-events: none; }
+      #caption.show { opacity: 0.92; }
+      /* THE VIEWS — words with tiny dot icons (structure voice; the active one brightens to structure-white). */
+      #views { display: flex; align-items: flex-end; gap: 1px; }
+      .view { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; padding: 3px 5px 1px;
+        border-radius: 6px; font-size: 11px; color: var(--hud-text); transition: color .3s, opacity .3s; }
+      .view .ico { display: block; width: 28px; height: 20px; background: currentColor; opacity: 0; transition: opacity .5s;
+        -webkit-mask-size: 28px 20px; mask-size: 28px 20px; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
+      .view .ico.ready { opacity: 0.85; }   /* hidden until its dot mask exists (else: a solid grey block) */
+      .view:hover { color: var(--card-strong); }
+      .view.on { color: var(--hud-strong); }
+      .view.on .ico.ready { opacity: 1; }
+      .view.off { opacity: 0.28; pointer-events: none; }
+      /* THE RIBBON BAR — ▶ · the invisible hit track over the engine-drawn ribbon · years | months. */
+      #ribbon-bar { display: flex; align-items: stretch; justify-content: center; gap: 12px; height: 44px; margin-top: 6px; }
+      #rb-play { width: 22px; font-size: 10px; color: var(--hud-text); text-align: center; }
+      #rb-play:hover, #rb-switch button:hover { color: var(--hud-strong); }
+      #rb-track { flex: 0 1 var(--ribbon-max, 900px); min-width: 0; pointer-events: auto; cursor: ew-resize; touch-action: none; }
+      #rb-switch { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+      #rb-switch .sep { color: var(--hud-dim); }
+      #rb-switch button.on { color: var(--hud-strong); }
+      #rb-play.off, #rb-switch.off { opacity: 0.28; pointer-events: none; }
+      #rb-switch.off button { pointer-events: none; }
+      #rb-track.off { cursor: default; pointer-events: none; }
+      #rb-tip { position: fixed; z-index: 20; transform: translate(-50%, -100%); pointer-events: none; white-space: nowrap;
+        font: 11px/1.3 ui-monospace, "SF Mono", Menlo, monospace; color: var(--hud-strong); letter-spacing: .04em;
+        opacity: 0; transition: opacity .15s; }
+      #rb-tip.show { opacity: 0.95; }
+      /* Popovers — open on tap, close on an outside tap / Esc / a pick. */
+      #pop { position: fixed; z-index: 30; display: none; min-width: 180px; padding: 5px 0; border-radius: 8px;
+        background: rgba(8, 10, 16, 0.92); border: 1px solid rgba(140, 170, 210, 0.14);
+        backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+        font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: var(--hud-text); user-select: none; }
+      #pop.open { display: block; }
+      #pop .pop-title { padding: 3px 12px 4px; font-size: 10.5px; color: var(--hud-dim); letter-spacing: .06em; }
+      #pop button { display: flex; justify-content: space-between; gap: 22px; width: 100%; padding: 4px 12px;
+        appearance: none; background: none; border: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+      #pop button:hover { background: rgba(140, 170, 210, 0.10); color: var(--hud-strong); }
+      #pop button.cur { color: var(--hud-strong); }
+      #pop button .n { color: var(--hud-dim); }
+      #pop button.off { opacity: 0.3; pointer-events: none; }
+      /* Top-right: the compass (engine-drawn over its hit area, only when you've left home) + the ? */
+      #topright { position: fixed; top: 10px; right: 14px; z-index: 10; display: flex; align-items: center; gap: 8px;
+        font: 12px ui-monospace, "SF Mono", Menlo, monospace; color: var(--hud-text); }
+      #compass-hit { width: 26px; height: 26px; border-radius: 50%; visibility: hidden; pointer-events: none; }
+      #compass-hit.show { visibility: visible; pointer-events: auto; }
+      #topright #help-btn { width: 22px; height: 22px; border-radius: 50%; border: 1px dotted var(--hud-dim); font-size: 11px;
+        color: var(--hud-text); line-height: 20px; text-align: center; }
+      #topright #help-btn:hover { color: var(--hud-strong); border-color: var(--hud-text); }
+      /* CINEMA — after a few idle seconds the chrome bows out; the brand stays, the ribbon fades to a
+         faint glow (engine side). Any input brings it back. (The help card and the Toll pin it awake.) */
+      .hud, #topright, #fps { transition: opacity 1.1s ease; }
+      body.quiet .hud, body.quiet #topright, body.quiet #fps, body.quiet #rb-tip { opacity: 0; }
+      body.quiet .hud button, body.quiet .hud #sentence-wrap, body.quiet #rb-track, body.quiet #topright button { pointer-events: none; }
       @media (pointer: coarse) {
-        .hud { line-height: 2.05; }
-        .hud button { padding: 5px 7px; }   /* real tap targets on touch */
-        .passive { display: none; }         /* scroll/drag hints mean nothing on a phone */
+        .view { padding: 5px 6px 3px; }
+        #rb-play { width: 32px; }
       }
-      @media (max-width: 640px) { .hud { left: 10px; right: 10px; bottom: 10px; font-size: 11px; } }
+      @media (max-width: 760px) {
+        .hud { left: 10px; right: 10px; }
+        #sentence { white-space: normal; }
+        #views { flex-wrap: wrap; }
+      }
       /* The name — quiet, structure-voiced, top-left. It must never compete with the field. */
       #brand {
         position: fixed; left: 16px; top: 12px; z-index: 10;
@@ -96,6 +141,12 @@
       #about-card .src { color: var(--brand-sub); font-size: 11.5px; }
       #about-card a { color: var(--hud-hint); text-decoration: none; }
       #about-card a:hover { text-decoration: underline; }
+      /* The help sheet's Keys + Sources sections (the keys live HERE, never printed on the controls). */
+      #about-card h3 { margin: 18px 0 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.24em; color: var(--card-head); }
+      #about-card .keys { display: grid; grid-template-columns: max-content 1fr; gap: 3px 16px; margin: 0 0 12px; font-size: 11.5px; }
+      #about-card .keys dt { color: var(--hud-strong); white-space: nowrap; }
+      #about-card .keys dd { margin: 0; color: var(--card-dim); }
+      #about-card .now { color: var(--card-text); font-size: 11.5px; }
       #about-close, #locate-close {
         position: absolute; top: 10px; right: 12px; appearance: none; background: none; border: 0;
         color: var(--hud-text); font: 16px ui-monospace, monospace; cursor: pointer; padding: 4px 8px; border-radius: 5px;
@@ -129,12 +180,15 @@
       #locate-card .priv { margin: 10px 0 0; color: var(--brand-sub); font-size: 10.5px; }
 
       #fps {
-        position: fixed; right: 14px; top: 12px; z-index: 10;
+        display: none; /* only with ?debug (body.debug) */
+        position: fixed; right: 76px; top: 12px; z-index: 10;
         font: 12px ui-monospace, monospace; color: var(--hud-dim);
         padding: 4px 9px; border-radius: 6px;
         background: rgba(6, 8, 13, 0.6);
         backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
       }
+
+      body.debug #fps { display: block; }
 
       /* The unlit legend chip — the estimate's on-screen declaration, shown only while U is active.
          Violet-voiced (the third role's hue), quiet, and it MUST carry the sexoff floor caveat. */
@@ -190,6 +244,30 @@
           shape by construction. Sexual offences are a <b>floor</b>: surveys themselves under-capture them, so the true
           unlit count is higher than drawn. Murder (near-fully recorded) and commercial crime (outside household
           surveys) get no estimate — excluded, never guessed.</p>
+        <h3>KEYS</h3>
+        <dl class="keys">
+          <dt>space</dt><dd>play / pause the years (the months in the pulse; pauses the toll)</dd>
+          <dt>← →</dt><dd>step a year (a month in the pulse)</dd>
+          <dt>↑ ↓</dt><dd>flip the crime</dd>
+          <dt>C</dt><dd>reported ⇄ per 100k people</dd>
+          <dt>N</dt><dd>the monthly pulse (N or M back to the years)</dd>
+          <dt>M</dt><dd>back to the map — from any view; on a district's map, out to the province</dd>
+          <dt>P · 3</dt><dd>the pie · compare all six crimes (click a pie to open it)</dd>
+          <dt>T · V</dt><dd>terrain · the canyon (a surface of rates)</dd>
+          <dt>X</dt><dd>forensics — statistics about the statistics</dd>
+          <dt>K</dt><dd>the toll — hold the disc or 1 for one murder per second; K, M or Esc ends it</dd>
+          <dt>U</dt><dd>the unlit field — the estimated unreported (map views)</dd>
+          <dt>H</dt><dd>stand in your suburb (J hides the residents · H or Esc lets go)</dd>
+          <dt>F</dt><dd>release the field (any key or tap lands it)</dd>
+          <dt>0</dt><dd>home — the scene's own framing (or tap the compass)</dd>
+          <dt>shift P</dt><dd>cycle the palettes</dd>
+          <dt>?</dt><dd>this sheet · Esc closes</dd>
+          <dt>drag</dt><dd>pan · <b style="color:var(--hud-strong);font-weight:500">right-drag</b> (or ctrl/⌘/shift-drag) rotate · <b style="color:var(--hud-strong);font-weight:500">scroll</b> zoom</dd>
+          <dt>click</dt><dd>a district to bloom into it · empty space in a district to zoom back out</dd>
+          <dt>touch</dt><dd>one finger pans · two pinch and twist · tap the underlined words</dd>
+        </dl>
+        <h3>SOURCES</h3>
+        <p class="now" id="src-now"></p>
         <p class="src">Crime: <a href="https://doi.org/10.25828/5MAW-4H90" target="_blank" rel="noopener">SAPS Annual
           Crime Records 2008–2023 via DataFirst (CC-BY)</a> + SAPS annual &amp; quarterly releases 2023–2026
           (saps.gov.za). Boundaries: Western Cape Government GIS. Population: WorldPop 2020. Terrain: AWS Terrain
@@ -210,34 +288,39 @@
         <p class="priv">“find me” is matched on your device only — your location is never sent, never stored</p>
       </div>
     </div>
-    <div class="hud">
-      <div><b id="region">Western Cape</b> — <span id="crime">robbery</span> &nbsp;·&nbsp; <span id="year">—</span> &nbsp;·&nbsp; <span id="count" style="color:var(--hud-text);"></span></div>
-      <div id="hint" class="hint" style="margin-top:2px;">click Cape Town to zoom in</div>
-      <!-- The toolkit, grouped: TIME · LENS · VIEWS · meta. Chips DIM (never vanish — a moving row is
-           worse than a grey chip) when invalid in the current state; refreshChips() owns that. -->
-      <div id="controls">
-        <span class="grp"><button data-act="play"><span class="hint">space</span> play</button><button
-          data-act="yearPrev" class="arr"><span class="hint">&larr;</span></button><button
-          data-act="yearNext" class="arr"><span class="hint">&rarr;</span></button><span class="glabel">year</span><button
-          data-act="months"><span class="hint">N</span> months</button></span><span class="gsep">│</span><span
-        class="grp"><button data-act="crimeUp" class="arr"><span class="hint">&uarr;</span></button><button
-          data-act="crimeDown" class="arr"><span class="hint">&darr;</span></button><span class="glabel">crime</span><button
-          data-act="percapita"><span class="hint">C</span> per-capita</button><button
-          data-act="unlit"><span class="hint">U</span> unlit</button><button
-          data-act="suburb"><span class="hint">H</span> my suburb</button></span><span class="gsep">│</span><span
-        class="grp"><button data-act="map"><span class="hint">M</span> map</button><button
-          data-act="pie"><span class="hint">P</span> pie</button><button
-          data-act="compare"><span class="hint">3</span> compare</button><button
-          data-act="terrain"><span class="hint">T</span> terrain</button><button
-          data-act="canyon"><span class="hint">V</span> canyon</button><button
-          data-act="forensics"><span class="hint">X</span> forensics</button><button
-          data-act="toll"><span class="hint">K</span> the toll</button><button
-          data-act="release"><span class="hint">F</span> release</button></span><span class="gsep">│</span><span
-        class="grp"><button data-act="about"><span class="hint">?</span> about</button><button
-          data-act="home"><span class="hint">0</span> home</button></span><span class="passive">&thinsp;<span class="hint">scroll</span> zoom&thinsp;·&thinsp;<span class="hint">drag</span> pan&thinsp;·&thinsp;<span class="hint">right-drag</span> rotate</span>
-      </div>
-      <div id="flag" style="color:var(--hud-flag); margin-top:4px;">◆ real SAPS robbery</div>
+    <div id="topright">
+      <button id="compass-hit" aria-label="return to the home framing"></button>
+      <button id="help-btn" aria-label="help — keys and sources">?</button>
     </div>
+    <!-- THE DOCK (D5 pass 1): the sentence (bottom-left) · the views (bottom-right) · the ribbon bar (bottom
+         edge; the ribbon itself is drawn by the engine into #rb-track's rect — src/hud/light.js). -->
+    <div class="hud" id="dock">
+      <div id="dock-top">
+        <div id="sentence-wrap">
+          <div id="caption"></div>
+          <div id="sentence"><span id="place"></span><span class="sep"> · </span><button id="crime"></button><span
+            class="sep"> · </span><button id="year"></button><span class="sep" id="count-sep"> · </span><button
+            id="count"></button><button id="lens-unlit" class="tap" aria-label="the unlit field">unlit</button></div>
+        </div>
+        <div id="views">
+          <button class="view" data-view="map"><span class="ico"></span>map</button>
+          <button class="view" data-view="pie"><span class="ico"></span>pie</button>
+          <button class="view" data-view="compare"><span class="ico"></span>compare</button>
+          <button class="view" data-view="terrain"><span class="ico"></span>terrain</button>
+          <button class="view" data-view="canyon"><span class="ico"></span>canyon</button>
+          <button class="view" data-view="forensics"><span class="ico"></span>forensics</button>
+          <button class="view" data-view="toll"><span class="ico"></span>toll</button>
+          <button class="view" data-view="more"><span class="ico"></span>more</button>
+        </div>
+      </div>
+      <div id="ribbon-bar">
+        <button id="rb-play" aria-label="play">▶</button>
+        <div id="rb-track" aria-label="the years — drag to scrub"></div>
+        <div id="rb-switch"><button data-pulse="0">years</button><span class="sep">|</span><button data-pulse="1">months</button></div>
+      </div>
+    </div>
+    <div id="rb-tip"></div>
+    <div id="pop"></div>
     <div id="unlit-chip"></div>
     <div id="fps"></div>
     <script type="module" src="/src/wcExplore.js"></script>

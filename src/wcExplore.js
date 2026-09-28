@@ -10,6 +10,9 @@ import { loadCapeTown, buildCrimeLayouts, buildUnlitLayouts, pieFrameLayout as p
 import RATES from '../data/vocs-reporting.json'; // GPSJS reporting rates + citations — bundled, so the offline single-file build needs no fetch
 import { forensicsFrameLayout as forensicsFrameRaw, forensicsStats, LOOK_CLOSER_D, TESTABLE_MEAN, DIGIT_MIN_N } from './layouts/forensics.js';
 import { applyPalette, paletteToast, paletteKey, nextPalette, rampIndexOf, ROLES, PALETTE_CYCLE } from './palette.js';
+import { LightHud, HUD_TUNE } from './hud/light.js';
+import { createDock, fmtValue } from './hud/dock.js';
+import * as ICONS from './hud/icons.js';
 
 // ---- palette TONES (the Palette door, src/palette.js) ---------------------------------------------------
 // Every layout that places DATA dots for a crime carries that crime's FAMILY ramp (layout.ramp: a number
@@ -89,6 +92,13 @@ const controls = cam.controls;
 const fieldGroup = new THREE.Group();
 scene.add(fieldGroup);
 
+// THE HUD MADE OF LIGHT (src/hud/light.js): the year ribbon + the compass are small PointField pools riding the
+// CAMERA (screen-fixed while the world orbits), plus the soft bottom shade drawn in-frame beneath them. The
+// ribbon's lit dots are DATA (they bloom, family ramp); everything else in it is structure grey.
+const light = new LightHud({ camera, scene, bloomLayer: BLOOM_LAYER, bg: DARK, pixelRatio: renderer.getPixelRatio() });
+const DEBUG = new URLSearchParams(location.search).has('debug'); // fps only with ?debug
+if (DEBUG) document.body.classList.add('debug');
+
 // ---- selective bloom: ONLY the data field glows -----------------------------
 const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.32, 0.65, 0.0);
 const bloomComposer = new EffectComposer(renderer);
@@ -143,6 +153,7 @@ function palettePools() {
     { pool: wordField, role: 'words' }, { pool: unlitField, role: 'unlit' },
     { pool: terrainField, role: 'terrain' },
     { pool: beaconField, role: 'residents' }, { pool: peopleField, role: 'residents' },
+    ...light.pools(),                                                            // ribbon data (ramps) + ribbon frame / compass (role 'frame')
   ];
 }
 function setPalette(name, toast = false) {
@@ -211,7 +222,7 @@ let plStart = 0, plProg = 1;                // the stand-up morph's clock (colla
 let morphStart = -1;
 const YEAR_MS = 2200, HOLD_MS = 450;
 let holdUntil = 0;
-let flipping = false, flipStart = 0, flipTo = '';
+let flipping = false, flipStart = 0, flipTarget = ''; // flipTarget: the crime an in-flight flip lands on
 const FLIP_MS = 1100;
 const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 const swarmEase = (x) => x; // constant speed — no acceleration pull at either end
@@ -277,36 +288,36 @@ let unlitProg = 1, unlitStart = 0, unlitPhase = null; // own clock for condense-
 const UNLIT_MS = 1600;
 let unlitSrc = null, unlitTgt = null; // CPU copies of the live endpoints (mid-flight captures need them)
 
-const yearEl = document.getElementById('year');
 const fpsEl = document.getElementById('fps');
-const crimeEl = document.getElementById('crime');
-const countEl = document.getElementById('count');
-const regionEl = document.getElementById('region');
-const hintEl = document.getElementById('hint');
 
-// Context-aware affordance line: what a click does depends on where you are (only writes on change, so
-// it's cheap to call every frame via refreshHud). Mid-drill text is set by startDrill; this defers then.
-let _lastHint = null;
-function refreshHint() {
-  if (!hintEl || drilling) return;
-  const txt = flockMode ? (flockPhase === 'land' ? 'the field lands…' : (attractMode ? 'press any key' : 'F or tap → land'))
-    : tollMode
-    ? (tollPhase === 'gather' ? 'the years are gathering…'
+// THE DOCK (src/hud/dock.js) — the DOM half of the HUD: the sentence, the views, the ribbon bar, popovers.
+// It knows nothing of this file's state; it gets plain models (sentenceModel, refreshDock) and hands every
+// intent back through ONE door, dockAct — the same action table the keys drive.
+const dock = createDock({ act: (name, arg, el) => dockAct(name, arg, el), ribbonTip: (c) => ribbonTip(c) });
+
+// The scene's INSTRUCTIONS — a transient caption above the sentence (~4 s when it changes, hover re-shows).
+// Only scenes that genuinely need instructions carry one (the maps' general hints retired with the chips:
+// the sentence's dotted words are the affordance now). Texts are today's hint lines, kept verbatim.
+function sceneCaption() {
+  if (drilling) return '';
+  if (flockMode) return flockPhase === 'land' ? '' : (attractMode ? 'press any key' : 'F or tap → land');
+  if (tollMode) {
+    return tollPhase === 'gather' ? 'the years are gathering…'
       : tollPhase === 'drain' || tollPhase === 'home' ? 'the murders return to the map…'
         : tollDone ? 'the toll stands · scrub the dial back · K returns them to the map'
           : (tollHoldPtr || tollHoldKey) ? 'one recorded murder per second — release to resume the sweep'
             : tollPaused ? 'paused — space resumes · drag the dial · K ends the toll'
-              : 'drag the dial to scrub · hold the disc (or 1) for one per second · space pauses · K ends the toll')
-    : canyonMode ? 'a surface of rates — height is the data · ↑↓ crime · V or tap → flat map'
-    : terrainMode ? 'T or tap → flat map'
-      : pulseMode ? '←→ month · space play/pause · N or M → years'
-      : focusMode ? '←→ year · scroll in close · J neighbours · H or Esc lets go'
-      : forensicsMode ? 'colour + width = statistical liveliness (D), not volume · ↑↓ crime · hover · X or M → map'
-        : (pieMode || triPieMode) ? 'press M for the map'
-          : region !== 'wc' ? 'N months · T terrain · click empty space (or M) to zoom out'
-            : 'N months · T terrain · click any area to zoom in';
-  if (txt !== _lastHint) { hintEl.textContent = txt; _lastHint = txt; }
+              : 'drag the dial to scrub · hold the disc (or 1) for one per second · space pauses · K ends the toll';
+  }
+  if (canyonMode) return 'a surface of rates — height is the data · ↑↓ crime · V or tap → flat map';
+  if (terrainMode) return 'T or tap → flat map';
+  if (pulseMode) return '←→ month · space play/pause · N or M → years';
+  if (focusMode) return '←→ year · scroll in close · J neighbours · H or Esc lets go';
+  if (forensicsMode) return 'colour + width = statistical liveliness (D), not volume · ↑↓ crime · hover · X or M → map';
+  if (triPieMode) return 'click a pie to focus it';
+  return '';
 }
+function refreshHint() { dock.setCaption(sceneCaption()); }
 
 // Point every builder + layout reference at the active region's build for the current mode. Called on
 // a mode swap (C) AND on a region change (a drill lands) — region is just another axis of the same
@@ -588,6 +599,8 @@ async function init() {
   enterFlock(true); // the page OPENS released — a nameless swarm; any key or tap lands it into the data
   lastInputAt = performance.now();
 
+  buildIcons();     // the views' dot miniatures, from the real layouts (map + terrain refresh on each landing)
+  layoutHud();      // measure the dock → the engine-drawn ribbon + compass rects
   refreshHud();
   updateFlag();
   holdUntil = performance.now() + 900;
@@ -886,6 +899,7 @@ function toggleUnlit() {
     setYearPair(yi); // clean re-anchor at rest; the hook condenses the shadow in
   }
   updateUnlitChip();
+  refreshHud();      // the sentence's `unlit` lens word reflects the new intent (either way)
 }
 // The legend chip — the estimate's on-screen declaration, visible the whole time it's active.
 // Sexual offences ALWAYS carry the floor caveat; excluded crimes state their reason instead of dots.
@@ -1161,23 +1175,23 @@ function tollPauseToggle() {
 // The ceremony's HUD line — year under the hand · that year's running count · cumulative total.
 // Writes only when a count or the hand's year changes (called every frame while tolling).
 function updateTollHud(force = false) {
-  if (!countEl || !tollData) return;
+  if (!tollData) return;
   const M = tollData.M;
   const counting = tollPhase === 'toll' || tollPhase === 'drain';
   const n = counting ? tollCountAt(tollT) : 0;
   const { y } = tollYearFrac(counting ? tollT : 0);
   if (!force && n === tollCount && y === tollYearShown) return;
   tollCount = n; tollYearShown = y;
-  if (yearEl) yearEl.textContent = yearLabels[y];
+  dock.setYearText(yearLabels[y]);
   const total = M.toLocaleString();
   if (tollPhase === 'gather') {
-    countEl.textContent = `${total} recorded murders · Apr 2008 – Mar 2026`;
+    dock.setCountText(`${total} recorded murders · Apr 2008 – Mar 2026`);
   } else if (n >= M) {
-    countEl.textContent = `${total} recorded murders · Western Cape · Apr 2008 – Mar 2026`;
+    dock.setCountText(`${total} recorded murders · Western Cape · Apr 2008 – Mar 2026`);
     if (!tollDone) { tollDone = true; refreshHud(); } // the hand rests; the hint flips once
   } else {
     const inYear = Math.max(0, n - tollData.cum[y]); // landings lag the hand — never more than the year holds
-    countEl.textContent = `${inYear.toLocaleString()} this year · ${n.toLocaleString()} recorded murders so far`;
+    dock.setCountText(`${inYear.toLocaleString()} this year · ${n.toLocaleString()} recorded murders so far`);
     if (tollDone) { tollDone = false; refreshHud(); } // scrubbed back below complete
   }
 }
@@ -1283,6 +1297,7 @@ window.addEventListener('pointerup', (e) => {
   tollScrubbing = false;
   // a quick tap OUTSIDE the dial ends the toll (the drill's tap-to-leave grammar)
   if (wasHolding || wasScrubbing) return;
+  if (e.target !== renderer.domElement) return;      // a tap on the HUD's chrome is never the leaving tap
   if (!_downPlain) return;                           // a right/modified press is never the leaving tap
   if (Math.hypot(e.clientX - _downX, e.clientY - _downY) > 6) return;
   const { cx, cy, dialR } = tollGeom();
@@ -1423,9 +1438,13 @@ function stepYear(dir) {
 
 // Flip to another crime (dir cycles the list): morph between crimes at the current year, then resume.
 function flipCrime(dir) {
-  if (flipping || crimeTypes.length < 2 || flockMode) return;
+  if (crimeTypes.length < 2) return;
   const i = crimeTypes.indexOf(crimeType);
-  const next = crimeTypes[(i + dir + crimeTypes.length) % crimeTypes.length];
+  flipTo(crimeTypes[(i + dir + crimeTypes.length) % crimeTypes.length]);
+}
+// Flip straight to a named crime (the sentence's crime popover) — the SAME door + transition as ↑↓.
+function flipTo(next) {
+  if (flipping || flockMode || !crimeTypes.includes(next)) return;
   if (next === crimeType) return;
   if (canyonMode) { // canyon: sink flat → swap the landform → rise as the new crime. aZ is ONE
     if (canyonFlipTo) return;                 // attribute (it snaps on setTarget), so the swap hides
@@ -1468,7 +1487,7 @@ function flipCrime(dir) {
     refreshHud();
     return;
   }
-  flipTo = next;
+  flipTarget = next;
   flipping = true;
   flipStart = performance.now();
   morphStart = -1;
@@ -1481,67 +1500,141 @@ function flipCrime(dir) {
   refreshHud(next);
 }
 
-// HUD text for a crime + the current year (defaults to the live crime).
-function refreshHud(type = crimeType) {
-  const rate = dataMode === 'percapita';
-  const focusS = focusMode && focusStation >= 0 ? activeStations()[focusStation] : null;
-  if (regionEl) regionEl.textContent = focusS ? focusS.name : (REGION_META[region] || REGION_META.wc).name;
-  refreshHint();
-  updateCaption(); // the One-in-N line rides every HUD refresh (year scrubs, crime flips, focus moves)
-  refreshChips();
+// ---- the HUD models (the dock + the light HUD read these; nothing else writes the chrome) ---------------
+// Population denominators = the SAME per-station WorldPop 2020 pops the per-capita layouts + the tooltip use,
+// summed over the place: a place's rate = its crimes / its people × 100k (never a mean of station rates).
+const popCache = {};
+const regionPop = (rk = region) => (popCache[rk] ??= (stationsByRegion[rk] || []).reduce((a, s) => a + (s.pop || 0), 0));
+const focusedStation = () => (focusMode && focusStation >= 0 ? activeStations()[focusStation] : null);
+const perCap = (v, pop) => (pop ? (v / pop) * 100000 : 0);
+const unitOf = () => (dataMode === 'percapita' ? 'per 100k' : 'reported');
+// A crime's RAW count for year index i at the current place (the focused precinct's own, else the region's
+// totalsByType — the numbers the field is built from), then in the display mode.
+function yearRaw(type, i) {
+  const s = focusedStation();
+  if (s) return (s.crimes[type] && s.crimes[type][years[i]]) || 0;
+  return (totalsByType[type] && totalsByType[type][i]) || 0;
+}
+const inMode = (raw) => (dataMode === 'percapita' ? perCap(raw, (focusedStation() || {}).pop ?? regionPop()) : raw);
+// The pulse's monthly totals for the current region (Σ stations' monthly returns = the provider's own
+// monthly().totals), cached per (region, crime).
+const monthCache = new Map();
+function monthRaw(type) {
+  const key = region + '|' + type;
+  let v = monthCache.get(key);
+  if (!v) {
+    const sts = activeStations();
+    v = monthLabels.map((_, m) => sts.reduce((a, st) => a + ((st.monthly && st.monthly[type] && st.monthly[type][m]) || 0), 0));
+    monthCache.set(key, v);
+  }
+  return v;
+}
+
+// THE SENTENCE — `place · crime · year · count  unlit`. Every tappable part names its action (dockAct).
+function sentenceModel(type = crimeType) {
+  const label = crimeLabels[type] || type;
+  const focusS = focusedStation();
+  const canDrill = !drilling && !pieMode && !triPieMode && !tollMode && !canyonMode && !flockMode && !forensicsMode;
+  const place = [];
+  if (region === 'wc') place.push({ text: 'Western Cape', act: focusS ? 'unfocus' : 'districts', off: !canDrill });
+  else {
+    place.push({ text: 'Western Cape', act: 'drillOut', off: !canDrill });
+    place.push({ text: REGION_META[region].name, act: focusS ? 'unfocus' : null, off: !canDrill });
+  }
+  if (focusS) place.push({ text: focusS.name });
+  const lens = { on: unlitOn && !unlitBlocked(), off: unlitBlocked() };
+  const m = { place, lens };
   if (tollMode) {
-    if (crimeEl) crimeEl.textContent = 'murder · the toll';
-    updateTollHud(true); // the dial clock owns yearEl + countEl
-    return;
+    m.crime = { text: 'murder · the toll' };
+    m.year = { text: null, act: tollPhase === 'toll' ? 'play' : null }; // the dial clock writes the year + count
+    m.count = { text: null };
+    return m;
   }
   if (flockMode) { // airborne: the readouts suspend — no data reading while the field is released
-    if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + (rate ? ' · per 100k' : '');
-    if (yearEl) yearEl.textContent = '— released —';
-    if (countEl) countEl.textContent = '';
-    return;
+    m.crime = { text: label }; m.year = { text: '— released —' }; m.count = { text: '' };
+    return m;
   }
-  if (triPieMode) {
-    if (crimeEl) crimeEl.textContent = `all ${crimeTypes.length} crimes` + (rate ? ' · per capita' : '');
-    if (yearEl) yearEl.textContent = yearLabels[yi];
-    if (countEl) countEl.textContent = 'click a pie to focus it';
-    return;
-  }
-  if (pulseMode) {
-    if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + (rate ? ' · per 100k' : '');
-    if (yearEl) yearEl.textContent = fmtMonth(monthLabels[mi]);
-    if (countEl) countEl.textContent = ((pulseData && pulseData.totals[mi]) || 0).toLocaleString();
-    return;
+  if (triPieMode) { // six crimes at once — no single count (and no sum: carjacking sits inside robbery)
+    m.crime = { text: `all ${crimeTypes.length} crimes`, act: 'crimes' };
+    m.year = { text: yearLabels[yi] }; m.count = { text: '' };
+    return m;
   }
   if (canyonMode) { // all 18 years at once — the canyon has no single year or count to name
-    if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + ' · per 100k';
-    if (yearEl) yearEl.textContent = `${yearLabels[0]}–${yearLabels.at(-1)}`;
-    if (countEl) countEl.textContent = `${(stationsByRegion[region] || stationsByRegion.wc).length} precincts × ${years.length} years`;
-    return;
+    m.crime = { text: label + ' · per 100k', act: 'crimes' };
+    m.year = { text: `${yearLabels[0]}–${yearLabels.at(-1)}` };
+    m.count = { text: `${(stationsByRegion[region] || stationsByRegion.wc).length} precincts × ${years.length} years` };
+    return m;
   }
-  if (forensicsMode) { // the strip: every station's 60 monthly returns at once — counts, never rates
-    if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + ' · monthly returns';
-    if (yearEl) yearEl.textContent = monthLabels ? `${fmtMonth(monthLabels[0])} – ${fmtMonth(monthLabels.at(-1))}` : '';
-    if (countEl) countEl.textContent = lastForensics ? `${lastForensics.reports.toLocaleString()} reported` : '';
-    return;
+  if (forensicsMode) { // every station's 60 monthly returns at once — counts, never rates
+    m.crime = { text: label + ' · monthly returns', act: 'crimes' };
+    m.year = { text: monthLabels ? `${fmtMonth(monthLabels[0])} – ${fmtMonth(monthLabels.at(-1))}` : '' };
+    m.count = lastForensics ? { value: lastForensics.reports, unit: 'reported' } : { text: '' };
+    return m;
   }
-  if (yearEl) yearEl.textContent = yearLabels[yi];
-  if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + (rate ? ' · per 100k' : '');
-  if (countEl) countEl.textContent = focusS
-    ? ((focusS.crimes[type] && focusS.crimes[type][years[yi]]) || 0).toLocaleString() // the station's OWN count
-    : ((totalsByType[type] && totalsByType[type][yi]) || 0).toLocaleString();
+  m.crime = { text: label, act: 'crimes' };
+  const countOff = drilling;
+  if (pulseMode) {
+    m.year = { text: fmtMonth(monthLabels[mi]), act: 'play' };
+    m.count = { value: inMode(monthRaw(type)[mi]), unit: unitOf(), act: 'percapita', off: countOff };
+    return m;
+  }
+  m.year = { text: yearLabels[yi], act: 'play' };
+  m.count = { value: inMode(yearRaw(type, yi)), unit: unitOf(), act: 'percapita', off: countOff };
+  return m;
 }
-// Data-source credit line — names the population source too once per-capita is in play.
+function unlitBlocked() {
+  return drilling || pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode || flockMode || focusMode || forensicsMode;
+}
+
+// THE RIBBON — what the engine-drawn sparkline shows. 'data': lit ∝ the place's true series for the current
+// crime + mode · 'scrub': the grey frame + caret (compare: six crimes, no single series — still scrubs) ·
+// 'frame': grey only (canyon/forensics hold every year at once, the toll runs its own clock, the flock is
+// airborne). Per-capita uses ONE population per place, so its shape equals the count's — only the number
+// in the sentence changes (the ribbon never invents a difference).
+function ribbonSpec(type = crimeType) {
+  const ramp = rampIndexOf(type);
+  if (flockMode || tollMode || canyonMode || forensicsMode) return { mode: 'frame', ncols: years.length, cur: -1, key: 'frame' };
+  if (pulseMode && monthLabels) {
+    return { mode: 'data', ncols: monthLabels.length, cur: mi, ramp, values: monthRaw(type).map(inMode), key: `m|${region}|${type}|${dataMode}` };
+  }
+  if (triPieMode) return { mode: 'scrub', ncols: years.length, cur: yi, key: 'scrub' };
+  const fs = focusMode ? focusStation : -1;
+  return { mode: 'data', ncols: years.length, cur: yi, ramp, values: years.map((_, i) => inMode(yearRaw(type, i))), key: `y|${region}|${fs}|${type}|${dataMode}` };
+}
+let ribbonNow = null; // the last spec handed to the light HUD (the hover caption reads its numbers)
+function ribbonTip(c) {
+  const sp = ribbonNow;
+  if (!sp || sp.mode === 'frame') return null;
+  const lab = sp.ncols === years.length ? yearLabels[c] : (monthLabels ? fmtMonth(monthLabels[c]) : '');
+  if (!lab) return null;
+  if (sp.mode !== 'data') return lab;
+  const unit = unitOf();
+  return `${lab} · ${fmtValue(sp.values[c] || 0, unit)}${unit === 'per 100k' ? ' per 100k' : ''}`;
+}
+
+// ONE refresh for the whole chrome — every state change already calls it (defaults to the live crime; a
+// flip passes the incoming crime so the sentence + ribbon relight WITH the dots, not after them).
+function refreshHud(type = crimeType) {
+  refreshHint();
+  updateCaption(); // the One-in-N line rides every HUD refresh (year scrubs, crime flips, focus moves)
+  dock.setSentence(sentenceModel(type));
+  if (tollMode) updateTollHud(true); // the dial clock owns the year + count
+  ribbonNow = ribbonSpec(type);
+  light.setRibbon(ribbonNow);
+  refreshDock();
+}
+// Data-source credit — the help sheet's "this view" line (it used to be the ◆ flag under the chips).
 function updateFlag() {
-  const flagEl = document.getElementById('flag');
+  const flagEl = document.getElementById('src-now');
   if (!flagEl || !yearLabels.length) return;
   const span = (pulseMode || forensicsMode) // both run on the monthly series — credit the quarterlies
     ? `${fmtMonth(monthLabels[0])}–${fmtMonth(monthLabels.at(-1))} monthly (SAPS quarterlies, unaudited)`
     : canyonMode
       ? `${yearLabels[0]}–${yearLabels.at(-1)} · rates surface · per 100k`
       : `${yearLabels[0]}–${yearLabels.at(-1)}` + (dataMode === 'percapita' ? '' : ' (25/26 unaudited)');
-  flagEl.textContent = dataMode === 'percapita' || canyonMode // the canyon is per-capita by construction
+  flagEl.textContent = 'this view — ' + (dataMode === 'percapita' || canyonMode // the canyon is per-capita by construction
     ? `◆ crime: SAPS (DataFirst + saps.gov.za) · population: WorldPop 2020 · ${span}`
-    : `◆ SAPS crime records · DataFirst + saps.gov.za · ${span}`;
+    : `◆ SAPS crime records · DataFirst + saps.gov.za · ${span}`);
 }
 
 // Morph off the map into a robbery pie and back. Data swarms into the wedges, structure into the ring
@@ -1728,7 +1821,7 @@ function startDrill(to) {
   }
   drilling = true; drillTo = to; drillStart = performance.now(); playing = false;
   labelLayer.style.opacity = '0'; // labels leave with the outline (tick's drill branch skips updateLabels)
-  if (hintEl) hintEl.textContent = to === 'wc' ? 'back to the Western Cape…' : `blooming into ${REGION_META[to].name}…`;
+  refreshHud();                   // the sentence's place goes quiet mid-flight; the caption clears
   field.setSource(liveMap(region));
   field.setTarget(liveMap(to));
   field.setStagger(0.62);
@@ -1919,6 +2012,10 @@ locateEl && locateEl.addEventListener('click', (e) => { if (e.target === locateE
 
 window.addEventListener('keydown', (e) => {
   lastInputAt = performance.now();
+  if (dock.popOpen()) { // any key closes a dock popover (its numbers would go stale); Esc is spent on closing it
+    dock.closePop();
+    if (e.code === 'Escape') { e.preventDefault(); return; }
+  }
   if (aboutEl && aboutEl.classList.contains('open')) { // the about card swallows keys; Esc closes
     if (e.code === 'Escape') { e.preventDefault(); toggleAbout(false); }
     return;
@@ -1995,45 +2092,113 @@ window.addEventListener('keyup', (e) => { // release the toll's 1:1 hold
   if (e.code === 'Digit1' && tollHoldKey) { tollHoldKey = false; if (tollMode) refreshHud(); }
 });
 
-// HUD chips → the SAME actions as the keys (touch parity: on a phone the keyboard toolkit doesn't
-// exist). Guards mirror the keydown handler exactly: input is quiet mid-drill, and the 3-pie only
-// listens to map/year/compare/per-capita. Blur after click so a focused chip can't re-fire on Space.
-const CHIP_ACTIONS = {
+// THE ACTION TABLE — the SAME actions the keys drive, reached from the dock (touch parity: on a phone the
+// keyboard toolkit doesn't exist). Guards mirror the keydown handler: input is quiet mid-drill (dockAct), a
+// released field only listens to its landings, and every toggle below guards itself as its key does.
+const ACTIONS = {
   play: () => { if (triPieMode || canyonMode || forensicsMode) return; if (tollMode) { tollPauseToggle(); return; } playing = !playing; if (playing) { holdUntil = performance.now(); if (pulseMode) morphStart = -1; else if (pieMode) setYearPair(yi); } },
-  yearPrev: () => { if (canyonMode || forensicsMode) return; (pulseMode ? stepMonth(-1) : stepYear(-1)); }, // the canyon holds ALL years at once — no pair to step
-  yearNext: () => { if (canyonMode || forensicsMode) return; (pulseMode ? stepMonth(1) : stepYear(1)); },
-  crimeUp: () => { if (triPieMode) return; flipCrime(1); },
-  crimeDown: () => { if (triPieMode) return; flipCrime(-1); },
-  map: () => goToMap(),
+  percapita: () => { if (!tollMode) toggleMode(); }, // toggleMode guards canyon/flock/forensics; the toll swallows C
+  unlit: () => toggleUnlit(),     // guards itself (map views only)
+  // The map WORD: back to the map from any other view. Already on a map (pulse/focus included) it holds —
+  // drilling out is the place crumb's job (M still does both, exactly as before).
+  map: () => { if (pieMode || triPieMode || terrainMode || canyonMode || forensicsMode || tollMode || flockMode) goToMap(); },
   pie: () => { if (triPieMode || pulseMode) return; togglePie(); },
   compare: () => { if (pulseMode) return; toggleTriPie(); },
-  percapita: () => toggleMode(),
   terrain: () => toggleTerrain(), // guards itself (needs a loaded DEM, no pies, no drill)
   canyon: () => toggleCanyon(),   // guards itself (flat map views only)
-  unlit: () => toggleUnlit(),     // guards itself (map views only)
-  months: () => (pulseMode ? exitPulse() : enterPulse()),
+  forensics: () => toggleForensics(), // guards itself (flat map in, X/M out)
   toll: () => (tollMode ? exitToll() : enterToll()),
   release: () => (flockMode ? landFlock() : enterFlock()), // guards itself (province flat map only)
   suburb: () => (focusMode ? exitFocus() : openLocate()), // same toggle as the H key
-  forensics: () => toggleForensics(), // guards itself (flat map in, X/M out)
-  about: () => toggleAbout(),
-  home: () => homeScene(REHOME_MS),    // ⌂ — the current scene's framing (never dims: always valid)
+  pulse: (on) => (on ? enterPulse() : exitPulse()),       // the ribbon's years | months switch (N)
+  crime: (ty) => flipTo(ty),                              // the sentence's crime popover
+  resolve: (ci) => resolveTriToPie(ci),                   // …in compare: open that crime's pie
+  drill: (rk) => startDrill(rk),                          // the place popover (province → a district)
+  drillOut: () => startDrill('wc'),                       // "Western Cape" in a district
+  unfocus: () => exitFocus(),                             // the district/province crumb while standing in a suburb
 };
+const FLOCK_OK = new Set(['release', 'map', 'more']);    // airborne, only the landings respond (+ help/home/scrub below)
 
-// About card — chip-opened only (never automatic); ✕ / backdrop / Esc close it.
+// ONE door for every dock intent (dock.js calls act(name, arg, el)).
+function dockAct(name, arg, el) {
+  lastInputAt = performance.now();
+  if (name === 'help') { toggleAbout(); return; }
+  if (name === 'home') { if (!drilling) homeScene(REHOME_MS); return; } // the compass = the 0 key (never lands the flock)
+  if (name === 'scrub') { scrubTo(arg); return; }
+  if (drilling) return;                                   // input is quiet mid-transition
+  const act = name === 'view' ? arg : name;
+  if (flockMode && !FLOCK_OK.has(act)) return;
+  if (act === 'more') { openMore(el); return; }
+  if (act === 'crimes') { openCrimes(el); return; }
+  if (act === 'districts') { openDistricts(el); return; }
+  const f = ACTIONS[act];
+  if (f) f(arg);
+}
+
+// The ribbon scrub: a click or drag lands on a column → that year (or month). Routed through stepYear so the
+// pie/compare morph their wedges exactly as ←→ does; the map pair re-anchors like a key step.
+function scrubTo(col) {
+  if (drilling || flockMode || tollMode || canyonMode || forensicsMode || col == null) return;
+  if (pulseMode) { playing = false; if (col !== mi || t !== 0) setMonthPair(col); return; }
+  if (col === yi && !playing && t === 0 && !pieMorphing) return;
+  stepYear(col - yi);
+}
+
+// ---- the dock's popovers (open on tap, close on an outside tap / Esc / a pick) ----------------------------
+const popNote = (v, unit) => (v == null ? '' : fmtValue(v, unit) + (unit === 'per 100k' ? ' /100k' : ''));
+function openCrimes(el) {
+  if (tollMode || flockMode) return;
+  const unit = forensicsMode ? 'reported' : unitOf();
+  const items = crimeTypes.map((ty, ci) => {
+    let v = null;
+    if (forensicsMode) v = monthLabels ? monthRaw(ty).reduce((a, b) => a + b, 0) : null; // Σ the strip's monthly returns
+    else if (canyonMode) v = null;                                                        // a surface of 18 years — no one number
+    else if (pulseMode) v = inMode(monthRaw(ty)[mi]);
+    else v = inMode(yearRaw(ty, yi));
+    const cur = !triPieMode && ty === (flipping ? flipTarget : (canyonFlipTo || crimeType));
+    return { label: crimeLabels[ty] || ty, note: popNote(v, unit), cur, pick: () => dockAct(triPieMode ? 'resolve' : 'crime', triPieMode ? ci : ty) };
+  });
+  const title = triPieMode ? `open one pie · ${yearLabels[yi]}` : forensicsMode ? `${fmtMonth(monthLabels[0])} – ${fmtMonth(monthLabels.at(-1))}`
+    : canyonMode ? '' : pulseMode ? fmtMonth(monthLabels[mi]) : yearLabels[yi];
+  dock.openPop(el, items, { title });
+}
+function openDistricts(el) {
+  const unit = unitOf();
+  const items = DETAIL_REGIONS.map((rk) => {
+    const raw = pulseMode && monthLabels
+      ? stationsByRegion[rk].reduce((a, st) => a + ((st.monthly && st.monthly[crimeType] && st.monthly[crimeType][mi]) || 0), 0)
+      : providers[rk].raw.totals[crimeType][yi];
+    const v = dataMode === 'percapita' ? perCap(raw, regionPop(rk)) : raw;
+    return { label: REGION_META[rk].name, note: popNote(v, unit), pick: () => dockAct('drill', rk) };
+  });
+  dock.openPop(el, items, { title: `${crimeLabels[crimeType] || crimeType} · ${pulseMode ? fmtMonth(monthLabels[mi]) : yearLabels[yi]}` });
+}
+function openMore(el) {
+  const suburbOff = !focusMode && (pieMode || triPieMode || tollMode || canyonMode || forensicsMode || flockMode);
+  const releaseOff = !flockMode && (region !== 'wc' || pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode || forensicsMode);
+  dock.openPop(el, [
+    { label: 'my suburb', cur: focusMode, off: suburbOff, pick: () => dockAct('suburb') },
+    { label: 'release', cur: flockMode, off: releaseOff, pick: () => dockAct('release') },
+  ]);
+}
+
+// The help sheet (#about: the About card + Keys + Sources) — ?-opened only (the key or the button), never
+// automatic; ✕ / backdrop / Esc close it.
 const aboutEl = document.getElementById('about');
 function toggleAbout(show) {
   if (!aboutEl) return;
   aboutEl.classList.toggle('open', show ?? !aboutEl.classList.contains('open'));
+  dock.closePop();
 }
 document.getElementById('about-close')?.addEventListener('click', () => toggleAbout(false));
 aboutEl?.addEventListener('click', (e) => { if (e.target === aboutEl) toggleAbout(false); });
 
-// CINEMA -- after a few idle seconds the chrome (HUD, brand, fps) bows out and the field stands
-// alone; any pointer/key/wheel/touch brings it back. The About card pins the chrome awake.
+// CINEMA -- after a few idle seconds the chrome bows out and the field stands alone — all but the brand;
+// the ribbon fades to a faint glow (its lit dots stay alive). Any pointer/key/wheel/touch brings it back.
+// The help sheet pins the chrome awake; so does the toll (its counter is its honesty channel).
 const CHROME_IDLE_MS = 6000;
 let chromeLastActive = performance.now();
-const wakeChrome = () => { chromeLastActive = performance.now(); document.body.classList.remove('quiet'); };
+const wakeChrome = () => { chromeLastActive = performance.now(); document.body.classList.remove('quiet'); light.setQuiet(false); };
 for (const ev of ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart']) {
   window.addEventListener(ev, wakeChrome, { passive: true });
 }
@@ -2042,47 +2207,89 @@ setInterval(() => {
     && !(aboutEl && aboutEl.classList.contains('open'))
     && !tollMode; // the counter is the toll's honesty channel — the chrome stays awake
   document.body.classList.toggle('quiet', asleep);
+  light.setQuiet(asleep);
+  if (asleep) { dock.closePop(); dock.hideTip(); }
+  light.setHudTop(dock.hudTop()); // the shade follows the dock's height (a wrapped sentence on a narrow screen)
 }, 500);
-const chipEls = {};
-for (const el of document.querySelectorAll('.hud [data-act]')) {
-  chipEls[el.dataset.act] = el;
-  el.addEventListener('click', () => {
-    // Airborne, the toolkit sleeps: only the landing chips (F release / M map) + about + ⌂ home respond —
-    // mirrors the keydown swallow, so touch and keyboard agree on what a released field ignores.
-    const swallowed = flockMode && !['release', 'map', 'about', 'home'].includes(el.dataset.act);
-    if (!drilling && !swallowed) { const f = CHIP_ACTIONS[el.dataset.act]; if (f) f(); }
-    el.blur();
-  });
+
+// Measure the dock (the layout truth) → the engine-drawn ribbon + compass rects. Init + every resize.
+function layoutHud() {
+  light.layout({ W: window.innerWidth, H: window.innerHeight, fov: camera.fov, track: dock.trackRect(), compass: dock.compassRect(), hudTop: dock.hudTop() });
 }
 
-// Contextual chips: a chip that would no-op in the current state DIMS instead of lying. Geometry
-// stays put (dimming, never hiding -- a reflowing row is worse than a grey chip). Mirrors the
-// keydown guards exactly; called from refreshHud so every state change repaints it.
-function refreshChips() {
-  const off = (act, is) => { const el = chipEls[act]; if (el) el.classList.toggle('off', !!is); };
-  off('play', triPieMode || canyonMode);
-  // The toll dims the whole toolkit except play (= pause), map (= end), about — months would
-  // have to exit first anyway, so it dims with the rest. Everything mirrors the keydown swallow.
-  // The canyon holds all 18 years at once and listens only to ↑↓ crime and V/M (its keydown swallow).
-  off('yearPrev', tollMode || canyonMode); off('yearNext', tollMode || canyonMode);
-  off('percapita', tollMode || canyonMode);
-  off('months', pieMode || triPieMode || !monthLabels || tollMode || canyonMode);
-  off('crimeUp', triPieMode || tollMode); off('crimeDown', triPieMode || tollMode);
-  off('pie', triPieMode || pulseMode || tollMode || canyonMode);
-  off('compare', pulseMode || tollMode || canyonMode);
-  off('terrain', pieMode || triPieMode || tollMode || canyonMode || !(regionData[region] && regionData[region].terrain && regionData[region].terrain.elev));
-  off('canyon', !canyonMode && (pieMode || triPieMode || pulseMode || terrainMode || tollMode));
-  off('unlit', pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode);
-  off('suburb', !focusMode && (pieMode || triPieMode || tollMode || canyonMode || forensicsMode));
-  off('forensics', !forensicsMode && (pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode));
-  if (focusMode) off('unlit', true);
-  off('release', !flockMode && (region !== 'wc' || pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode));
-  off('toll', !tollMode && (region !== 'wc' || pieMode || triPieMode || pulseMode || terrainMode || canyonMode || flockMode));
-  // Whole-toolkit dims LAST, so no per-chip rule above can re-light a chip the mode swallows.
-  // Airborne, the toolkit sleeps (the click handler swallows all but release/map/about) — dim to match.
-  if (flockMode) for (const act of Object.keys(chipEls)) if (!['release', 'map', 'about', 'home'].includes(act)) off(act, true);
-  // The strip holds all 60 months, counts only, and listens to ↑↓ + X/M — dim the rest to match its keydown swallow.
-  if (forensicsMode) for (const act of ['play', 'yearPrev', 'yearNext', 'months', 'percapita', 'unlit', 'suburb', 'pie', 'compare', 'terrain', 'canyon', 'toll', 'release']) off(act, true);
+// Contextual dock: a control that would no-op in the current state DIMS instead of lying. Geometry stays
+// put (dimming, never hiding — a reflowing row is worse than a grey word). Mirrors the keydown guards
+// exactly (the old chip rules, one per word); called from refreshHud so every state change repaints it.
+function refreshDock() {
+  const noDEM = !(regionData[region] && regionData[region].terrain && regionData[region].terrain.elev);
+  const off = {
+    map: false, more: false,
+    pie: triPieMode || pulseMode || tollMode || canyonMode,
+    compare: pulseMode || tollMode || canyonMode,
+    terrain: pieMode || triPieMode || tollMode || canyonMode || noDEM,
+    canyon: !canyonMode && (pieMode || triPieMode || pulseMode || terrainMode || tollMode),
+    forensics: !forensicsMode && (pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode),
+    toll: !tollMode && (region !== 'wc' || pieMode || triPieMode || pulseMode || terrainMode || canyonMode || flockMode),
+  };
+  // Whole-toolkit dims LAST, so no per-word rule above can re-light one the mode swallows.
+  if (flockMode) for (const k of Object.keys(off)) if (!FLOCK_OK.has(k)) off[k] = true;
+  if (forensicsMode) for (const k of ['pie', 'compare', 'terrain', 'canyon', 'toll']) off[k] = true;
+  const active = tollMode ? 'toll' : canyonMode ? 'canyon' : forensicsMode ? 'forensics' : terrainMode ? 'terrain'
+    : triPieMode ? 'compare' : pieMode ? 'pie' : flockMode ? '' : 'map';
+  dock.setViews({ active, off });
+  dock.setRibbonBar({
+    playing: livePlaying(),
+    playOff: triPieMode || canyonMode || forensicsMode || flockMode,
+    pulse: pulseMode,
+    switchOff: pieMode || triPieMode || !monthLabels || tollMode || canyonMode || forensicsMode || flockMode,
+    scrubOff: drilling || !ribbonNow || ribbonNow.mode === 'frame',
+    ncols: ribbonNow ? ribbonNow.ncols : years.length,
+  });
+}
+const livePlaying = () => (tollMode ? tollPhase === 'toll' && !tollPaused : playing);
+
+// The views' dot icons — built from the REAL layouts once (pie, compare, canyon series), the map + terrain
+// re-derived for each landed region. Drawn as white masks: the CSS colours them (grey / structure-white).
+const iconUrls = {};
+function buildIcons(regionOnly = false) {
+  const b = providers[region].raw;
+  const mapL = b.layouts[crimeType][yi], ol = outlines[region];
+  iconUrls.map = ICONS.iconDataUrl(ICONS.fitIcon([
+    ...ICONS.subsampleActive(ol.positions, ol.density, 190),
+    ...ICONS.subsampleActive(mapL.positions, mapL.density, 110),
+  ]), { r: 0.5 });
+  const d = regionData[region], T = d && d.terrain;
+  let profiles = null;
+  if (T && T.elev) {                                     // a terrain slice: six raked rows through the real DEM,
+    const { w: W, h: H } = d.meta.box, peak = T.peak || 1; // across THIS region's land (its outline extents)
+    const hb = homeBoxes[region] || { minX: -W / 2, maxX: W / 2, minY: -H / 2, maxY: H / 2 };
+    profiles = [];
+    for (let r = 0; r < 6; r++) {
+      const y = hb.maxY - ((r + 0.5) / 6) * (hb.maxY - hb.minY), row = [];
+      for (let k = 0; k < 30; k++) {
+        const x = hb.minX + (k / 29) * (hb.maxX - hb.minX);
+        const gi = Math.max(0, Math.min(T.cols - 1, Math.round(((x + W / 2) / W) * (T.cols - 1))));
+        const gj = Math.max(0, Math.min(T.rows - 1, Math.round(((H / 2 - y) / H) * (T.rows - 1))));
+        const e = T.elev[gj * T.cols + gi];
+        row.push(e > 0 ? 0.08 + 0.92 * Math.sqrt(e / peak) : 0);
+      }
+      profiles.push(row);
+    }
+  } else profiles = [0, 1, 2, 3].map((r) => Array.from({ length: 30 }, (_, k) => 0.4 + 0.3 * Math.sin(k / 3 + r)));
+  iconUrls.terrain = ICONS.iconDataUrl(ICONS.ridgeIcon(profiles, { amp: 5 }), { r: 0.5 });
+  if (!regionOnly) {
+    const pb = providers.wc.raw;
+    const pie = pb.pieLayout(crimeType, yi, { cx: 0, cy: 0, R: PIE_R });
+    iconUrls.pie = ICONS.iconDataUrl(ICONS.fitIcon([...ICONS.subsampleActive(pie.positions, pie.density, 200), ...ICONS.ringPoints(PIE_R * 1.02, 44)]), { r: 0.5 });
+    const tri = pb.triPieLayout(yi, { gap: TRI_GAP, R: TRI_R });
+    iconUrls.compare = ICONS.iconDataUrl(ICONS.fitIcon(ICONS.subsampleActive(tri.positions, tri.density, 300)), { r: 0.45 });
+    const pop = regionPop('wc');                          // the canyon: robbery's real 18-year rate, raked
+    iconUrls.canyon = ICONS.iconDataUrl(ICONS.canyonIcon(pb.totals[crimeTypes[0]].map((v) => perCap(v, pop))), { r: 0.5 });
+    iconUrls.forensics = ICONS.iconDataUrl(ICONS.forensicsIcon(), { r: 0.5 });
+    iconUrls.toll = ICONS.iconDataUrl(ICONS.tollIcon(), { r: 0.5 });
+    iconUrls.more = ICONS.iconDataUrl(ICONS.moreIcon(), { r: 0.75 });
+  }
+  dock.setIcons(iconUrls);
 }
 
 // Debug hook (region-aware).
@@ -2171,6 +2378,27 @@ window.__viz = {
   },
   cam: (o) => (o ? cam.orbit(o) : cam.state()), // camera door: state(), or orbit({spin, tilt, dist}) in degrees — obeys the limits
   home: (dur = REHOME_MS) => { homeScene(dur); return cam.state(); }, // ⌂ re-home the current scene (dur ms; default 1100)
+  // The HUD made of light — live eye knobs: hud({ litDensity, hotDensity, slotDensity, caretDensity, dataSize,
+  // frameSize, compassR, shadeMax, shadeExtra, quietRibbon, ribbonMax (CSS px; 99999 = full width) }).
+  hud: (o) => {
+    if (o) {
+      const { ribbonMax, ...tune } = o;
+      Object.assign(HUD_TUNE, tune);
+      if (ribbonMax != null) document.documentElement.style.setProperty('--ribbon-max', ribbonMax + 'px');
+      layoutHud(); light.retune();
+    }
+    return { tune: { ...HUD_TUNE }, ribbon: light.probe(), caption: dock.caption };
+  },
+  // Honesty probe: the sentence's number, the ribbon's value at the current column and the field's own total
+  // must agree (same totals, same denominators). → { sentence, ribbonAtCur, fieldRaw, pop, unit, agree }
+  hudCheck: () => {
+    const sp = ribbonNow, unit = unitOf();
+    const raw = pulseMode ? monthRaw(crimeType)[mi] : yearRaw(crimeType, yi);
+    const shown = document.getElementById('count').textContent;
+    const atCur = sp && sp.mode === 'data' ? sp.values[sp.cur] : null;
+    return { sentence: shown, ribbonAtCur: atCur, fieldRaw: raw, pop: (focusedStation() || {}).pop ?? regionPop(), unit,
+      agree: atCur == null || shown === '' || shown.startsWith(fmtValue(atCur, unit)) };
+  },
   speed: (ms) => { if (ms != null) { PIE_MS = ms; strDur = ms; } return { pie: PIE_MS, struct: strDur }; },
   station: (name) => {
     const s = (stationsByRegion[region] || stationsByRegion.wc).find((s) => s.name.toLowerCase().includes(name.toLowerCase()));
@@ -2601,10 +2829,13 @@ function tick() {
       repoint();
       landRegion();                                  // re-seed cleanly at the landed region's map, at rest
       reseedTerrain();                               // rebuild the relief pool for the landed region ('T' shows ITS mountains)
+      buildIcons(true);                              // the map + terrain icons become THIS region's
       refreshHud();                                  // refreshes the region label + context-aware hint
 
     }
     cam.update(now);                                 // the camera glides home on the drill's own clock
+    dock.setCompass(false);                          // gliding home — the compass bows out
+    light.update(now, time, { compass: false, fieldGroup, target: controls.target }); // the ribbon's clocks keep running
     render();
     requestAnimationFrame(tick);
     return;
@@ -2649,7 +2880,7 @@ function tick() {
     t = easeInOut(p);
     if (p >= 1) {
       flipping = false;
-      crimeType = flipTo;
+      crimeType = flipTarget;
       layouts = layoutsByType[crimeType];
       setYearPair(yi);
       morphStart = -1;
@@ -2801,13 +3032,19 @@ function tick() {
   updateLabels();
   updateTriLabels();
   updateForensicsLabels();
+  // The HUD made of light: ribbon clocks, cinema fades, and the compass — shown only while the camera is AWAY
+  // from its scene's home (and not gliding back to it); it IS the map's own circle seen through the camera.
+  const compassOn = !!field && !cam.gliding && !cam.atHome;
+  dock.setCompass(compassOn);
+  dock.setPlaying(livePlaying());                    // Space etc. flip `playing` without a HUD refresh
+  light.update(now, time, { compass: compassOn, fieldGroup, target: controls.target });
 
   render();
 
   frames++;
   if (fpsWall < 0) fpsWall = now;
   else if (now - fpsWall >= 500) {
-    fpsEl.textContent = Math.round((frames * 1000) / (now - fpsWall)) + ' fps · ' + field.count.toLocaleString() + ' pts';
+    if (DEBUG && fpsEl) fpsEl.textContent = Math.round((frames * 1000) / (now - fpsWall)) + ' fps · ' + field.count.toLocaleString() + ' pts';
     frames = 0; fpsWall = now;
   }
   requestAnimationFrame(tick);
@@ -2823,5 +3060,7 @@ window.addEventListener('resize', () => {
   if (terrainField) terrainField.setPixelRatio(renderer.getPixelRatio());
   if (canyonField) canyonField.setPixelRatio(renderer.getPixelRatio());
   if (unlitField) unlitField.setPixelRatio(renderer.getPixelRatio());
+  light.setPixelRatio(renderer.getPixelRatio());
   cam.onResize(); // aspect + a re-fit of the current scene's home — unless your hand has moved the camera since
+  layoutHud();    // re-measure the dock → the ribbon + compass redraw into their new rects
 });
