@@ -304,3 +304,7 @@ specific instruments (deferred) · where it lives / distribution · a name.
   one-line proof: rerun, diff the trust lines, hash the untouched outputs, deep-diff the touched ones for
   exactly the intended delta (+600 lng/lat fields, zero other changes). Without the baseline you can't tell
   your drift from input drift. (?)
+- **A conflict hunk's boundary lies about who owns the lines around it.** When both sides of a hunk end
+  just before one SHARED closer (a `}`, a `/**`), concatenating the sides silently drops a brace or a
+  comment opener — the merge "resolves" and the file no longer parses. Parse-check every resolution before
+  running it (`node --check`), and read one line past each hunk before deciding it's "keep both".

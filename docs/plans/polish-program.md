@@ -51,6 +51,10 @@
 Sizes: S (hours) · M (a day) · L (multi-day). Tier = the agent model for execution (planner does the eye).
 
 ### Wave 0 — Consolidate (branch `integrate/keepers` → PR → main)
+> **Status 2026-09-28:** W0.1–W0.5 DONE on `integrate/keepers` (each merge browser-verified + a core
+> regression pass: drill, pie, compare, terrain, pulse, the five Toll pages). Cross-guards added so the five
+> modes (toll · canyon · unlit · flock · suburb) refuse/exit each other cleanly. W0.6 awaits the wording
+> sign-off. PR → main awaits the maker's OK (the repo is public).
 - **W0.1** merge `feat/standalone-shell` (clean; brings the Toll in the explorer + the five Toll pages + dotted names).
 - **W0.2** canyon · **W0.3** unlit · **W0.4** flock (its attract state becomes the opening) · **W0.5** suburb.
 - **W0.6** forensics — only after the maker's wording sign-off.
