@@ -10,8 +10,15 @@
     <meta property="og:url" content="https://jonxpill.github.io/crime-data-viz/toll-gauteng.html" />
     <meta property="og:type" content="website" />
     <style>
-      :root { color-scheme: dark; }
-      html, body { margin: 0; height: 100%; background: #05060a; overflow: hidden; }
+      :root {
+        color-scheme: dark;
+        /* Palette tokens — these defaults ARE today's colours (no flash before JS); the palette door
+           (src/palette.js) overrides them live on :root. Role names, never raw hexes, below. */
+        --bg: #05060a; --hud-text: #8792a6; --hud-strong: #d4dcef; --hud-hint: #ffce86; --hud-dim: #6b7689;
+        --hud-sep: #3a4456; --hud-flag: #5e6a52; --brand: #cdd6ee; --brand-sub: #77839a;
+        --card-text: #a8b2c6; --card-head: #e6ebf5; --card-dim: #93a0b5; --card-strong: #b9c4d8; --fig: #5a6377;
+      }
+      html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
       #app { position: fixed; inset: 0; }
       canvas { display: block; }
 
@@ -21,7 +28,7 @@
         bottom: 14px;
         z-index: 10; /* above the place-label layer (z 5) */
         font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
-        color: #8792a6;
+        color: var(--hud-text);
         letter-spacing: 0.02em;
         pointer-events: none;
         user-select: none;
@@ -33,8 +40,8 @@
         backdrop-filter: blur(3px);
         -webkit-backdrop-filter: blur(3px);
       }
-      .hud b { color: #d4dcef; font-weight: 500; }
-      .hud .hint { color: #ffce86; }
+      .hud b { color: var(--hud-strong); font-weight: 500; }
+      .hud .hint { color: var(--hud-hint); }
       /* Control chips: the SAME toolkit the keyboard drives, tappable (touch parity). Buttons opt back
          into pointer events (the card itself stays click-transparent for the map behind it). */
       .hud button {
@@ -49,7 +56,7 @@
          ground (stable geometry beats a reflowing row). */
       .grp { display: inline-flex; align-items: center; gap: 1px; }
       .glabel { margin: 0 3px 0 1px; }
-      .gsep { color: #3a4456; margin: 0 7px; user-select: none; }
+      .gsep { color: var(--hud-sep); margin: 0 7px; user-select: none; }
       .hud button.off { opacity: 0.28; pointer-events: none; }
       /* CINEMA — after a few idle seconds the chrome bows out; any input brings it back.
          (body.quiet is driven from the shell; the About card pins the chrome awake.) */
@@ -68,8 +75,8 @@
         font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
         pointer-events: none; user-select: none;
       }
-      #brand b { display: block; font-weight: 600; font-size: 13px; letter-spacing: 0.3em; color: #cdd6ee; opacity: 0.92; }
-      #brand span { display: block; font-size: 10.5px; letter-spacing: 0.05em; color: #77839a; }
+      #brand b { display: block; font-weight: 600; font-size: 13px; letter-spacing: 0.3em; color: var(--brand); opacity: 0.92; }
+      #brand span { display: block; font-size: 10.5px; letter-spacing: 0.05em; color: var(--brand-sub); }
       @media (max-width: 640px) { #brand span { display: none; } }
 
       /* About overlay — chip-opened, never automatic. Esc / ✕ / backdrop closes. */
@@ -80,24 +87,24 @@
         position: relative; max-width: 580px; max-height: 82vh; overflow-y: auto; margin: 18px;
         padding: 24px 28px; border-radius: 10px;
         background: rgba(10, 13, 20, 0.94); border: 1px solid rgba(140, 170, 210, 0.16);
-        font: 12.5px/1.7 ui-monospace, "SF Mono", Menlo, monospace; color: #a8b2c6;
+        font: 12.5px/1.7 ui-monospace, "SF Mono", Menlo, monospace; color: var(--card-text);
       }
-      #about-card h2 { margin: 0 0 2px; font-size: 15px; font-weight: 600; letter-spacing: 0.3em; color: #e6ebf5; }
-      #about-card .tag { margin: 0 0 14px; color: #77839a; font-size: 11px; }
+      #about-card h2 { margin: 0 0 2px; font-size: 15px; font-weight: 600; letter-spacing: 0.3em; color: var(--card-head); }
+      #about-card .tag { margin: 0 0 14px; color: var(--brand-sub); font-size: 11px; }
       #about-card p { margin: 0 0 12px; }
-      #about-card .hon { color: #93a0b5; }
-      #about-card .src { color: #77839a; font-size: 11.5px; }
-      #about-card a { color: #ffce86; text-decoration: none; }
+      #about-card .hon { color: var(--card-dim); }
+      #about-card .src { color: var(--brand-sub); font-size: 11.5px; }
+      #about-card a { color: var(--hud-hint); text-decoration: none; }
       #about-card a:hover { text-decoration: underline; }
       #about-close {
         position: absolute; top: 10px; right: 12px; appearance: none; background: none; border: 0;
-        color: #8792a6; font: 16px ui-monospace, monospace; cursor: pointer; padding: 4px 8px; border-radius: 5px;
+        color: var(--hud-text); font: 16px ui-monospace, monospace; cursor: pointer; padding: 4px 8px; border-radius: 5px;
       }
-      #about-close:hover { background: rgba(140, 170, 210, 0.12); color: #d4dcef; }
+      #about-close:hover { background: rgba(140, 170, 210, 0.12); color: var(--hud-strong); }
 
       #fps {
         position: fixed; right: 14px; top: 12px; z-index: 10;
-        font: 12px ui-monospace, monospace; color: #6b7689;
+        font: 12px ui-monospace, monospace; color: var(--hud-dim);
         padding: 4px 9px; border-radius: 6px;
         background: rgba(6, 8, 13, 0.6);
         backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
@@ -117,7 +124,7 @@
         font-family: ui-monospace, "SF Mono", Menlo, monospace;
         font-weight: 400; line-height: 1.02;
         font-size: calc(var(--fig-fs) * var(--fig-scale));
-        letter-spacing: 0.04em; color: #5a6377;   /* a whisper — near the word's own grey, not competing with the data */
+        letter-spacing: 0.04em; color: var(--fig);   /* a whisper — near the word's own grey, not competing with the data */
         font-variant-numeric: tabular-nums;
         pointer-events: none; user-select: none;
         opacity: 0; transition: opacity 0.8s ease;
@@ -138,11 +145,11 @@
         <button id="about-close" aria-label="close">✕</button>
         <h2>THE TOLL</h2>
         <p class="tag">Gauteng · recorded murders · Apr 2008 – Mar 2026</p>
-        <p><b style="color:#d4dcef">Every dot is one recorded murder.</b> Eighteen years of South African
+        <p><b style="color:var(--hud-strong)">Every dot is one recorded murder.</b> Eighteen years of South African
           Police Service murder records for Gauteng, poured out chronologically — each dot leaving the
           year it happened — into a single growing disc. Year one at the core; each year adds a ring; the disc
-          never resets. What settles is the accumulated toll: <b style="color:#d4dcef">79,060</b> lives.</p>
-        <p class="hon"><b style="color:#b9c4d8">Honesty notes.</b> Counts are real, from SAPS records; the
+          never resets. What settles is the accumulated toll: <b style="color:var(--hud-strong)">79,060</b> lives.</p>
+        <p class="hon"><b style="color:var(--card-strong)">Honesty notes.</b> Counts are real, from SAPS records; the
           disc's radius is the running total, so each ring's thickness is that year's loss. 2025/26 is the sum
           of SAPS's quarterly releases and is unaudited. These are <i>recorded</i> murders — what reached a
           police station.</p>
@@ -161,7 +168,7 @@
     <div class="hud">
       <div id="hint" class="hint">drag the dial to scrub · space pauses</div>
       <div id="controls"><button data-act="about"><span class="hint">?</span> about</button></div>
-      <div id="flag" style="color:#5e6a52; margin-top:4px;">◆ SAPS crime records · DataFirst + saps.gov.za</div>
+      <div id="flag" style="color:var(--hud-flag); margin-top:4px;">◆ SAPS crime records · DataFirst + saps.gov.za</div>
     </div>
     <div id="fps"></div>
     <script type="module" src="/src/tollGautengMain.js"></script>

@@ -34,6 +34,8 @@
 //  • STANDALONE always (idleViewKey null): you land in the ceremony, it auto-pours and stands; K/M
 //    replays; Space pauses; drag ANY dial scrubs the one shared clock; there is no drain/home.
 import { tollLayouts, tollFrameLayout, tollHandLayout, textLayout } from '../layouts/capeTown.js';
+import { rampIndexOf, ROLES } from '../palette.js';
+const MURDER_RAMP = rampIndexOf('murder');            // every disc is murders → the contact family's ramp
 
 export function createTollDiptychView(ctx) {
   const { years, yearLabels, provinces } = ctx.data;
@@ -122,6 +124,7 @@ export function createTollDiptychView(ctx) {
       const cx = (i - (provinces.length - 1) / 2) * OPT.colSpacing;
       const lay = tollLayouts(p.stations, { years, count: p.M, park: null, cx, cy, R, dialR: R * OPT.dialFrac });
       if (!lay) { console.error('[diptych] pool cannot hold the toll — ceremony unavailable', p.label); return false; }
+      lay.source.ramp = lay.disc.ramp = MURDER_RAMP;   // palette tone: both endpoints are murders
       Object.assign(d, { cx, cy, R, dialR: R * OPT.dialFrac, lay });
     }
     return true;
@@ -142,7 +145,7 @@ export function createTollDiptychView(ctx) {
       density.set(f.density, i * half);
       d.hand = { start: i * half + f.hand.start, count: f.hand.count };
     });
-    tollFrame = { positions, density, z };
+    tollFrame = { positions, density, z, role: ROLES.frame }; // palette tone: the dials are frame
   }
 
   // ---- the shared calendar clock ---------------------------------------------------------------------
@@ -347,6 +350,7 @@ export function createTollDiptychView(ctx) {
       const slice = {
         positions: tollFrame.positions.subarray(d.hand.start * 2, (d.hand.start + d.hand.count) * 2),
         density: tollFrame.density.subarray(d.hand.start, d.hand.start + d.hand.count),
+        role: ROLES.frame,                             // the hand is frame, like the dial it rides
       };
       ctx.structField.setSource(slice, d.hand.start);
       ctx.structField.setTarget(slice, d.hand.start);
@@ -526,7 +530,7 @@ export function createTollDiptychView(ctx) {
 
     enter() {
       // Owned pools/primitives: built ONCE (lazily), kept across ceremonies, disposed in dispose().
-      if (!wordField) wordField = ctx.makePool({ count: WORD_POOL, glow: false, size: 1.4, maxSize: 6, matte: '#3a4656', renderOrder: -2 });
+      if (!wordField) wordField = ctx.makePool({ count: WORD_POOL, glow: false, size: 1.4, maxSize: 6, matte: '#3a4656', role: 'words', renderOrder: -2 });
       if (!roll) roll = ctx.hud.floatingCaption('rollover');
       if (!reading) buildReading();
 

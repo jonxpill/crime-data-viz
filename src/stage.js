@@ -19,6 +19,7 @@ import { createCameraDoor } from './camera.js';
 import { PointField } from './engine/PointField.js';
 import { createStructTransition } from './engine/transition.js';
 import { createPlayback } from './playback.js';
+import { applyPalette, paletteToast, paletteKey, nextPalette, PALETTE_CYCLE } from './palette.js';
 
 export const BLOOM_LAYER = 1;
 const DARK = new THREE.Color('#05060a');
@@ -84,8 +85,33 @@ export function createStage() {
   let field = null, structField = null;
   const resizeHooks = [];
 
+  // ---- the palette (src/palette.js is the ONE colour door) --------------------------------------------
+  // Every data pool + every structure pool that names a ROLE registers here; a palette switch repaints
+  // them all, the bg and the HUD. A new pool is painted with the live palette at birth. Live candidates:
+  // __viz.palette(name) · Shift+P cycles current → A → B → C (no persistence). Default = today, exactly.
+  const palettePools = [];
+  let paletteName = 'current';
+  function registerPalettePool(pool, role) {
+    const entry = { pool, role };
+    palettePools.push(entry);
+    applyPalette(paletteName, { pools: [entry] });
+  }
+  function setPalette(name, toast = false) {
+    const key = paletteKey(name);
+    if (!key) return null;
+    paletteName = key;
+    const P = applyPalette(key, { pools: palettePools, background: DARK, document }); // DARK mutated in place
+    if (toast) paletteToast(P.label);
+    return P;
+  }
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyP' && e.shiftKey) { e.preventDefault(); setPalette(nextPalette(paletteName), true); }
+  });
+
   // Build+register an AUXILIARY pool (plan §1: makePool must carry EVERY uniform, else a dropped setMaxSize
   // silently fattens dots). Adds to fieldGroup, wires pixelRatio into resize, returns the PointField.
+  // Palette: a data pool (glow) always wears the family ramps; a structure pool joins the palette only when
+  // it names its `role` (e.g. 'words') — one that passes just a `matte` keeps that literal (back-compat).
   function makePool(opts = {}) {
     const p = new PointField(opts.count, { glow: !!opts.glow, size: opts.size ?? 1.5, matte: opts.matte });
     p.setPixelRatio(renderer.getPixelRatio());
@@ -97,6 +123,7 @@ export function createStage() {
     if (opts.visible === false) p.points.visible = false;
     fieldGroup.add(p.points);
     resizeHooks.push(() => p.setPixelRatio(renderer.getPixelRatio()));
+    if (opts.glow || opts.role) registerPalettePool(p, opts.role);
     return p;
   }
 
@@ -116,6 +143,10 @@ export function createStage() {
     structField.setDrift(0.0);
     structField.setMaxSize(7);
     fieldGroup.add(structField.points);
+
+    registerPalettePool(field);                 // DATA → family ramps (the Toll's murders = contact)
+    registerPalettePool(structField, 'lace');   // outline = role 0; dial/frames tag ROLES.frame
+    setPalette(paletteName);                    // bg + HUD too (default = today, exactly)
   }
 
   // ---- camera framing: delegates to the door's HOME ("The Frame") -------------
@@ -182,6 +213,12 @@ export function createStage() {
   viz.view = (key, opts) => { setView(key, opts); return key; };
   viz.cam = (o) => (o ? cam.orbit(o) : cam.state());   // camera door: state(), or orbit({spin, tilt, dist}) in degrees
   viz.home = (dur) => { cam.rehome(dur); return cam.state(); };
+  viz.palette = (name) => { // the palette door: palette() → current + candidates; palette('A'|'B'|'C'|'current'…)
+    if (name === undefined) return { palette: paletteName, candidates: PALETTE_CYCLE, key: 'Shift+P cycles' };
+    const P = setPalette(name, true);
+    return P ? { palette: P.name, label: P.label, ramps: P.rampsByFamily, roles: P.roles, bg: P.bg, clipped: P.clips }
+      : `unknown palette '${name}' — try ${PALETTE_CYCLE.join(' | ')} (or A / B / C)`;
+  };
 
   // ---- boot -----------------------------------------------------------------
   // Pool SIZE comes from the data bundle's COUNT/structN (plan §2: size is effectively a boot parameter —

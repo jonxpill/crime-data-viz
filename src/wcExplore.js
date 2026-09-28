@@ -6,9 +6,29 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { createCameraDoor, REHOME_MS } from './camera.js';
 import { PointField } from './engine/PointField.js';
-import { loadCapeTown, buildCrimeLayouts, buildUnlitLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor, tollLayouts, tollFrameLayout, tollHandLayout, textLayout, canyonLayout, canyonFrameLayout, flockLayouts, personGridLayout, suburbCaptionLine } from './layouts/capeTown.js';
+import { loadCapeTown, buildCrimeLayouts, buildUnlitLayouts, pieFrameLayout as pieFrameRaw, triPieFrameLayout as triPieFrameRaw, terrainViewLayout, bandFor, tollLayouts as tollLayoutsRaw, tollFrameLayout as tollFrameRaw, tollHandLayout, textLayout, canyonLayout as canyonLayoutRaw, canyonFrameLayout as canyonFrameRaw, flockLayouts, personGridLayout, suburbCaptionLine } from './layouts/capeTown.js';
 import RATES from '../data/vocs-reporting.json'; // GPSJS reporting rates + citations — bundled, so the offline single-file build needs no fetch
-import { forensicsFrameLayout, forensicsStats, LOOK_CLOSER_D, TESTABLE_MEAN, DIGIT_MIN_N } from './layouts/forensics.js';
+import { forensicsFrameLayout as forensicsFrameRaw, forensicsStats, LOOK_CLOSER_D, TESTABLE_MEAN, DIGIT_MIN_N } from './layouts/forensics.js';
+import { applyPalette, paletteToast, paletteKey, nextPalette, rampIndexOf, ROLES, PALETTE_CYCLE } from './palette.js';
+
+// ---- palette TONES (the Palette door, src/palette.js) ---------------------------------------------------
+// Every layout that places DATA dots for a crime carries that crime's FAMILY ramp (layout.ramp: a number
+// for a one-crime layout, a per-dot array for the six-pie compare), and every structure FRAME pose carries
+// ROLES.frame. Tagged ONCE where built (the wrappers below + tagProvider); lift / focusLayout / the bakes
+// carry the tag through, so a flip's source and target differ in family and the colour BLENDS in flight.
+const tagRamp = (L, crimeKey) => { if (L) L.ramp = rampIndexOf(crimeKey); return L; };
+const asFrame = (L) => { if (L) L.role = ROLES.frame; return L; };
+const pieFrameLayout = (...a) => asFrame(pieFrameRaw(...a));
+const triPieFrameLayout = (...a) => asFrame(triPieFrameRaw(...a));
+const tollFrameLayout = (...a) => asFrame(tollFrameRaw(...a));
+const canyonFrameLayout = (...a) => asFrame(canyonFrameRaw(...a));
+const forensicsFrameLayout = (...a) => asFrame(forensicsFrameRaw(...a));
+const canyonLayout = (n, stations, yrs, type, ...rest) => tagRamp(canyonLayoutRaw(n, stations, yrs, type, ...rest), type);
+const tollLayouts = (...a) => { // the toll is murders → the contact family, both endpoints
+  const d = tollLayoutsRaw(...a);
+  if (d) { tagRamp(d.source, 'murder'); tagRamp(d.disc, 'murder'); }
+  return d;
+};
 
 /*
  * THE APP — a Western Cape crime field you drill into Cape Town from. (Was the single-region Cape Town app
@@ -112,6 +132,27 @@ let structN = 0;           // structure dot budget (the province outline's) — 
 const outlines = {};       // structN-sized structure poses: outlines.wc (province) + one per district (detail outline, cycled dense).
 const slices = {};         // each district's dot range in the province field: { ct:[start,count], winelands:[...], ... }.
 const stationsByRegion = {}; // { wc, ct, winelands, ... } — station lists for hover + click hit-testing.
+
+// ---- the palette (src/palette.js is the door; this names which pool plays which role) -------------------
+// Live candidates for the eye pass: __viz.palette(name) · Shift+P cycles current → A → B → C. No persistence.
+let paletteName = 'current';
+function palettePools() {
+  return [
+    { pool: field }, { pool: canyonField },                                      // DATA → family ramps
+    { pool: structField, role: 'lace' },                                         // outline = role 0 (frames tag ROLES.frame)
+    { pool: wordField, role: 'words' }, { pool: unlitField, role: 'unlit' },
+    { pool: terrainField, role: 'terrain' },
+    { pool: beaconField, role: 'residents' }, { pool: peopleField, role: 'residents' },
+  ];
+}
+function setPalette(name, toast = false) {
+  const key = paletteKey(name);
+  if (!key) return null;
+  paletteName = key;
+  const P = applyPalette(key, { pools: palettePools(), background: DARK, document }); // DARK mutated in place (render() re-assigns it)
+  if (toast) paletteToast(P.label);
+  return P;
+}
 
 // The regions you can drill into: Cape Town (its own richer capetown.json + a DEM) + the five districts
 // from wc-districts.json. Cape Town is FIRST so its slice stays [0, ctCount) — where the DEM's aZ lives.
@@ -288,8 +329,33 @@ function lift(regionKey, l) {
   const start = slices[regionKey][0];
   positions.set(l.positions, start * 2);         // the district's slice = its detail
   density.set(l.density, start);
-  return { ...l, positions, density };
+  const out = { ...l, positions, density };      // a scalar ramp rides the spread; a per-dot one is lifted too
+  if (l.ramp != null && typeof l.ramp !== 'number') { out.ramp = new Uint8Array(COUNT); out.ramp.set(l.ramp, start); }
+  return out;
 }
+// Palette tones for a provider's builds — run ONCE per (region, mode) build at boot: the map layouts get
+// their crime's family ramp, and the lazy builders (pie · compare · resolve · forensics · monthly) are
+// wrapped so everything they return is tagged at birth. repoint() and every call site stay untouched.
+function tagProvider(b) {
+  for (const ty of Object.keys(b.layouts)) for (const L of b.layouts[ty]) L.ramp = rampIndexOf(ty);
+  const { pieLayout, triPieLayout, resolvePieLayout, forensicsLayout, monthly } = b;
+  b.pieLayout = (ty, ...a) => tagRamp(pieLayout(ty, ...a), ty);
+  b.forensicsLayout = (ty, ...a) => tagRamp(forensicsLayout(ty, ...a), ty);
+  b.triPieLayout = (...a) => crimeTones(triPieLayout(...a));        // six crimes at once → per-dot families
+  b.resolvePieLayout = (...a) => crimeTones(resolvePieLayout(...a));
+  b.monthly = (ty) => { const p = monthly(ty); if (p) for (const L of p.layouts) L.ramp = rampIndexOf(ty); return p; };
+}
+// A compare layout's per-dot crime index (into crimeTypes; 255 = parked) → a per-dot family ramp.
+function crimeTones(L) {
+  if (!L || !L.crime) return L;
+  const fam = crimeTypes.map(rampIndexOf), ramp = new Uint8Array(L.crime.length);
+  for (let i = 0; i < ramp.length; i++) { const c = L.crime[i]; ramp[i] = c < fam.length ? fam[c] : 0; }
+  L.ramp = ramp;
+  return L;
+}
+// The broken-away pose (density 0), tagged with a crime's family — the canyon parks the map swarm here and
+// flies it home from here, so it must wear the family of the map it leaves / lands.
+const awayFor = (crimeKey = crimeType) => ({ positions: awayAll.positions, density: awayAll.density, ramp: rampIndexOf(crimeKey) });
 // A region's CURRENT map pose (year yi→yi+1 at the live t), COUNT-sized — the drill's break-away/bloom
 // endpoint. The province is already COUNT-sized; a district is lifted (the rest of the field parked-away).
 function liveMap(reg) {
@@ -302,7 +368,7 @@ function liveMap(reg) {
     positions[2 * i + 1] = a.positions[2 * i + 1] + (c.positions[2 * i + 1] - a.positions[2 * i + 1]) * t;
     density[i] = a.density[i] + (c.density[i] - a.density[i]) * t;
   }
-  const live = { positions, density };
+  const live = { positions, density, ramp: rampIndexOf(crimeType) };
   return reg === 'wc' ? live : lift(reg, live);
 }
 const structRest = () => outlines[region] || outlines.wc;
@@ -331,7 +397,7 @@ function focusLayout(layout, si = focusStation, factor = FOCUS_DIM) {
   const [b0, k] = providers[region][dataMode].slotRanges[si];
   for (let i = 0; i < n; i++) den[i] = layout.density[i] * factor;
   for (let i = b0, e = b0 + k; i < e; i++) den[i] = layout.density[i];
-  return { positions: layout.positions, density: den.subarray(0, n) };
+  return { positions: layout.positions, density: den.subarray(0, n), ramp: layout.ramp };
 }
 // Cycle a detail outline (its own point count) up to structN dots so the frame is a DENSE line, not sparse.
 function cycleOutline(structure, n) {
@@ -398,6 +464,7 @@ async function init() {
   for (const rk of ['wc', ...DETAIL_REGIONS]) for (const mode of ['raw', 'percapita']) {
     const b = providers[rk][mode];
     for (const ty of Object.keys(b.layouts)) for (const L of b.layouts[ty]) delete L.z;
+    tagProvider(b); // palette tones: every crime's dots wear their SAPS family's ramp from birth
   }
 
   // Break-away rest — ALL province dots pushed out ×2.5 (off-frame), density 0. Drilling into a district
@@ -512,6 +579,8 @@ async function init() {
   peopleField.setShimmerSpeed(0.6);
   peopleField.points.visible = false;
   fieldGroup.add(peopleField.points);
+
+  setPalette(paletteName); // the ONE colour door paints every pool + the bg + the HUD (default = today, exactly)
 
   applyMode('raw');
   cam.home(flockBox(), { dur: 0 }); // the opening frame (the page opens released — enterFlock's home is a no-op move)
@@ -715,7 +784,7 @@ function toggleCanyon() {
     canyonField.setOpacity(0);                 // fades in as it rises (tick's canyon block)
     canyonField.points.visible = true;
     field.setSource(liveMap(region));          // park the map swarm from its LIVE pose (mid-morph safe)
-    field.setTarget(awayAll);
+    field.setTarget(awayFor());                // (tagged with the family it leaves — invisible, but no hue drift)
     field.setStagger(0.6);
     structField.setSize(PIE_LINE_SIZE);
     startStructTransition(canyonFrameLayout(structN, { grid: canyonCur.grid, seams: canyonCur.seams }));
@@ -724,7 +793,7 @@ function toggleCanyon() {
       crimeType = canyonFlipTo; canyonFlipTo = '';
       layouts = layoutsByType[crimeType];
     }
-    field.setSource(awayAll);                  // the swarm flies home to the map it left
+    field.setSource(awayFor());                // the swarm flies home to the map it left (in ITS family)
     field.setTarget(region === 'wc' ? layouts[yi] : lift(region, layouts[yi]));
     field.setStagger(0.6);
     structField.setSize(structDotSize);
@@ -937,17 +1006,19 @@ function bakeFieldPose() {
   const src = g.getAttribute('aSource').array, tgt = g.getAttribute('aTarget').array;
   const sd = g.getAttribute('aSourceDensity').array, td = g.getAttribute('aTargetDensity').array;
   const seeds = g.getAttribute('aSeed').array;
+  const sr = g.getAttribute('aSourceTone').array, tr = g.getAttribute('aTargetTone').array;
   const uT = field.material.uniforms.uT.value;
   const w = Math.max(field.material.uniforms.uStagger.value, 1e-4);
-  const positions = new Float32Array(COUNT * 2), density = new Float32Array(COUNT);
+  const positions = new Float32Array(COUNT * 2), density = new Float32Array(COUNT), ramp = new Uint8Array(COUNT);
   for (let i = 0; i < COUNT; i++) {
     const s01 = Math.fround(seeds[i] * 0.1591549431) % 1;
     const lt = Math.min(1, Math.max(0, (uT - s01 * (1 - w)) / w));
     positions[2 * i] = src[2 * i] + (tgt[2 * i] - src[2 * i]) * lt;
     positions[2 * i + 1] = src[2 * i + 1] + (tgt[2 * i + 1] - src[2 * i + 1]) * lt;
     density[i] = sd[i] + (td[i] - sd[i]) * lt;
+    ramp[i] = lt < 0.5 ? sr[i] : tr[i]; // a tone is an index — the nearer endpoint's family (a mid-blend dot snaps half-way)
   }
-  return { positions, density };
+  return { positions, density, ramp };
 }
 
 // The counter and the disc are ONE formula: a murder is counted the moment its dot LANDS
@@ -1127,6 +1198,7 @@ function updateTollHand(uT) {
   const slice = {
     positions: tollFrame.positions.subarray(tollHand.start * 2, (tollHand.start + tollHand.count) * 2),
     density: tollFrame.density.subarray(tollHand.start, tollHand.start + tollHand.count),
+    role: ROLES.frame,                                 // the hand is frame, like the dial it rides
   };
   structField.setSource(slice, tollHand.start);
   structField.setTarget(slice, tollHand.start);
@@ -1249,7 +1321,7 @@ let flowCur = 0, flockDriftCur = 0.4;
 
 // Pair a flock frame (positions only) with the density snapshotted at take-off — each dot KEEPS its
 // warmth through the flight, so the hot-core dots streak as warm threads across the sky.
-const withFlockDensity = (frame) => ({ positions: frame.positions, density: flockDensity });
+const withFlockDensity = (frame) => ({ positions: frame.positions, density: flockDensity, ramp: rampIndexOf(crimeType) }); // airborne dots keep their crime's family
 
 function enterFlock(attract = false) {
   // Province map only: in a district most of the pool is parked-away with density 0 — flying it would
@@ -1300,7 +1372,7 @@ function airbornePose() {
 // branch finishes it (flockMode off → setYearPair re-anchor → HUD restore).
 function landFlock() {
   if (!flockMode || flockPhase === 'land') return;
-  field.setSource({ positions: airbornePose(), density: flockDensity }); // full-buffer: see enterFlock
+  field.setSource({ positions: airbornePose(), density: flockDensity, ramp: rampIndexOf(crimeType) }); // full-buffer: see enterFlock
   field.setTarget(layouts[yi]);                                          // province layouts are COUNT-sized
   field.setStagger(FLOCK_LAND_STAGGER);
   field.setT(0); t = 0;
@@ -1741,7 +1813,7 @@ const captionEl = document.createElement('div');
 captionEl.id = 'suburb-caption';
 captionEl.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:10;' +
   'max-width:min(92vw,640px);text-align:center;font:12px/1.6 ui-monospace,"SF Mono",Menlo,monospace;' +
-  'color:#a8b2c6;padding:7px 14px;border-radius:8px;background:rgba(6,8,13,.66);' +
+  'color:var(--card-text,#a8b2c6);padding:7px 14px;border-radius:8px;background:rgba(6,8,13,.66);' +
   'border:1px solid rgba(140,170,210,.10);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);' +
   'pointer-events:none;user-select:none;opacity:0;transition:opacity .4s';
 document.body.appendChild(captionEl);
@@ -1752,8 +1824,8 @@ function updateCaption() {
   const s = activeStations()[focusStation];
   const n = (s.crimes[crimeType] && s.crimes[crimeType][years[yi]]) || 0;
   const line = suburbCaptionLine(s.pop, n, crimeLabels[crimeType] || crimeType, yearLabels[yi]);
-  captionEl.innerHTML = line.replace(/^([\d,]+ residents)/, '<b style="color:#d4dcef">$1</b>') +
-    '<br><span style="color:#77839a;font-size:10.5px">each grey dot ≈ 100 residents · WorldPop 2020 · reported crimes only</span>';
+  captionEl.innerHTML = line.replace(/^([\d,]+ residents)/, '<b style="color:var(--hud-strong,#d4dcef)">$1</b>') +
+    '<br><span style="color:var(--brand-sub,#77839a);font-size:10.5px">each grey dot ≈ 100 residents · WorldPop 2020 · reported crimes only</span>';
 }
 
 // The beacon ring sits just outside the precinct's jitter radius; the shimmer is its pulse.
@@ -1857,6 +1929,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.key === '?' || e.code === 'Slash') { e.preventDefault(); toggleAbout(); return; } // ? opens the card from ANY state
   if (e.code === 'Digit0' || e.code === 'Numpad0') { e.preventDefault(); if (!drilling) homeScene(REHOME_MS); return; } // ⌂ — any state, never lands the flock
+  if (e.code === 'KeyP' && e.shiftKey) { e.preventDefault(); setPalette(nextPalette(paletteName), true); return; } // Shift+P cycles the palette candidates (any state)
   if (tollMode) { // the toll swallows the toolkit: space pauses, 1 holds the 1:1 drip, K/M/Esc end it
     if (e.code === 'Space') { e.preventDefault(); tollPauseToggle(); }
     else if (e.code === 'Digit1') { e.preventDefault(); if (!tollHoldKey) { tollHoldKey = true; refreshHud(); } }
@@ -2017,7 +2090,14 @@ window.__viz = {
   // --- colour/exposure tuning (live) ---
   expo: (v) => { if (v != null) renderer.toneMappingExposure = v; return renderer.toneMappingExposure; }, // master brightness
   dataCurve: (floor, gain) => { if (field) { if (floor != null) field.setDataFloor(floor); if (gain != null) field.setDataGain(gain); } return { floor: field && field.material.uniforms.uDataFloor.value, gain: field && field.material.uniforms.uDataGain.value }; }, // per-dot brightness floor+gain
-  ramp: (cool, mid, warm) => { if (field) field.setRamp(cool, mid, warm); return 'ramp updated'; }, // density colour ramp (hex strings)
+  ramp: (cool, mid, warm) => { if (field) field.setRamp(cool, mid, warm); return 'ramp updated'; }, // density colour ramp 0 = the contact family (hex strings)
+  // The palette door: palette() → current + the candidates; palette('A'|'ember'|'B'|'nocturne'|'C'|'spectral'|'current').
+  palette: (name) => {
+    if (name === undefined) return { palette: paletteName, candidates: PALETTE_CYCLE, key: 'Shift+P cycles' };
+    const P = setPalette(name, true);
+    return P ? { palette: P.name, label: P.label, ramps: P.rampsByFamily, roles: P.roles, bg: P.bg, clipped: P.clips }
+      : `unknown palette '${name}' — try ${PALETTE_CYCLE.join(' | ')} (or A / B / C)`;
+  },
   bloom: (strength, threshold, radius) => { if (strength != null) bloom.strength = strength; if (threshold != null) bloom.threshold = threshold; if (radius != null) bloom.radius = radius; return { strength: bloom.strength, threshold: bloom.threshold, radius: bloom.radius }; },
   tonemap: (name) => { const m = { none: THREE.NoToneMapping, aces: THREE.ACESFilmicToneMapping, neutral: THREE.NeutralToneMapping, agx: THREE.AgXToneMapping, reinhard: THREE.ReinhardToneMapping, cineon: THREE.CineonToneMapping }; if (name && m[name] !== undefined) { renderer.toneMapping = m[name]; scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; }); } return renderer.toneMapping; },
   year: (n) => { const i = years.indexOf(n); if (i >= 0) { playing = false; setYearPair(i); t = 0; } },
@@ -2096,7 +2176,7 @@ window.__viz = {
     const s = (stationsByRegion[region] || stationsByRegion.wc).find((s) => s.name.toLowerCase().includes(name.toLowerCase()));
     return s ? { name: s.name, x: s.x, y: s.y, dc: s.dc, pop: s.pop } : 'not found';
   },
-  matte: (hex) => { for (const f of [structField, terrainField]) if (f) f.material.uniforms.uMatte.value.set(hex); },
+  matte: (hex) => { for (const f of [structField, terrainField]) if (f) { f.setMatte(hex); f.setRoleColors(Array(8).fill(hex)); } }, // ALL structure in these pools (frames included); __viz.palette() restores the tokens
   hideData: (hide = true) => { if (field) field.points.visible = !hide; },
   region: (r) => { if (REGION_META[r]) startDrill(r); return region; }, // debug: force a drill into any region
   terrain: () => { toggleTerrain(); return { terrainMode, region }; },            // debug: toggle the current region's relief
@@ -2495,7 +2575,7 @@ function updateForensicsLabels() {
     d.style.left = ((_hv.x * 0.5 + 0.5) * rect.width) + 'px';
     d.style.top = ((-_hv.y * 0.5 + 0.5) * rect.height) + 'px';
     if (d.textContent !== a.text) d.textContent = a.text;
-    d.style.color = a.dim ? '#6b7689' : '#8b98ac';
+    d.style.color = a.dim ? 'var(--hud-dim, #6b7689)' : '#8b98ac';
     d.style.opacity = '1';
   });
 }
