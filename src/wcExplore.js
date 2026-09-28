@@ -4,7 +4,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { createCameraDoor, REHOME_MS } from './camera.js';
 import { PointField } from './engine/PointField.js';
 import { loadCapeTown, buildCrimeLayouts, buildUnlitLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor, tollLayouts, tollFrameLayout, tollHandLayout, textLayout, canyonLayout, canyonFrameLayout, flockLayouts, personGridLayout, suburbCaptionLine } from './layouts/capeTown.js';
 import RATES from '../data/vocs-reporting.json'; // GPSJS reporting rates + citations — bundled, so the offline single-file build needs no fetch
@@ -27,9 +27,10 @@ import { forensicsFrameLayout, forensicsStats, LOOK_CLOSER_D, TESTABLE_MEAN, DIG
  * contiguous slice that maps 1:1 onto that district's detail build — the SAME dots in both views. On a
  * drill they simply travel (province cluster ⇄ full detail); every OTHER district's crime has no detail to
  * zoom into, so it honestly breaks away (flies out + fades) and flies back on the way out. Structure is
- * one pool whose province outline reconfigures into the district's outline. Camera is DEAD STILL — framed
- * to the union of the boxes once; the drill is entirely in the dots, never the lens (wcMain.js's
- * grammar, here carrying the full toolkit).
+ * one pool whose province outline reconfigures into the district's outline. The CAMERA is free (pan · zoom ·
+ * spin · tilt — src/camera.js, the door); a SCENE change (drill, pie, compare, terrain, canyon, toll, flock,
+ * forensics) GLIDES it home to that scene's framing in step with the dots; a DATA change never moves it.
+ * (Until 2026-09-28 the camera was dead still — framed once to the union of both boxes.)
  */
 
 const BLOOM_LAYER = 1;
@@ -42,7 +43,7 @@ const scene = new THREE.Scene();
 scene.background = DARK;
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 4000);
-camera.position.set(0, 0, 900); // set precisely once both boxes are known (frameUnion, in init)
+camera.position.set(0, 0, 900); // top-down; the camera door homes it to the opening scene in init
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -58,19 +59,11 @@ renderer.toneMappingExposure = 5.5; // bright enough to READ on a normal monitor
 //                                     roll-off keep Cape Town's core amber (not a white splat) at this level.
 app.appendChild(renderer.domElement);
 
-// Zoom + pan (no 3D tumble — it's a flat map, no terrain to tilt into). Scroll/pinch zooms, drag pans.
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableRotate = false;
-controls.screenSpacePanning = true;
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.minDistance = 70;
-controls.maxDistance = 2500; // the province box is wide — allow a big pull-back
-controls.zoomSpeed = 0.9;
-controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
-controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
-controls.target.set(0, 0, 0);
-controls.update();
+// THE CAMERA DOOR (src/camera.js): free pan/zoom/spin/tilt + limits + scene HOME glides ("The Frame").
+// Scene entries call cam.home(box, {dur}); data changes never touch the camera. `controls` stays a local
+// alias because the toll switches it off while its dial owns the pointer.
+const cam = createCameraDoor({ camera, dom: renderer.domElement });
+const controls = cam.controls;
 
 // Data + structure share one frame so geography and crime stay in register.
 const fieldGroup = new THREE.Group();
@@ -419,6 +412,8 @@ async function init() {
   structN = wcRaw.structure.length / 2;
   outlines.wc = { positions: Float32Array.from(wcRaw.structure), density: new Float32Array(structN).fill(0.4) };
   for (const rk of DETAIL_REGIONS) outlines[rk] = cycleOutline(detailData[rk].structure, structN);
+  // Each region's HOME box = its outline's own extents (the land you see), not the padded canvas box.
+  for (const rk of ['wc', ...DETAIL_REGIONS]) homeBoxes[rk] = extentsOf(outlines[rk].positions);
 
   field = new PointField(COUNT, { glow: true, size: 1.9 });
   field.setPixelRatio(renderer.getPixelRatio());
@@ -519,7 +514,7 @@ async function init() {
   fieldGroup.add(peopleField.points);
 
   applyMode('raw');
-  frameUnion(wcRaw.meta.box, ctRaw.meta.box);
+  cam.home(flockBox(), { dur: 0 }); // the opening frame (the page opens released — enterFlock's home is a no-op move)
   landRegion(); // seed the province at rest
   enterFlock(true); // the page OPENS released — a nameless swarm; any key or tap lands it into the data
   lastInputAt = performance.now();
@@ -530,16 +525,56 @@ async function init() {
   requestAnimationFrame(tick);
 }
 
-// Frame BOTH boxes' union once and never move again — the drill is in the dots, not the lens.
-function frameUnion(a, b) {
-  const W = Math.max(a.w, b.w), H = Math.max(a.h, b.h);
-  const vFov = camera.fov * Math.PI / 180;
-  const dH = (H / 2) / Math.tan(vFov / 2);
-  const dW = (W / 2) / (Math.tan(vFov / 2) * camera.aspect);
-  camera.position.set(0, 0, Math.max(dH, dW) * 1.08);
-  controls.target.set(0, 0, 0);
-  controls.update();
+// ---- THE FRAME — each scene's HOME box (field-local units) for the camera door -------------------------
+// A scene ENTRY calls cam.home(box, {dur}) timed to its own dot transition (the glide starts with the swarm
+// and lands with it); the door fits the box into one HUD-aware safe frame, top-down, north up. DATA changes
+// inside a scene (year, crime, per-capita, months, unlit) never call it. Boxes carry a little extra where
+// grey DOM captions hang off a layout (tri-pie names, forensics zones, canyon years).
+const homeBoxes = {};                         // region → its outline's extents (filled in init)
+const TERRAIN_GLIDE_MS = 1400;                // the relief's tilt ease settles in ≈1.4 s
+function extentsOf(pos) {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (let i = 0; i < pos.length; i += 2) {
+    const x = pos[i], y = pos[i + 1];
+    if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
+  }
+  return { minX, maxX, minY, maxY };
 }
+const mapBox = (rk = region) => homeBoxes[rk] || regionData[rk].meta.box;
+const flockBox = () => regionData.wc.meta.box;          // the murmuration's stage: the province CANVAS, not the land
+const pieBox = () => ({ cx: 0, cy: 0, w: 2 * PIE_R, h: 2 * PIE_R });
+function triBox(tp) {                                    // the pie grid + the grey name hanging under each pie
+  const xs = tp.centers.map((c) => c.cx), ys = tp.centers.map((c) => c.cy);
+  return { minX: Math.min(...xs) - TRI_R, maxX: Math.max(...xs) + TRI_R, minY: Math.min(...ys) - TRI_R - 44, maxY: Math.max(...ys) + TRI_R };
+}
+const forensicsBox = (fr) => ({ minX: fr.x0, maxX: fr.x1, minY: fr.baseY - 32, maxY: fr.topY + 52 }); // zone names below, legend above
+const canyonBox = (g) => ({ minX: g.x0, maxX: g.x0 + g.cols * g.cellW, minY: g.y0 - g.rows * g.cellH - 32, maxY: g.y0 }); // + the year row
+const canyonPeaks = (c) => c.anchors.map((a) => ({ x: a.x, y: a.y, z: a.z * canyonZPeak })); // the REAL risen cells, not a full-height slab
+function tollBox() {                                     // the dial (ticks poke ~3.5% past it) ∪ the memorial word
+  const { cx, cy, dialR } = tollGeom(), r = dialR * 1.04;
+  const b = { minX: cx - r, maxX: cx + r, minY: cy - r, maxY: cy + r };
+  if (tollWordBounds && tollWordBounds.w) {
+    const w = tollWordBounds;
+    b.minX = Math.min(b.minX, w.cx - w.w / 2); b.maxX = Math.max(b.maxX, w.cx + w.w / 2);
+    b.minY = Math.min(b.minY, w.cy - w.h / 2); b.maxY = Math.max(b.maxY, w.cy + w.h / 2);
+  }
+  return b;
+}
+// The ONE place that knows which box each scene frames — read from the LIVE mode flags, so scene entries
+// (called after their flags flip) and the ⌂ key can never disagree, and ⌂ frames the scene as it is NOW
+// (e.g. the canyon after a crime flip). The drill is the exception: its region only changes on landing,
+// so startDrill homes to mapBox(to) itself. (Suburb focus is a lens on the map today; K3 adds its box here.)
+function sceneFrame() {
+  if (tollMode && tollPhase !== 'home') return [tollBox(), {}];
+  if (flockMode && flockPhase !== 'land') return [flockBox(), {}];
+  if (canyonMode && canyonCur) return [canyonBox(canyonCur.grid), { tilt: tiltAngle, points: canyonPeaks(canyonCur) }];
+  if (terrainMode) return [mapBox(), { tilt: tiltAngle, zMax: zPeak }];          // the LEANED relief
+  if (forensicsMode && lastForensics) return [forensicsBox(lastForensics.frame), {}];
+  if (triPieMode && lastTriPie) return [triBox(lastTriPie), {}];
+  if (pieMode) return [pieBox(), {}];
+  return [mapBox(), {}];                                                         // the flat map (pulse + focus too)
+}
+function homeScene(dur, ease) { const [box, o] = sceneFrame(); cam.home(box, { ...o, dur, ease }); }
 
 // Seed the shared fields cleanly at the ACTIVE region's map, at rest (year yi→yi+1, t=0). For Cape Town
 // this uses full COUNT-sized (lifted) layouts so the rural slice is written to its parked-away pose in
@@ -597,6 +632,7 @@ function toggleTerrain() {
   } else {
     startTerrainTransition(bandFor(d, terrainTargetLayout, { band: bandW })); // relief → band
   }
+  homeScene(TERRAIN_GLIDE_MS);                                          // glide with the rise (or the sink)
   refreshHint();
 }
 function demHeightAt(x, y) { // normalised DEM height (0..1) at a map-local point in the CURRENT region
@@ -694,6 +730,7 @@ function toggleCanyon() {
     structField.setSize(structDotSize);
     startStructTransition(structRest());
   }
+  homeScene(PIE_MS);                           // in: the risen, leaned surface · out: the flat map
   t = 0; pieMorphStart = performance.now(); pieMorphing = true; // completion re-anchors the year pair on exit
   refreshHud();
   updateFlag();
@@ -873,6 +910,7 @@ function tollGeom() {
 // The memorial WORD behind the toll. Grey structure, no glow, renderOrder -2 → the disc sits in front.
 // Centred a touch ABOVE the disc (yFrac of box.h); all params live-tunable via __viz.word() by eye.
 let tollWord = 'MURDER';
+let tollWordBounds = null;                           // the rendered word's world box — part of the toll's home frame
 let tollWordOpts = { fontFrac: 0.14, jitter: 0.8, weight: 800, yFrac: 0.41, spanFrac: 0.46 }; // "title above" — the word crowns the dial, its base just dipping into the outer ring
 function showTollWord() {
   if (!wordField) return;
@@ -886,8 +924,9 @@ function showTollWord() {
   });
   wordField.setSource(lay); wordField.setTarget(lay); wordField.setT(1);
   wordField.points.visible = true;
+  tollWordBounds = lay.bounds;
 }
-function hideTollWord() { if (wordField) wordField.points.visible = false; }
+function hideTollWord() { if (wordField) wordField.points.visible = false; tollWordBounds = null; }
 
 // Bake the field's CURRENT on-screen pose (the vertex shader's per-dot staggered mix, minus the
 // cosmetic drift) into a plain layout, so a new morph can begin from EXACTLY what the eye sees —
@@ -969,6 +1008,7 @@ function enterToll() {
   structField.setSize(PIE_LINE_SIZE);
   startStructTransition(tollFrame, TOLL_GATHER_MS, 0.6);
   showTollWord();                                    // the memorial word appears behind the ceremony
+  homeScene(TOLL_GATHER_MS);                         // glide top-down onto disc + dial + word (the dial math wants top-down)
   refreshHud();
 }
 
@@ -1038,6 +1078,7 @@ function beginTollHome() {
   structField.setSize(structDotSize);
   startStructTransition(structRest(), TOLL_HOME_MS, 0.6);
   controls.enabled = true;
+  homeScene(TOLL_HOME_MS);                           // back to the province frame with the murders (phase is 'home')
   refreshHud();
 }
 function tollPauseToggle() {
@@ -1170,6 +1211,7 @@ window.addEventListener('pointerup', (e) => {
   tollScrubbing = false;
   // a quick tap OUTSIDE the dial ends the toll (the drill's tap-to-leave grammar)
   if (wasHolding || wasScrubbing) return;
+  if (!_downPlain) return;                           // a right/modified press is never the leaving tap
   if (Math.hypot(e.clientX - _downX, e.clientY - _downY) > 6) return;
   const { cx, cy, dialR } = tollGeom();
   const p = tollWorldAt(e.clientX, e.clientY);
@@ -1230,6 +1272,7 @@ function enterFlock(attract = false) {
   flockMode = true; flockPhase = 'fly'; flockIdx = 0; flockStart = performance.now();
   attractMode = attract;
   playing = false; morphStart = -1; t = 0;
+  homeScene(FLOCK_MS);                              // the murmuration's stage (a no-op move at the page's opening)
   refreshHud();
 }
 
@@ -1262,6 +1305,7 @@ function landFlock() {
   field.setStagger(FLOCK_LAND_STAGGER);
   field.setT(0); t = 0;
   flockPhase = 'land'; flockStart = performance.now();
+  homeScene(FLOCK_LAND_MS);                          // settle onto the province with the landing
   refreshHint();
 }
 
@@ -1450,6 +1494,7 @@ function togglePie() {
     structField.setSize(structDotSize);
     startStructTransition(structRest());
   }
+  homeScene(PIE_MS);
   t = 0; pieMorphStart = performance.now(); pieMorphing = true;
   refreshHud();
 }
@@ -1477,6 +1522,7 @@ function toggleTriPie() {
     structField.setSize(structDotSize);
     startStructTransition(structRest());
   }
+  homeScene(PIE_MS);
   t = 0; pieMorphStart = performance.now(); pieMorphing = true;
   refreshHud();
 }
@@ -1504,6 +1550,7 @@ function toggleForensics() {
     structField.setSize(structDotSize);
     startStructTransition(structRest());
   }
+  homeScene(PIE_MS);
   t = 0; pieMorphStart = performance.now(); pieMorphing = true;
   refreshHud();
   updateFlag(); // the strip runs on the monthly series — credit the quarterlies while inside
@@ -1562,6 +1609,7 @@ function resolveTriToPie(ci) {
   structField.setSize(PIE_LINE_SIZE);
   startStructTransition(pieFrameLayout(structN, { cx: 0, cy: 0, R: PIE_R, boundaries: resolved.boundaries, frameDots: pieFrameDots, thin: pieThin }));
   triPieMode = false; pieMode = true;
+  homeScene(PIE_MS);
   t = 0; pieMorphStart = performance.now(); pieMorphing = true;
   refreshHud();
 }
@@ -1582,6 +1630,7 @@ function goToMap() {
     field.setStagger(0.55);
     structField.setSize(structDotSize);
     startStructTransition(structRest());
+    homeScene(PIE_MS);
     t = 0; pieMorphStart = performance.now(); pieMorphing = true;
     refreshHud();
     return;
@@ -1589,11 +1638,12 @@ function goToMap() {
   if (region !== 'wc') startDrill('wc'); // already in a district → M drills back out to the province
 }
 
-// ---- THE DRILL — one conserved swarm each, camera dead still (wcMain.js's grammar) ------------------
+// ---- THE DRILL — one conserved swarm each (wcMain.js's grammar), the camera gliding with it ----------
 // Available ONLY from a MAP view (gated at the call sites). DATA: Cape Town's city dots travel
 // province-cluster ⇄ full detail (conserved — the SAME dots); rural breaks away / flies back.
 // STRUCTURE: the province outline reconfigures into Cape Town's outline. Nothing fades except the rural
-// crime that genuinely has no detail to zoom into; the lens never moves.
+// crime that genuinely has no detail to zoom into. The CAMERA glides home to the landing region's outline
+// on the drill's own clock + ease, so the district arrives filling the frame.
 function startDrill(to) {
   if (drilling || to === region || pieMode || triPieMode || tollMode || canyonMode || flockMode || forensicsMode) return; // exit the canyon first — a drill mid-relief would strand the graticule
   if (focusMode) exitFocus(false); // drilling exits focus first (like the pulse); liveMap below rewrites the whole pair
@@ -1613,6 +1663,7 @@ function startDrill(to) {
   structField.setSource(structCurrent);
   structField.setTarget(outlines[to]);
   structField.setStagger(0.62);
+  cam.home(mapBox(to), { dur: DRILL_MS, ease: drillEase });
   if (unlitField && unlitShown) { // the estimate can't survive the region change — it flies home with the drill
     unlitField.setStagger(0.62);
     unlitSet(unlitLive(), unlitRoost());
@@ -1805,6 +1856,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === '?' || e.code === 'Slash') { e.preventDefault(); toggleAbout(); return; } // ? opens the card from ANY state
+  if (e.code === 'Digit0' || e.code === 'Numpad0') { e.preventDefault(); if (!drilling) homeScene(REHOME_MS); return; } // ⌂ — any state, never lands the flock
   if (tollMode) { // the toll swallows the toolkit: space pauses, 1 holds the 1:1 drip, K/M/Esc end it
     if (e.code === 'Space') { e.preventDefault(); tollPauseToggle(); }
     else if (e.code === 'Digit1') { e.preventDefault(); if (!tollHoldKey) { tollHoldKey = true; refreshHud(); } }
@@ -1892,6 +1944,7 @@ const CHIP_ACTIONS = {
   suburb: () => (focusMode ? exitFocus() : openLocate()), // same toggle as the H key
   forensics: () => toggleForensics(), // guards itself (flat map in, X/M out)
   about: () => toggleAbout(),
+  home: () => homeScene(REHOME_MS),    // ⌂ — the current scene's framing (never dims: always valid)
 };
 
 // About card — chip-opened only (never automatic); ✕ / backdrop / Esc close it.
@@ -1921,9 +1974,9 @@ const chipEls = {};
 for (const el of document.querySelectorAll('.hud [data-act]')) {
   chipEls[el.dataset.act] = el;
   el.addEventListener('click', () => {
-    // Airborne, the toolkit sleeps: only the landing chips (F release / M map) + about respond —
+    // Airborne, the toolkit sleeps: only the landing chips (F release / M map) + about + ⌂ home respond —
     // mirrors the keydown swallow, so touch and keyboard agree on what a released field ignores.
-    const swallowed = flockMode && !['release', 'map', 'about'].includes(el.dataset.act);
+    const swallowed = flockMode && !['release', 'map', 'about', 'home'].includes(el.dataset.act);
     if (!drilling && !swallowed) { const f = CHIP_ACTIONS[el.dataset.act]; if (f) f(); }
     el.blur();
   });
@@ -1954,7 +2007,7 @@ function refreshChips() {
   off('toll', !tollMode && (region !== 'wc' || pieMode || triPieMode || pulseMode || terrainMode || canyonMode || flockMode));
   // Whole-toolkit dims LAST, so no per-chip rule above can re-light a chip the mode swallows.
   // Airborne, the toolkit sleeps (the click handler swallows all but release/map/about) — dim to match.
-  if (flockMode) for (const act of Object.keys(chipEls)) if (!['release', 'map', 'about'].includes(act)) off(act, true);
+  if (flockMode) for (const act of Object.keys(chipEls)) if (!['release', 'map', 'about', 'home'].includes(act)) off(act, true);
   // The strip holds all 60 months, counts only, and listens to ↑↓ + X/M — dim the rest to match its keydown swallow.
   if (forensicsMode) for (const act of ['play', 'yearPrev', 'yearNext', 'months', 'percapita', 'unlit', 'suburb', 'pie', 'compare', 'terrain', 'canyon', 'toll', 'release']) off(act, true);
 }
@@ -2029,12 +2082,15 @@ window.__viz = {
     return { R: TRI_R, gap: TRI_GAP };
   },
   view: (x = 0, y = 0, dist = 200) => {
+    cam.cancelGlide();
     const world = fieldGroup.localToWorld(new THREE.Vector3(x, y, 0));
     const dir = camera.position.clone().sub(controls.target).normalize();
     controls.target.copy(world);
     camera.position.copy(world).addScaledVector(dir, dist);
     controls.update();
   },
+  cam: (o) => (o ? cam.orbit(o) : cam.state()), // camera door: state(), or orbit({spin, tilt, dist}) in degrees — obeys the limits
+  home: (dur = REHOME_MS) => { homeScene(dur); return cam.state(); }, // ⌂ re-home the current scene (dur ms; default 1100)
   speed: (ms) => { if (ms != null) { PIE_MS = ms; strDur = ms; } return { pie: PIE_MS, struct: strDur }; },
   station: (name) => {
     const s = (stationsByRegion[region] || stationsByRegion.wc).find((s) => s.name.toLowerCase().includes(name.toLowerCase()));
@@ -2144,6 +2200,7 @@ function hoverPrecinct(clientX, clientY) {
     _hv.set(a.x, a.y, a.z || 0);
     fieldGroup.localToWorld(_hv);
     _hv.project(camera);
+    if (_hv.z > 1) continue;            // behind the camera (a tilted close-up) — its projection is a mirror ghost
     const sx = (_hv.x * 0.5 + 0.5) * rect.width, sy = (-_hv.y * 0.5 + 0.5) * rect.height;
     const d = Math.hypot(sx - mx, sy - my);
     if (d < bestD) { bestD = d; best = a.si; bestCrime = a.crime || crimeType; }
@@ -2164,6 +2221,7 @@ function updateCanyonTip() {
     _hv.set(a.x, a.y, a.z * canyonZCur);
     fieldGroup.localToWorld(_hv);
     _hv.project(camera);
+    if (_hv.z > 1) continue;            // behind the camera
     const sx = (_hv.x * 0.5 + 0.5) * rect.width, sy = (-_hv.y * 0.5 + 0.5) * rect.height;
     const d = Math.hypot(sx - mx, sy - my);
     if (d < bestD) { bestD = d; best = a; }
@@ -2298,7 +2356,7 @@ function updateLabels() {
     const sx = (_lv.x * 0.5 + 0.5) * W, sy = (-_lv.y * 0.5 + 0.5) * H;
     // greedy collision by rank: an approx text box; later (lower-rank) labels yield to placed ones
     const w = sp.name.length * 8.2 + 16, h = 19;
-    let hit = sx < 8 || sx > W - 8 || sy < 16 || sy > H - 8;
+    let hit = _lv.z > 1 || sx < 8 || sx > W - 8 || sy < 16 || sy > H - 8; // (z > 1: behind the camera)
     if (!hit) for (const p of placed) { if (Math.abs(sx - p.x) < (w + p.w) / 2 && Math.abs(sy - p.y) < h) { hit = true; break; } }
     if (hit) { el.style.display = 'none'; continue; }
     placed.push({ x: sx, y: sy, w });
@@ -2310,11 +2368,25 @@ function updateLabels() {
 
 // Click: (1) in the 3-pie, resolve to the clicked pie; (2) on the province MAP, clicking Cape Town's
 // cluster drills in; (3) on the Cape Town MAP, a tap drills back out. A tap is told from a pan by move distance.
-let _downX = 0, _downY = 0;
-renderer.domElement.addEventListener('pointerdown', (e) => { lastInputAt = performance.now(); _downX = e.clientX; _downY = e.clientY; });
+// Only a PLAIN primary press can be a click: right-drag and ctrl/⌘/shift-drag are the camera's ROTATE (a
+// still right-click must not drill either), and a second finger makes the gesture a pinch/twist, never a tap.
+let _downX = 0, _downY = 0, _downPlain = true, _touches = 0, _multiTouch = false;
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  lastInputAt = performance.now(); _downX = e.clientX; _downY = e.clientY;
+  _downPlain = e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+  if (e.pointerType === 'touch' && ++_touches > 1) _multiTouch = true;
+});
+const _touchUp = (e) => { // returns whether this gesture ever had 2+ fingers (reset once all are up)
+  const multi = _multiTouch;
+  if (e.pointerType === 'touch') { _touches = Math.max(0, _touches - 1); if (!_touches) _multiTouch = false; }
+  return multi;
+};
+renderer.domElement.addEventListener('pointercancel', _touchUp);
 window.addEventListener('wheel', () => { lastInputAt = performance.now(); }, { passive: true });
 renderer.domElement.addEventListener('pointerup', (e) => {
+  const multi = _touchUp(e);
   if (drilling || tollMode) return; // the toll's own pointer grammar owns taps while tolling
+  if (!_downPlain || multi) return; // a rotate or a two-finger gesture, not a click
   if (Math.hypot(e.clientX - _downX, e.clientY - _downY) > 6) return; // a drag (pan), not a click
   if (flockMode) { landFlock(); return; } // a tap anywhere lands the field — the F/Esc parity for touch
   if (triPieMode && lastTriPie) {
@@ -2324,6 +2396,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
     let best = -1, bestD = Infinity;
     lastTriPie.centers.forEach((c, i) => {
       _hv.set(c.cx, c.cy, 0); fieldGroup.localToWorld(_hv); _hv.project(camera);
+      if (_hv.z > 1) return;                       // behind the camera
       const sx = (_hv.x * 0.5 + 0.5) * rect.width, sy = (-_hv.y * 0.5 + 0.5) * rect.height;
       const d = Math.hypot(sx - mx, sy - my);
       if (d < bestD) { bestD = d; best = i; }
@@ -2348,6 +2421,7 @@ function nearestStation(sts, cx, cy) {
   let best = null, bestD = Infinity;
   for (const s of sts) {
     _hv.set(s.x, s.y, 0); fieldGroup.localToWorld(_hv); _hv.project(camera);
+    if (_hv.z > 1) continue;            // behind the camera
     const sx = (_hv.x * 0.5 + 0.5) * rect.width, sy = (-_hv.y * 0.5 + 0.5) * rect.height;
     const d = Math.hypot(sx - mx, sy - my);
     if (d < bestD) { bestD = d; best = s; }
@@ -2376,6 +2450,7 @@ function updateTriLabels() {
     const d = triLabels[i]; if (!d) return;
     _hv.set(c.cx, c.cy - TRI_R - 24, 0);
     fieldGroup.localToWorld(_hv); _hv.project(camera);
+    if (_hv.z > 1) { d.style.opacity = '0'; return; } // behind the camera
     d.style.left = ((_hv.x * 0.5 + 0.5) * rect.width) + 'px';
     d.style.top = ((-_hv.y * 0.5 + 0.5) * rect.height) + 'px';
     d.textContent = crimeLabels[c.type] || c.type;
@@ -2416,6 +2491,7 @@ function updateForensicsLabels() {
     if (!a) { d.style.opacity = '0'; return; }
     _hv.set(a.x, a.y, 0);
     fieldGroup.localToWorld(_hv); _hv.project(camera);
+    if (_hv.z > 1) { d.style.opacity = '0'; return; } // behind the camera
     d.style.left = ((_hv.x * 0.5 + 0.5) * rect.width) + 'px';
     d.style.top = ((-_hv.y * 0.5 + 0.5) * rect.height) + 'px';
     if (d.textContent !== a.text) d.textContent = a.text;
@@ -2448,7 +2524,7 @@ function tick() {
       refreshHud();                                  // refreshes the region label + context-aware hint
 
     }
-    controls.update();
+    cam.update(now);                                 // the camera glides home on the drill's own clock
     render();
     requestAnimationFrame(tick);
     return;
@@ -2639,7 +2715,8 @@ function tick() {
     if (!canyonMode && canyonField.points.visible && canyonOp < 0.02) canyonField.points.visible = false;
   }
   fieldGroup.rotation.x = tiltCur;
-  controls.update();
+  cam.setFieldTilt(tiltCur);                         // the field's own lean eats into the camera's tilt limit
+  cam.update(now);                                   // glide · limits · damping (the door owns controls.update)
   updateTooltip();
   updateLabels();
   updateTriLabels();
@@ -2658,8 +2735,6 @@ function tick() {
 
 // ---- resize -----------------------------------------------------------------
 window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
   bloomComposer.setSize(window.innerWidth, window.innerHeight);
   finalComposer.setSize(window.innerWidth, window.innerHeight);
@@ -2668,4 +2743,5 @@ window.addEventListener('resize', () => {
   if (terrainField) terrainField.setPixelRatio(renderer.getPixelRatio());
   if (canyonField) canyonField.setPixelRatio(renderer.getPixelRatio());
   if (unlitField) unlitField.setPixelRatio(renderer.getPixelRatio());
+  cam.onResize(); // aspect + a re-fit of the current scene's home — unless your hand has moved the camera since
 });

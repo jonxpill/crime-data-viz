@@ -63,6 +63,9 @@ Sizes: S (hours) · M (a day) · L (multi-day). Tier = the agent model for execu
 
 ### Wave 1 — Doors (branch `polish/doors`)
 - **D1 Camera** L · opus — includes The Frame (home framings) + the triptych narrow-window fix. *Checkpoint: maker feels it.*
+  > **Status 2026-09-28:** BUILT on `polish/camera` — `src/camera.js` (one door: controls, limits, `home()` glides,
+  > ⌂/0), explorer + shell wired, `tests/camera.test.mjs` in `npm test`. Awaiting the planner's render-and-look
+  > + the maker's feel checkpoint (glide timing, limits, rotate speed, does the drill glide?).
 - **D2 Palette** M · sonnet build, planner eye — 2–3 candidate sets rendered side by side. *Checkpoint: maker picks.*
 - **D3 Address** M · sonnet.
 - **D4 Motion** L · opus — path modes, meaningful stagger, comet streaks (= [existing: Comet Scrub]), dither.

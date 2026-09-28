@@ -275,7 +275,7 @@ export function createTollDiptychView(ctx) {
       return { x: rect.left + (_hv.x * 0.5 + 0.5) * rect.width, y: rect.top + (-_hv.y * 0.5 + 0.5) * rect.height };
     };
     const a = project(0, 0), b = project(100, 0);      // px-per-world via a 100-unit probe
-    const ppw = Math.abs(b.x - a.x) / 100;
+    const ppw = Math.hypot(b.x - a.x, b.y - a.y) / 100; // its LENGTH — stays true when the camera door spins the map
     if (!figPxRest) figPxRest = ppw;
     const scale = ppw / figPxRest;
     const figFs = (OPT.figPx * scale).toFixed(2) + 'px';
@@ -538,9 +538,10 @@ export function createTollDiptychView(ctx) {
       holdKey = holdPtr = scrubbing = false; scrubDisc = null;
       figPxRest = 0;                                   // re-reference the type scale to this mount's framing
 
-      // You LAND in the ceremony: frame the camera ONCE to the N-column box (w scales with province count,
-      // outgrows the default framing), HOLD every slice on its born-from-time source (invisible — density
-      // 0) while the dials come up, then pour. Scroll zooms; drag scrubs (pan off so it never fights the scrub).
+      // You LAND in the ceremony: HOME the camera to the N-column box (w scales with province count,
+      // outgrows the default framing; the door re-fits it on resize, so narrow windows keep every disc), HOLD
+      // every slice on its born-from-time source (invisible — density 0) while the dials come up, then pour.
+      // Scroll zooms, right-drag rotates; left-drag scrubs (pan off so it never fights the scrub).
       ctx.frameTo(ctx.data.box);
       ctx.controls.enabled = true; ctx.controls.enablePan = false; ctx.controls.enableZoom = true;
       for (const d of discs) {

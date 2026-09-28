@@ -3,6 +3,7 @@
 // Owns three: renderer + camera + scene + the selective-bloom pipeline + the RAF loop + resize, plus the
 // two CONSERVED pools (field = glow/data, structField = matte/structure) and a view registry. Lifted
 // verbatim from the explorer's boot (wcExplore.js L33–108, 404–413, 1563–1714) so the LOOK is byte-parity.
+// The CAMERA is the shared door (src/camera.js) — the same controls, limits and home glides as the explorer.
 //
 // INVARIANTS (plan §1):
 //  • pools PERSIST across view swaps — never wiped on exit (the bake seam depends on the live pose surviving).
@@ -14,7 +15,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { createCameraDoor } from './camera.js';
 import { PointField } from './engine/PointField.js';
 import { createStructTransition } from './engine/transition.js';
 import { createPlayback } from './playback.js';
@@ -38,18 +39,10 @@ export function createStage() {
   renderer.toneMappingExposure = 5.5;
   app.appendChild(renderer.domElement);
 
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableRotate = false;
-  controls.screenSpacePanning = true;
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.08;
-  controls.minDistance = 70;
-  controls.maxDistance = 2500;
-  controls.zoomSpeed = 0.9;
-  controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
-  controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
-  controls.target.set(0, 0, 0);
-  controls.update();
+  // The camera door: free pan/zoom/spin/tilt, limits, and home() glides. Views still toggle
+  // ctx.controls.enabled/enablePan/enableZoom (a dial that owns the drag turns pan off).
+  const cam = createCameraDoor({ camera, dom: renderer.domElement });
+  const controls = cam.controls;
 
   const fieldGroup = new THREE.Group();
   scene.add(fieldGroup);
@@ -125,26 +118,19 @@ export function createStage() {
     fieldGroup.add(structField.points);
   }
 
-  // ---- camera framing (parity: frameUnion L405–413, single box) -------------
-  function frameTo(box) {
-    const W = box.w, H = box.h;
-    const vFov = camera.fov * Math.PI / 180;
-    const dH = (H / 2) / Math.tan(vFov / 2);
-    const dW = (W / 2) / (Math.tan(vFov / 2) * camera.aspect);
-    camera.position.set(0, 0, Math.max(dH, dW) * 1.08);
-    controls.target.set(0, 0, 0);
-    controls.update();
-  }
+  // ---- camera framing: delegates to the door's HOME ("The Frame") -------------
+  // Snaps (or glides, with opts.dur) to fit `box` in the HUD-aware safe frame, top-down, north up. On resize
+  // the door re-fits the same box — unless the hand has moved the camera since (then only the aspect).
+  function frameTo(box, opts) { cam.home(box, opts); }
 
   function onResize(fn) { resizeHooks.push(fn); }
   window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
     bloomComposer.setSize(window.innerWidth, window.innerHeight);
     finalComposer.setSize(window.innerWidth, window.innerHeight);
     if (field) field.setPixelRatio(renderer.getPixelRatio());
     if (structField) structField.setPixelRatio(renderer.getPixelRatio());
+    cam.onResize();                            // aspect + re-fit the home box (the triptych stays whole)
     for (const fn of resizeHooks) fn();
   });
 
@@ -175,7 +161,7 @@ export function createStage() {
     const dt = lastNow < 0 ? 0 : now - lastNow;
     lastNow = now;
 
-    controls.update();                         // damping — shell owns it (not a pool write)
+    cam.update(now);                           // glide · limits · damping — the door owns it (not a pool write)
     if (active) active.update(now, dt, elapsed);
     render();
 
@@ -194,6 +180,8 @@ export function createStage() {
   viz.bloom = (s, t, r) => { if (s != null) bloom.strength = s; if (t != null) bloom.threshold = t; if (r != null) bloom.radius = r; return { strength: bloom.strength, threshold: bloom.threshold, radius: bloom.radius }; };
   viz.tonemap = () => renderer.toneMapping;
   viz.view = (key, opts) => { setView(key, opts); return key; };
+  viz.cam = (o) => (o ? cam.orbit(o) : cam.state());   // camera door: state(), or orbit({spin, tilt, dist}) in degrees
+  viz.home = (dur) => { cam.rehome(dur); return cam.state(); };
 
   // ---- boot -----------------------------------------------------------------
   // Pool SIZE comes from the data bundle's COUNT/structN (plan §2: size is effectively a boot parameter —
@@ -204,7 +192,7 @@ export function createStage() {
     const struct = createStructTransition(structField);   // generic staggered struct-swarm on structField
     const playback = createPlayback(field);               // year/month idle-loop driver on field
     ctx = {
-      THREE, scene, camera, controls, fieldGroup, renderer, dom: renderer.domElement,
+      THREE, scene, camera, controls, cam, fieldGroup, renderer, dom: renderer.domElement,
       frameTo, onResize, BLOOM_LAYER,
       field, structField, makePool,
       struct,
@@ -219,5 +207,5 @@ export function createStage() {
     return ctx;
   }
 
-  return { boot, registerView, frameTo, makePool, onResize, get ctx() { return ctx; }, get field() { return field; }, get structField() { return structField; } };
+  return { boot, registerView, frameTo, makePool, onResize, cam, get ctx() { return ctx; }, get field() { return field; }, get structField() { return structField; } };
 }

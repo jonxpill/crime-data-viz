@@ -91,7 +91,8 @@ export function createTollView(ctx) {
     const px = rect.left + (_hv.x * 0.5 + 0.5) * rect.width;
     const py = rect.top + (-_hv.y * 0.5 + 0.5) * rect.height;
     _hv.set(wordBounds.cx + half, wordBounds.cy, 0).project(ctx.camera);
-    const gap = Math.abs(rect.left + (_hv.x * 0.5 + 0.5) * rect.width - px);
+    // screen LENGTH of the half-span (hypot, not |dx|) — stays true when the camera door spins the map
+    const gap = Math.hypot(rect.left + (_hv.x * 0.5 + 0.5) * rect.width - px, rect.top + (-_hv.y * 0.5 + 0.5) * rect.height - py);
     // The place-name sits LITERALLY just above the word's ink, its left edge on the first letter's (the M).
     _hv.set(wordBounds.cx - wordBounds.w / 2, wordBounds.cy + wordBounds.h * 0.62, 0).project(ctx.camera);
     const tx = rect.left + (_hv.x * 0.5 + 0.5) * rect.width;

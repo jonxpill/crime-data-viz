@@ -23,7 +23,7 @@ export function createMurderMapView(ctx) {
     meta: { key: 'murderMap', label: 'Western Cape · murder', chipText: '' },
 
     enter(opts = {}) {
-      ctx.frameTo(ctx.data.box);                 // camera framed ONCE to the province box, static
+      ctx.frameTo(ctx.data.box);                 // camera HOMED to the province box (the door's Frame; re-fits on resize)
       // Seed the struct pool at the resting outline (current=outline, so the toll's gather sources from it).
       ctx.struct.rest(ctx.data.outline);
       // Seed the data pair. On a frozen return we hold the year the toll left us on; on a fresh entry we

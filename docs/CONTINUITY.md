@@ -60,7 +60,11 @@ main.js's code UNCHANGED (a region swap is only a repoint of layout refs). Pools
 - **ONE terrain field** (Cape Town only, GX×GY) — main's relief, swapped in at its coincident `bandFor`
   band on `T` (so the swap reads as no change), then morphs band → relief; crime climbs via the data
   field's per-dot `aZ`.
-- **Camera DEAD STILL** — framed to the union of both boxes once; the drill is entirely in the dots.
+- **The camera is FREE; scenes RE-HOME it; data changes NEVER move it** (was: "camera DEAD STILL — framed to
+  the union of both boxes once"; retired 2026-09-28 — maker: *"the camera needs to be controllable — zoom,
+  rotate, pan"*). One door, `src/camera.js` (explorer + shell): pan/zoom/spin/tilt within limits; a scene
+  change glides home to that scene's box in the HUD-aware safe frame ("The Frame"), timed to the dots; ⌂/0
+  returns. The drill is still carried by the dots — the camera only re-frames the landing region.
 - **History:** a first Sonnet-built explorer modelled region as a second BUNDLE (two independent pools → the
   drill could only cross-fade → structure disappeared/reappeared). It was BINNED and rebuilt from main.js's
   proven single-field toolkit + `wcMain.js`'s conserved drill. `wcMain.js` (standalone drill spike) + `wc.html`
@@ -314,3 +318,8 @@ specific instruments (deferred) · where it lives / distribution · a name.
   centred a TRUE Poisson tally on D≈0.81, silently dragging honest stations toward the "look closer" zone —
   an anomaly detector whose null is off-centre manufactures anomalies. The guard that caught it: a seeded
   synthetic test asserting the honest case lands dead on the reference value (and a rigged case doesn't). (?)
+- **"Unchanged?" must compare the whole pose, not the cheapest coordinate — at a singular pose they come
+  apart.** The camera door's "still at home → re-fit on resize" check compared positions only; top-down, a
+  20° spin moves the camera ~1e-6 of its distance, so a spun view read as "home" and a resize snapped it back.
+  A node test against the real OrbitControls caught it (compare the orientation too). Same family: at polar 0,
+  atan2(0, −0) = π silently flips north to the bottom. (?)
