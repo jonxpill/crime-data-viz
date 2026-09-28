@@ -15,9 +15,11 @@
 //     tilt (and the field's own lean) exactly, because it IS the map's circle seen through the camera.
 // Both ride the CAMERA (camera.add) at a fixed depth, so they stay put on screen while the world orbits. The
 // PointField's size law is `uSize · 300/depth`, so at HUD_DEPTH = 300 a pool's uSize reads in CSS px.
-// Plus THE SHADE — a soft bottom-edge darkening drawn IN the frame (a clip-space quad, renderOrder between the
-// field and the ribbon, on the bloom layer too) so the field flows under the controls while the ribbon's own
-// glow stays on top. (A CSS gradient would sit OVER the canvas and dim the ribbon's light with the field's.)
+// Plus THE GLASS — the chrome's tinted bands drawn IN the frame (a clip-space quad, renderOrder between the field
+// and the ribbon, on the bloom layer too): the bottom band (the ribbon stands on its top edge), the right rail
+// (layout 'rail'), a soft ground above the rim, and a feathered backing behind the top-left readout. A CSS
+// backdrop would sit OVER the canvas and dim the ribbon's own light; in-frame, the ribbon draws on top of it.
+// A RIM of grey structure dots traces the glass's inner edges (the ribbon's baseline).
 //
 // Honesty: glow ONLY on the ribbon's lit dots (they are data: true totals). Frame slots, caret, compass —
 // structure grey, never glowing. The engine still knows nothing of years or crime: the layouts are computed
@@ -51,8 +53,13 @@ export const HUD_TUNE = {
   compassR: 9,           // ring radius, CSS px
   ringDensity: 0.16, needleDensity: 0.30, tipDensity: 0.62,
   quietRibbon: 0.25,     // cinema: the ribbon fades to this (its lit dots stay faintly alive)
-  shadeMax: 0.78,        // the bottom shade's darkest alpha (at the very bottom edge)
-  shadeExtra: 64,        // how far (CSS px) the shade reaches above the dock's top
+  glass: 0.8,            // the bands' darkening (75–85 % of whatever is beneath)
+  glassLift: 0.0022,     // a faint linear lift so the glass reads as a surface, not a hole
+  ground: 0.42,          // the soft ground above the rim (under the ribbon's columns) …
+  groundH: 56,           // … and how far up it fades (CSS px)
+  readout: 0.55,         // the feathered backing behind the top-left readout
+  rimDensity: 0.1, rimGap: 6,  // the glass's rim of grey structure dots
+  rimInset: 10,          // the rim sits this far above the ribbon track's bottom (the caret hangs below it)
 };
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -77,7 +84,8 @@ export function makePxMap({ W, H, fov, depth = HUD_DEPTH }) {
 export function ribbonGrid(rect, ncols, rows = RIBBON_ROWS) {
   const n = Math.max(1, ncols);
   const pitchX = rect.width / n;
-  const base = rect.top + rect.height - 9;          // row 0 — the caret sits 7 px below it
+  const rim = rect.top + rect.height - HUD_TUNE.rimInset; // the glass's top edge = the ribbon's baseline
+  const base = rim - 4;                             // row 0 stands on the rim
   const topY = rect.top + 3;
   const pitchY = rows > 1 ? (base - topY) / (rows - 1) : 0;
   const colX = (c) => rect.left + (clamp(c, 0, n - 1) + 0.5) * pitchX;
@@ -86,7 +94,7 @@ export function ribbonGrid(rect, ncols, rows = RIBBON_ROWS) {
   const J = HUD_TUNE.jitter;
   return {
     ncols: n, rows, pitchX, pitchY, colX, rowY,
-    caretY: rect.top + rect.height - 2,
+    caretY: rim + 6,                                // the caret hangs just below the rim, in the glass
     /** The slot's CSS-px position: column c, row j, sub-column k — with slot i's fixed seeded wobble (the SAME
      *  for the frame and the data pool, so a lit dot lands exactly on its grey slot). */
     slotXY: (c, j, k, i) => [colX(c) + (k - (RIBBON_WIDE - 1) / 2) * dx + J * slotJitter(i, 1), rowY(j) + J * 0.8 * slotJitter(i, 2)],
@@ -282,9 +290,10 @@ class PoolClock {
 /**
  * new LightHud({ camera, scene, bloomLayer, bg, pixelRatio })
  *   pools()                      the pools for the palette door: [{pool}, {pool, role:'frame'} …]
- *   layout({W,H,fov,track,compass,hudTop})   CSS-px rects measured from the dock DOM (the layout truth)
+ *   layout({W,H,fov,track,compass,glass})    CSS-px rects measured from the chrome DOM (the layout truth);
+ *                                glass = {band, rail, readout} — the in-frame tinted bands + the readout's backing
  *   setRibbon(spec)              spec = { mode:'data'|'scrub'|'frame', ncols, values, cur, ramp, key }
- *   setQuiet(bool)               cinema: ribbon → 25 %, compass + shade → 0
+ *   setQuiet(bool)               cinema: ribbon → 25 %, compass + glass + rim → 0
  *   update(now, time, {compass:bool, fieldGroup, target})   once per frame, before render
  */
 export class LightHud {
@@ -309,53 +318,100 @@ export class LightHud {
     this.frame.setShimmer(0.22); this.frame.setShimmerSpeed(0.6);   // the frame barely breathes
     this.compass.setShimmer(0); this.compass.setT(1);
     this.frame.points.renderOrder = 100;
-    this.data.points.renderOrder = 101;         // after the shade (50) → the ribbon's light is never dimmed by it
+    this.data.points.renderOrder = 101;         // after the glass (50) → the ribbon's light is never dimmed by it
     this.compass.points.renderOrder = 102;
     this.data.points.layers.enable(bloomLayer); // the ribbon's lit dots ARE data: they bloom like the field
     this.frameClock = new PoolClock(this.frame, RIBBON_PER_COL);
     this.dataClock = new PoolClock(this.data, RIBBON_PER_COL);
     this.compass.points.visible = false;
 
-    // THE SHADE — clip-space quad: no matrices, always the bottom of the frame. Colour = the scene's bg token
-    // (the palette door mutates that THREE.Color in place, so the shade follows every palette).
-    this.shadeMat = new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: bg || new THREE.Color('#05060a') }, uTop: { value: 0.2 }, uMax: { value: T.shadeMax }, uOpacity: { value: 1 } },
-      vertexShader: 'varying float vY; void main(){ vY = position.y * 0.5 + 0.5; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-      fragmentShader: 'uniform vec3 uColor; uniform float uTop, uMax, uOpacity; varying float vY;' +
-        'void main(){ float k = 1.0 - smoothstep(0.0, uTop, vY); gl_FragColor = vec4(uColor, uMax * k * k * uOpacity); }',
+    // THE GLASS — a clip-space quad: no matrices, drawn in CSS px from gl_FragCoord (uPR = the pixel ratio).
+    // Colour = the scene's bg token (the palette door mutates that THREE.Color in place) + a faint lift.
+    this.glassMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uColor: { value: bg || new THREE.Color('#05060a') }, uPR: { value: pixelRatio }, uView: { value: new THREE.Vector2(1, 1) },
+        uBand: { value: 0 }, uRail: { value: 0 }, uGroundH: { value: T.groundH }, uRead: { value: new THREE.Vector4(0, 0, 0, 0) },
+        uGlass: { value: T.glass }, uGround: { value: T.ground }, uReadA: { value: T.readout }, uLift: { value: T.glassLift }, uOpacity: { value: 1 },
+      },
+      vertexShader: 'void main(){ gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: /* glsl */ `
+        uniform vec3 uColor; uniform float uPR; uniform vec2 uView;
+        uniform float uBand, uRail, uGroundH; uniform vec4 uRead;
+        uniform float uGlass, uGround, uReadA, uLift, uOpacity;
+        void main(){
+          vec2 p = gl_FragCoord.xy / uPR;                                   // CSS px, origin bottom-left
+          float railX = uView.x - uRail;
+          float band = 1.0 - smoothstep(uBand - 0.5, uBand + 0.5, p.y);     // the bottom band (below the rim)
+          float rail = uRail > 0.0 ? smoothstep(railX - 0.5, railX + 0.5, p.x) : 0.0;
+          float glass = max(band, rail) * uGlass;
+          float up = p.y - uBand;                                           // soft ground under the ribbon
+          float ground = (up > 0.0 && p.x < railX) ? uGround * (1.0 - smoothstep(0.0, uGroundH, up)) : 0.0;
+          vec2 q = vec2(p.x, uView.y - p.y);                                // the readout rect (top-left origin)
+          vec2 d = max(uRead.xy - q, q - uRead.zw);
+          float read = uRead.z > uRead.x ? uReadA * (1.0 - smoothstep(0.0, 30.0, length(max(d, 0.0)))) : 0.0;
+          float a = max(max(glass, ground), read) * uOpacity;
+          gl_FragColor = vec4(uColor + vec3(uLift), a);
+        }`,
       transparent: true, depthTest: false, depthWrite: false,
     });
-    this.shade = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.shadeMat);
-    this.shade.frustumCulled = false;
-    this.shade.renderOrder = 50;
-    this.shade.layers.enable(bloomLayer);       // darken the field's bloom INPUT too, or halos float over the shade
-    scene.add(this.shade);
+    this.glass = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.glassMat);
+    this.glass.frustumCulled = false;
+    this.glass.renderOrder = 50;
+    this.glass.layers.enable(bloomLayer);       // darken the field's bloom INPUT too, or halos float over the glass
+    scene.add(this.glass);
+    // THE RIM — grey structure dots along the glass's inner edges (sized once for a 4K screen's perimeter).
+    this.rim = new PointField(1400, { glow: false, size: 1.5 });
+    this.rim.setPixelRatio(pixelRatio); this.rim.setDrift(0); this.rim.setShimmer(0.18); this.rim.setShimmerSpeed(0.5);
+    this.rim.points.frustumCulled = false; this.rim.points.renderOrder = 99; this.rim.setT(1);
+    this.group.add(this.rim.points);
 
     this.geom = null; this.spec = null; this.map = null;
     this.quiet = false;
-    this.op = { ribbon: 1, compass: 0, shade: 1 };
+    this.op = { ribbon: 1, compass: 0, glass: 1 };
     this.lastNow = 0;
     this._v = new THREE.Vector3(); this._c = new THREE.Vector3();
     this.compassOn = false;
   }
 
-  pools() { return [{ pool: this.data }, { pool: this.frame, role: 'frame' }, { pool: this.compass, role: 'frame' }]; }
+  pools() { return [{ pool: this.data }, { pool: this.frame, role: 'frame' }, { pool: this.compass, role: 'frame' }, { pool: this.rim, role: 'frame' }]; }
 
-  setPixelRatio(r) { for (const f of [this.frame, this.data, this.compass]) f.setPixelRatio(r); }
-
-  /** Re-measure: the dock DOM owns the layout (flexbox), the engine draws into the measured rects. */
-  layout({ W, H, fov, track, compass, hudTop }) {
-    this.geom = { W, H, fov, track, compass, hudTop };
-    this.map = makePxMap({ W, H, fov });
-    this.shadeMat.uniforms.uTop.value = clamp((H - hudTop + HUD_TUNE.shadeExtra) / H, 0.05, 0.6);
-    if (this.spec) this._apply(this.spec, null, performance.now(), true);
+  setPixelRatio(r) {
+    for (const f of [this.frame, this.data, this.compass, this.rim]) f.setPixelRatio(r);
+    this.glassMat.uniforms.uPR.value = r;
   }
 
-  /** Only the shade follows the dock's top (a wrapped sentence) — cheap, never re-snaps the ribbon. */
-  setHudTop(hudTop) {
-    if (!this.geom || Math.abs(this.geom.hudTop - hudTop) < 0.5) return;
-    this.geom.hudTop = hudTop;
-    this.shadeMat.uniforms.uTop.value = clamp((this.geom.H - hudTop + HUD_TUNE.shadeExtra) / this.geom.H, 0.05, 0.6);
+  /** Re-measure: the chrome DOM owns the layout (CSS), the engine draws into the measured rects.
+   *  glass = { band (bottom glass height), rail (right glass width), readout: {x0, y0, x1, y1} } in CSS px. */
+  layout({ W, H, fov, track, compass, glass = null }) {
+    this.geom = { W, H, fov, track, compass, glass };
+    this.map = makePxMap({ W, H, fov });
+    this._glass();
+    if (this.spec) this._apply(this.spec, null, performance.now(), true);
+  }
+  /** Only the readout's soft backing follows its text — a uniform write, never a re-layout. */
+  setReadout(r) {
+    if (!this.geom || !r) return;
+    this.geom.glass = { ...(this.geom.glass || {}), readout: r };
+    this.glassMat.uniforms.uRead.value.set(r.x0, r.y0, r.x1, r.y1);
+  }
+  _glass() {
+    const { W, H, glass } = this.geom, u = this.glassMat.uniforms, T = HUD_TUNE;
+    const g = glass || { band: 0, rail: 0, readout: null };
+    u.uView.value.set(W, H);
+    u.uBand.value = g.band || 0; u.uRail.value = g.rail || 0; u.uGroundH.value = T.groundH;
+    const r = g.readout;
+    u.uRead.value.set(r ? r.x0 : 0, r ? r.y0 : 0, r ? r.x1 : 0, r ? r.y1 : 0);
+    u.uGlass.value = T.glass; u.uGround.value = T.ground; u.uReadA.value = T.readout; u.uLift.value = T.glassLift;
+    // the rim: along the band's top edge (left of the rail) + the rail's inner edge (above the band)
+    const n = this.rim.count, pos = new Float32Array(n * 2), den = new Float32Array(n), gap = T.rimGap;
+    let i = 0;
+    const put = (x, y) => { if (i >= n) return; const [lx, ly] = this.map(x, y); pos[2 * i] = lx; pos[2 * i + 1] = ly; den[i] = T.rimDensity; i++; };
+    const railX = W - (g.rail || 0), rimY = H - (g.band || 0);
+    if (g.band > 0) for (let x = gap / 2; x < railX; x += gap) put(x, rimY);
+    if (g.rail > 0) for (let y = gap / 2; y < rimY; y += gap) put(railX, y);
+    for (; i < n; i++) { pos[2 * i] = 0; pos[2 * i + 1] = 0; den[i] = 0; }
+    const L = { positions: pos, density: den };
+    this.rim.setSource(L); this.rim.setTarget(L); this.rim.setT(1);
   }
 
   _grid(spec) { return ribbonGrid(this.geom.track, spec.ncols, RIBBON_ROWS); }
@@ -401,11 +457,12 @@ export class LightHud {
   retune() {
     const T = HUD_TUNE;
     this.frame.setSize(T.frameSize); this.data.setSize(T.dataSize); this.compass.setSize(T.compassSize);
-    this.shadeMat.uniforms.uMax.value = T.shadeMax;
     if (this.geom) this.layout(this.geom);
   }
 
   setQuiet(q) { this.quiet = !!q; }
+  /** Wake instantly (a tap on a faded control acts AND shows the chrome at once — no 400 ms fade-in lag). */
+  wake() { this.quiet = false; }
 
   update(now, time, { compass = false, fieldGroup = null, target = null } = {}) {
     const dt = this.lastNow ? Math.min(100, now - this.lastNow) : 16;
@@ -414,12 +471,13 @@ export class LightHud {
     const T = HUD_TUNE;
     this.op.ribbon += ((this.quiet ? T.quietRibbon : 1) - this.op.ribbon) * k;
     this.op.compass += ((compass && !this.quiet ? 1 : 0) - this.op.compass) * k;
-    this.op.shade += ((this.quiet ? 0 : 1) - this.op.shade) * k;
+    this.op.glass += ((this.quiet ? 0 : 1) - this.op.glass) * k;
     this.frameClock.tick(now); this.dataClock.tick(now);
     this.frame.setOpacity(this.op.ribbon); this.data.setOpacity(this.op.ribbon);
     this.frame.setTime(time); this.data.setTime(time);
-    this.shadeMat.uniforms.uOpacity.value = this.op.shade;
-    this.shade.visible = this.op.shade > 0.003;
+    this.glassMat.uniforms.uOpacity.value = this.op.glass;
+    this.glass.visible = this.op.glass > 0.003;
+    this.rim.setOpacity(this.op.glass); this.rim.setTime(time); this.rim.points.visible = this.op.glass > 0.003;
     const showCompass = this.op.compass > 0.01 && this.geom && fieldGroup && target;
     this.compass.points.visible = !!showCompass;
     if (showCompass) {

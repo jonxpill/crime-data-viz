@@ -134,7 +134,7 @@ export class LivingIcon {
     this.shapeT = 1; this.shapeStart = 0;
     this.form = 1; this.legs = [];        // formation: 0 = loose scatter · 1 = the shape
     this.avail = true; this.active = false; this.hover = false; this.real = false;
-    this.glow = 0; this.white = 0; this.dim = 1; this.lastNow = 0;
+    this.glow = 0; this.white = 0; this.dim = 1; this.lastNow = 0; this.pending = false; this.pulse = 0;
     this.dirty = true;
   }
   _shape(s) {
@@ -160,9 +160,9 @@ export class LivingIcon {
     this.real = !!model.real;
     this.shapeStart = now; this.shapeT = 0; this.dirty = true;
   }
-  setState({ avail = true, active = false } = {}, now = 0) {
+  setState({ avail = true, active = false, pending = false } = {}, now = 0) {
     if (avail !== this.avail) { this.avail = avail; this.legs = [{ to: avail ? 1 : 0, dur: avail ? 700 : 600, ease: easeInOut }]; }
-    this.active = !!active; this.dirty = true;
+    this.active = !!active; this.pending = !!pending; this.dirty = true;
   }
   setHover(on, now = 0) {
     on = !!on;
@@ -185,7 +185,11 @@ export class LivingIcon {
       anim = true;
     }
     const k = 1 - Math.exp(-dt / 170);
-    const tg = this.hover && this.avail ? 1 : 0, tw = this.active ? 1 : 0, td = this.avail ? 1 : 0.5;
+    // pending (a queued navigation waiting for a transition): a slow breath toward white, ~1.4 s a cycle
+    const pulse = this.pending ? 0.5 - 0.5 * Math.cos((now / 1400) * Math.PI * 2) : 0;
+    if (this.pending || this.pulse > 0.004) anim = true;
+    this.pulse = pulse;
+    const tg = this.hover && this.avail ? 1 : 0, tw = this.active ? 1 : Math.max(0, this.pulse * 0.8), td = this.avail ? 1 : 0.5;
     for (const [key, t] of [['glow', tg], ['white', tw], ['dim', td]]) {
       if (Math.abs(this[key] - t) > 0.004) { this[key] += (t - this[key]) * k; anim = true; } else this[key] = t;
     }

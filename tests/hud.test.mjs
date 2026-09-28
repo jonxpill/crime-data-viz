@@ -14,6 +14,8 @@
  *  5. The living dock: icons sample REAL layouts (active dots only, density + family kept), fit their 52×36
  *     box, the toll miniature follows the toll's own ring rule; an icon FORMS when available, FAILS TO FORM
  *     (drifts to its scatter) when not, and hover gathers + lights it. Formatters read like the sentence.
+ *  6. The navigation door: every scene is reachable from every scene (and every region) in a few steps; the
+ *     only lock-out is the relief without elevation data. The chrome's text is lifted to legible contrast.
  */
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
@@ -22,7 +24,8 @@ import {
   ribbonFrameLayout, ribbonDataLayout, waveTiming, columnSeed01, livePose, compassLayout, LightHud,
 } from '../src/hud/light.js';
 import { subsampleActive, sampleLayout, fitShape, tollMini, releaseFallback, rampAt, LivingIcon, ICON_W, ICON_H, ICON_SLOTS } from '../src/hud/icons.js';
-import { fmtRate, fmtCount, fmtValue } from '../src/hud/dock.js';
+import { fmtRate, fmtCount, fmtValue, liftToContrast, contrast } from '../src/hud/dock.js';
+import { navPlan, navRoute, sceneOf, SCENES } from '../src/hud/nav.js';
 
 const near = (a, b, eps, msg) => assert.ok(Math.abs(a - b) <= eps, `${msg}: ${a} vs ${b} (±${eps})`);
 const W = 1440, H = 860, FOV = 50;
@@ -248,6 +251,44 @@ const track = { left: 100, top: 780, width: 900, height: 44 };
   assert.equal(fmtRate(487.4), (487).toLocaleString(), 'rates ≥ 10 are whole');
   assert.equal(fmtRate(7.46), (7.5).toLocaleString(undefined, { minimumFractionDigits: 1 }), 'rates < 10 keep one decimal');
   assert.equal(fmtValue(1234.6, 'reported'), (1235).toLocaleString(), 'fmtValue routes by unit');
+}
+
+// ---- 6. the navigation door + legible chrome -------------------------------------------------------------
+{
+  const base = { flock: false, toll: false, canyon: false, forensics: false, terrain: false, compare: false, pie: false,
+    focus: false, pulse: false, unlit: false, region: 'wc', hasDEM: true, morphing: false };
+  const FROM = { map: {}, pie: { pie: true }, compare: { compare: true }, forensics: { forensics: true }, terrain: { terrain: true },
+    canyon: { canyon: true }, toll: { toll: true }, suburb: { focus: true }, release: { flock: true }, pulse: { pulse: true },
+    'CT map': { region: 'ct' }, 'CT pie': { region: 'ct', pie: true }, 'CT terrain+focus': { region: 'ct', terrain: true, focus: true } };
+  // every scene from every scene: a short route, never locked out, ending by entering the target
+  for (const T of SCENES) for (const [name, st] of Object.entries(FROM)) {
+    const route = navRoute({ ...base, ...st }, T);
+    assert.ok(route.length >= 1 && route.length <= 4, `${name} → ${T}: a short route (${route.join(' · ')})`);
+    assert.ok(!route.includes('impossible'), `${name} → ${T} is never locked out`);
+    const last = route[route.length - 1];
+    assert.ok(last === 'done' || last.startsWith('morph:' + T) || last === 'enter' + T[0].toUpperCase() + T.slice(1)
+      || (T === 'suburb' && last === 'openLocate') || (T === 'release' && last === 'enterFlock') || (T === 'map' && ['morph:map', 'exitFocus', 'flatTerrain', 'done'].includes(last))
+      || (T === 'terrain' && last === 'enterTerrain'), `${name} → ${T} ends by entering it (${route.join(' · ')})`);
+  }
+  // the heavy ceremonies unwind BEFORE anything else, and the province-only scenes drill out first
+  assert.deepEqual(navRoute({ ...base, toll: true }, 'pie'), ['exitToll', 'morph:pie']);
+  assert.deepEqual(navRoute({ ...base, region: 'ct' }, 'toll'), ['drill:wc', 'enterToll']);
+  assert.deepEqual(navRoute({ ...base, region: 'ct', pie: true }, 'pie', { region: 'wc' }), ['drill:wc', 'morph:pie'], 'same view, other place');
+  assert.deepEqual(navRoute({ ...base, pie: true }, 'terrain'), ['morph:map', 'enterTerrain'], 'the relief lifts from the map');
+  assert.deepEqual(navRoute({ ...base, pie: true }, 'map', { pulse: true }), ['morph:map', 'enterPulse'], 'months from anywhere');
+  assert.deepEqual(navRoute({ ...base, canyon: true }, 'map', { unlit: true }), ['exitCanyon', 'enterUnlit'], 'the unlit lens from anywhere');
+  assert.deepEqual(navRoute({ ...base, hasDEM: false }, 'terrain'), ['impossible'], 'the ONE true impossibility');
+  assert.equal(navPlan({ ...base, pie: true, morphing: true }, 'terrain').step, 'morph:map');
+  assert.equal(navPlan({ ...base, morphing: true }, 'terrain').step, 'wait', 'terrain waits for the map to settle');
+  assert.equal(sceneOf({ ...base, terrain: true, focus: true }), 'terrain');
+
+  // legible chrome: lifted to ≥ 7:1 (text) and ≥ 4.8:1 (dim) against the bg; already-legible colours unchanged
+  const BG = '#05060a';
+  const txt = liftToContrast('#8792a6', BG, 7), dim = liftToContrast('#6b7689', BG, 4.8);
+  const rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  assert.ok(contrast(rgb(txt), rgb(BG)) >= 7, `text ${txt} ≥ 7:1`);
+  assert.ok(contrast(rgb(dim), rgb(BG)) >= 4.8, `dim ${dim} ≥ 4.8:1`);
+  assert.equal(liftToContrast('#ffffff', BG, 7), '#ffffff');
 }
 
 console.log('hud tests: all passed');

@@ -87,9 +87,29 @@ export function fitTopDown(points, fovDeg, aspect, ndc) {
   return { tx: sol.tx, ty: sol.ty, dist: hi };
 }
 
+/** The chrome's DECLARED claims — CSS px custom properties on :root (`--claim-top/right/bottom/left`) that a
+ *  page with fixed-geometry chrome sets (the explorer's readout, glass rail and bands). Declared, never
+ *  measured: a mid-layout DOM can read absurdly tall, a declaration can't. null when the page declares none. */
+export function declaredClaims(doc = typeof document !== 'undefined' ? document : null) {
+  if (!doc || !doc.documentElement || typeof getComputedStyle !== 'function') return null;
+  const cs = getComputedStyle(doc.documentElement);
+  const v = (k) => parseFloat(cs.getPropertyValue('--claim-' + k));
+  const c = { top: v('top'), right: v('right'), bottom: v('bottom'), left: v('left') };
+  return Object.values(c).some((x) => Number.isFinite(x)) ? c : null;
+}
+
 /** Default safe inset (CSS px): 6% sides + top (≥ 40px, clear of the brand line), and the bottom kept clear
- *  of the `.hud` card (measured — its height changes with the viewport). */
+ *  of the chrome — the page's DECLARED claims when it has them (each at least the 6% margin), else the `.hud`
+ *  card measured (its height changes with the viewport). */
 export function hudSafeInset(W, H) {
+  const claim = declaredClaims();
+  if (claim) {
+    const m = (x, base) => Math.max(base, Number.isFinite(x) ? x : 0);
+    return {
+      top: Math.min(m(claim.top, Math.max(MARGIN * H, 40)), 0.35 * H), right: m(claim.right, MARGIN * W),
+      bottom: Math.min(m(claim.bottom, MARGIN * H), 0.35 * H), left: m(claim.left, MARGIN * W),
+    };
+  }
   let bottom = MARGIN * H;
   const hud = typeof document !== 'undefined' && document.querySelector('.hud');
   if (hud) {
@@ -275,11 +295,11 @@ export function createCameraDoor({ camera, dom, safeInset = hudSafeInset, maxTil
     controls.update();
   }
 
-  const atHome = () => {
+  const atHome = (tol = 1e-3) => {
     if (!homePose || glide || pending) return false;
-    const eps = Math.max(1e-3, homeDist * 1e-3);
+    const eps = Math.max(1e-3, homeDist * tol);
     return controls.target.distanceTo(homePose.target) < eps && camera.position.distanceTo(homePose.position) < eps
-      && camera.quaternion.angleTo(homePose.quat) < 1e-3;  // top-down, a SPIN barely moves the position — check the turn
+      && camera.quaternion.angleTo(homePose.quat) < Math.max(1e-3, tol);  // top-down, a SPIN barely moves the position — check the turn
   };
 
   function onResize() {
@@ -288,7 +308,9 @@ export function createCameraDoor({ camera, dom, safeInset = hudSafeInset, maxTil
     camera.updateProjectionMatrix();
     if (!homeReq || pending) return;             // a pending home fits on the next frame anyway
     if (glide) { glide.to = fitNow(); homeDist = glide.to.r; openLimits(glide.from, glide.to); return; } // retarget, keep the clock
-    if (atHome()) { const to = fitNow(); homeDist = to.r; land(to); return; }
+    // Still (near) home — within 1 % of the home distance and ~0.6° (damping residue, a nudge) — re-fit to the
+    // new aspect; only a camera the hand has really moved keeps its view.
+    if (atHome(0.01)) { const to = fitNow(); homeDist = to.r; land(to); return; }
     homeDist = fitNow().r;                       // the hand moved it: keep the view, re-derive the limits
     applyLimits(true);
   }

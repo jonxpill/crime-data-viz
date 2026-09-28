@@ -12,6 +12,7 @@ import { forensicsFrameLayout as forensicsFrameRaw, forensicsStats, LOOK_CLOSER_
 import { applyPalette, paletteToast, paletteKey, nextPalette, rampIndexOf, ROLES, PALETTE_CYCLE } from './palette.js';
 import { LightHud, HUD_TUNE } from './hud/light.js';
 import { createDock, fmtValue } from './hud/dock.js';
+import { navPlan, sceneOf } from './hud/nav.js';
 import * as ICONS from './hud/icons.js';
 
 // ---- palette TONES (the Palette door, src/palette.js) ---------------------------------------------------
@@ -393,10 +394,19 @@ const structRest = () => outlines[region] || outlines.wc;
 // buffer via lift()/liveMap().
 const sliceStart = () => (region === 'wc' ? 0 : slices[region][0]);
 // While focused, the door itself applies the dim post-pass — one hook, every at-rest write covered.
-function setDataPair(src, tgt) {
+// `liveSrc`: the source is the LIVE on-screen pose (liveData) — already dimmed if focused, so never dim it twice.
+function setDataPair(src, tgt, liveSrc = false) {
   const o = sliceStart();
-  field.setSource(focusMode ? focusLayout(src) : src, o);
+  field.setSource(focusMode && !liveSrc ? focusLayout(src) : src, o);
   field.setTarget(focusMode ? focusLayout(tgt) : tgt, o);
+}
+// THE LIVE POSE for a data write — exactly what the eye sees now (bakeFieldPose), cut to the active region's
+// slice. Every transition that can start mid-flight starts HERE, so a new intent RETARGETS instead of snapping.
+function liveData() {
+  const p = bakeFieldPose();
+  if (region === 'wc') return p;
+  const [st, k] = slices[region];
+  return { positions: p.positions.subarray(st * 2, (st + k) * 2), density: p.density.subarray(st, st + k), ramp: p.ramp.subarray(st, st + k) };
 }
 // Pure post-pass for the focus dim: same positions, every OTHER station's densities ×factor. Takes any
 // region-sized layout (the door's slice offset decides WHERE it lands in the shared field, so station
@@ -595,6 +605,7 @@ async function init() {
   setPalette(paletteName); // the ONE colour door paints every pool + the bg + the HUD (default = today, exactly)
 
   applyMode('raw');
+  applyLayout();                    // the chrome's claims exist before the first frame is fitted
   cam.home(flockBox(), { dur: 0 }); // the opening frame (the page opens released — enterFlock's home is a no-op move)
   landRegion(); // seed the province at rest
   enterFlock(true); // the page OPENS released — a nameless swarm; any key or tap lands it into the data
@@ -677,10 +688,10 @@ function landRegion() {
   structCurrent = outline; strProg = 1;
 }
 
-// Start a staggered structure swarm from whatever's shown (structCurrent) to a new layout.
+// Start a staggered structure swarm from whatever's SHOWN to a new layout — mid-flight, from the live pose.
 function startStructTransition(toLayout, dur = strDur, stagger = strStagger) {
   if (!structField) return;
-  structField.setSource(structCurrent);
+  structField.setSource(strProg < 1 ? bakeStructPose() : structCurrent);
   structField.setTarget(toLayout);
   structField.setStagger(stagger);
   strTo = toLayout; strStart = performance.now(); strDur = dur; strProg = 0;
@@ -796,7 +807,7 @@ function toggleCanyon() {
     canyonField.setZScale(0);
     canyonField.setOpacity(0);                 // fades in as it rises (tick's canyon block)
     canyonField.points.visible = true;
-    field.setSource(liveMap(region));          // park the map swarm from its LIVE pose (mid-morph safe)
+    field.setSource(bakeFieldPose());          // park the swarm from EXACTLY what the eye sees (any scene, mid-morph)
     field.setTarget(awayFor());                // (tagged with the family it leaves — invisible, but no hue drift)
     field.setStagger(0.6);
     structField.setSize(PIE_LINE_SIZE);
@@ -1033,6 +1044,25 @@ function bakeFieldPose() {
     ramp[i] = lt < 0.5 ? sr[i] : tr[i]; // a tone is an index — the nearer endpoint's family (a mid-blend dot snaps half-way)
   }
   return { positions, density, ramp };
+}
+
+// The structure pool's on-screen pose (bakeFieldPose's twin: same per-dot lt; tones = roles) — a frame that
+// is re-aimed mid-swarm (map → pie → compare in quick succession) re-forms from where it IS.
+function bakeStructPose() {
+  const g = structField.points.geometry, n = structField.count;
+  const src = g.getAttribute('aSource').array, tgt = g.getAttribute('aTarget').array;
+  const sd = g.getAttribute('aSourceDensity').array, td = g.getAttribute('aTargetDensity').array;
+  const seeds = g.getAttribute('aSeed').array, sr = g.getAttribute('aSourceTone').array, tr = g.getAttribute('aTargetTone').array;
+  const uT = structField.material.uniforms.uT.value, w = Math.max(structField.material.uniforms.uStagger.value, 1e-4);
+  const positions = new Float32Array(n * 2), density = new Float32Array(n), role = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const lt = Math.min(1, Math.max(0, (uT - (Math.fround(seeds[i] * 0.1591549431) % 1) * (1 - w)) / w));
+    positions[2 * i] = src[2 * i] + (tgt[2 * i] - src[2 * i]) * lt;
+    positions[2 * i + 1] = src[2 * i + 1] + (tgt[2 * i + 1] - src[2 * i + 1]) * lt;
+    density[i] = sd[i] + (td[i] - sd[i]) * lt;
+    role[i] = lt < 0.5 ? sr[i] : tr[i];
+  }
+  return { positions, density, role };
 }
 
 // The counter and the disc are ONE formula: a murder is counted the moment its dot LANDS
@@ -1347,7 +1377,7 @@ function enterFlock(attract = false) {
   unlitBlock();                                      // the estimate leaves with the map it shadows
   if (focusMode) exitFocus(false);                   // the whole field flies — the focus dim can't ride along
   if (!flockFrames) flockFrames = flockLayouts(COUNT, regionData.wc.meta.box, 0xf10c); // seeded → stable per build; built once per session
-  const live = liveMap('wc');     // wherever the map is mid-breath — the flight lifts from HERE
+  const live = bakeFieldPose();   // wherever the field IS (the map mid-breath, a pie, a month) — the flight lifts from HERE
   flockDensity = live.density;
   // Full-buffer writes (offset 0), like startDrill: the flock is a PROVINCE-ONLY full-pool state — no
   // district slice is at rest, so the whole COUNT-sized field is legitimately re-pointed.
@@ -1413,20 +1443,20 @@ function setYearPair(i) {
 function stepYear(dir) {
   playing = false;
   if (triPieMode && triPieYears) {                 // step the 3-PIE year — all three re-fill at once
+    const prevTp = liveData();
     yi = (yi + dir + years.length) % years.length;
-    const prevTp = lastTriPie;
     lastTriPie = triPieYears[yi];
-    setDataPair(prevTp, lastTriPie);
+    setDataPair(prevTp, lastTriPie, true);
     field.setStagger(0.6);
     t = 0; pieMorphStart = performance.now(); pieMorphing = true;
     refreshHud();
     return;
   }
   if (pieMode && pieYears) {                       // step the PIE year with an ANIMATED morph
+    const prevPie = liveData();
     yi = (yi + dir + years.length) % years.length;
-    const prevPie = lastPie;
     lastPie = pieYears[yi];
-    setDataPair(prevPie, lastPie);
+    setDataPair(prevPie, lastPie, true);
     field.setStagger(0.6);
     t = 0; pieMorphStart = performance.now(); pieMorphing = true;
     refreshHud();
@@ -1443,32 +1473,33 @@ function flipCrime(dir) {
   flipTo(crimeTypes[(i + dir + crimeTypes.length) % crimeTypes.length]);
 }
 // Flip straight to a named crime (the sentence's crime popover) — the SAME door + transition as ↑↓.
+// A flip that arrives mid-flip RETARGETS from the live pose (the last crime asked for wins) — never dropped.
 function flipTo(next) {
-  if (flipping || flockMode || !crimeTypes.includes(next)) return;
-  if (next === crimeType) return;
+  if (flockMode || !crimeTypes.includes(next)) return;
+  if (flipping ? next === flipTarget : next === crimeType) return;
   if (canyonMode) { // canyon: sink flat → swap the landform → rise as the new crime. aZ is ONE
-    if (canyonFlipTo) return;                 // attribute (it snaps on setTarget), so the swap hides
-    canyonFlipTo = next;                      // at zero height — tick performs it once the range is flat.
-    refreshHud(next);
+    if (next === crimeType && !canyonFlipTo) return; // attribute (it snaps on setTarget), so the swap hides at zero
+    canyonFlipTo = next === crimeType ? '' : next;   // height — tick performs it once the range is flat. A newer
+    refreshHud(canyonFlipTo || crimeType);           // pick replaces a pending one (last wins).
     return;
   }
   if (pulseMode) { // pulse: cross-fade this month, old crime → new crime (lazy build evicts the old months)
-    const from = pulseData.layouts[mi];
+    const from = liveData();
     crimeType = next;
     layouts = layoutsByType[crimeType];
     buildPulse();
-    setDataPair(from, pulseData.layouts[mi]);
+    setDataPair(from, pulseData.layouts[mi], true);
     field.setStagger(0.6);
     t = 0; pieMorphStart = performance.now(); pieMorphing = true; // completion re-anchors to setMonthPair(mi)
     refreshHud();
     return;
   }
   if (forensicsMode) { // re-sort the strip to the new crime — columns fly to their new ranks
+    const prev = liveData();
     crimeType = next;
     layouts = layoutsByType[crimeType];
-    const prev = lastForensics;
     lastForensics = forensicsBuilder(crimeType);
-    setDataPair(prev, lastForensics);
+    setDataPair(prev, lastForensics, true);
     field.setStagger(0.6);
     startStructTransition(forensicsFrameLayout(structN, lastForensics.frame, { frameDots: pieFrameDots, thin: pieThin }));
     t = 0; pieMorphStart = performance.now(); pieMorphing = true;
@@ -1476,22 +1507,23 @@ function flipTo(next) {
     return;
   }
   if (pieMode) {
+    const prevPie = liveData();
     crimeType = next;
     layouts = layoutsByType[crimeType];
     pieYears = years.map((_, k) => pieBuilder(crimeType, k, { cx: 0, cy: 0, R: PIE_R }));
-    const prevPie = lastPie;
     lastPie = pieYears[yi];
-    setDataPair(prevPie, lastPie);
+    setDataPair(prevPie, lastPie, true);
     field.setStagger(0.6);
     t = 0; pieMorphStart = performance.now(); pieMorphing = true;
     refreshHud();
     return;
   }
+  const from = liveData();                   // mid-flip (or mid-year) → from where the dots ARE
   flipTarget = next;
   flipping = true;
   flipStart = performance.now();
   morphStart = -1;
-  setDataPair(layoutsByType[crimeType][yi], layoutsByType[next][yi]);
+  setDataPair(from, layoutsByType[next][yi], true);
   if (unlitField && unlitShown) { // the shadow flips WITH the reported field — or flies home if the next crime has no rate
     unlitField.setStagger(0.6);
     unlitSet(unlitLive(), RATES.rates[next] ? unlitL(yi, next) : unlitRoost());
@@ -1530,22 +1562,20 @@ function monthRaw(type) {
   return v;
 }
 
-// THE SENTENCE — `place · crime · year · count  unlit`. Every tappable part names its action (dockAct).
+// THE READOUT — line 1 the place (‹ backs out: of the suburb, else to the province — the same view kept),
+// line 2 `crime · year · count · unlit`. Every tappable part names its action (dockAct). Nothing is locked: a
+// place pick drives the door (same view, other place); the lens off the map takes you to the map, lens on.
 function sentenceModel(type = crimeType) {
   const label = crimeLabels[type] || type;
   const focusS = focusedStation();
-  const canDrill = !drilling && !pieMode && !triPieMode && !tollMode && !canyonMode && !flockMode && !forensicsMode;
-  const place = [];
-  if (region === 'wc') place.push({ text: 'Western Cape', act: focusS ? 'unfocus' : 'districts', off: !canDrill });
-  else {
-    place.push({ text: 'Western Cape', act: 'drillOut', off: !canDrill });
-    place.push({ text: REGION_META[region].name, act: focusS ? 'unfocus' : null, off: !canDrill });
-  }
-  if (focusS) place.push({ text: focusS.name });
-  const lens = { on: unlitOn && !unlitBlocked(), off: unlitBlocked() };
-  const m = { place, lens };
+  const m = {
+    back: focusS || region !== 'wc' ? { act: 'drillOut' } : null,
+    place: focusS ? { text: focusS.name, act: 'relocate' }
+      : { text: (REGION_META[region] || REGION_META.wc).name, act: 'districts' },
+    lens: { on: unlitOn && !unlitBlocked(), off: false },
+  };
   if (tollMode) {
-    m.crime = { text: 'murder · the toll' };
+    m.crime = { text: 'murder · the toll' };                     // the toll is recorded murders — no other crime
     m.year = { text: null, act: tollPhase === 'toll' ? 'play' : null }; // the dial clock writes the year + count
     m.count = { text: null };
     return m;
@@ -1572,7 +1602,7 @@ function sentenceModel(type = crimeType) {
     return m;
   }
   m.crime = { text: label, act: 'crimes' };
-  const countOff = drilling;
+  const countOff = false;
   if (pulseMode) {
     m.year = { text: fmtMonth(monthLabels[mi]), act: 'play' };
     m.count = { value: inMode(monthRaw(type)[mi]), unit: unitOf(), act: 'percapita', off: countOff };
@@ -1621,6 +1651,7 @@ function refreshHud(type = crimeType) {
   if (tollMode) updateTollHud(true); // the dial clock owns the year + count
   ribbonNow = ribbonSpec(type);
   light.setRibbon(ribbonNow);
+  light.setReadout(readoutBacking()); // the soft backing follows the readout's text (a shade only — the claims stay fixed)
   refreshDock();
   scheduleIcons();   // the living dock's miniatures follow crime / year / region / mode (debounced, cached)
 }
@@ -1638,119 +1669,84 @@ function updateFlag() {
     : `◆ SAPS crime records · DataFirst + saps.gov.za · ${span}`);
 }
 
-// Morph off the map into a robbery pie and back. Data swarms into the wedges, structure into the ring
-// + spokes — conserved, staggered, no fades.
-function togglePie() {
-  if (!pieBuilder || !field || canyonMode || flockMode || forensicsMode) return;
-  if (focusMode) exitFocus(false); // pies read the whole field — the write below replaces the pair
-  pieMode = !pieMode;
-  playing = false;
-  if (pieMode) {
-    unlitBlock(); // no estimate in the pies (v1)
+// THE CONSERVED-SWARM SCENES — map ⇄ pie ⇄ compare ⇄ forensics are ONE morph: the data swarms into the
+// target's arrangement, the structure into its frame, the camera glides to its home — always FROM THE LIVE POSE
+// (liveData / bakeStructPose), so a second intent mid-flight RETARGETS instead of snapping or being dropped.
+// morphScene is the door's primitive (goTo calls it); the old togglers are thin wrappers so every key, icon
+// and word takes the same path.
+function morphScene(T) {
+  if (!field) return;
+  const from = liveData();                         // exactly what's on screen — any scene, any clock, mid-flight
+  if (flipping) { flipping = false; crimeType = flipTarget; layouts = layoutsByType[crimeType]; } // a flip in flight lands in the new scene
+  if (focusMode && T !== 'map') exitFocus(false);  // pies + the strip read the whole field (focus composes with the map only)
+  if (pulseMode && T !== 'map') leavePulse();      // the pies are yearly — the months leave from wherever they are
+  if (T !== 'map') unlitBlock();                   // no estimate off the map (v1)
+  pieMode = T === 'pie'; triPieMode = T === 'compare'; forensicsMode = T === 'forensics';
+  playing = false; morphStart = -1;
+  let dataT, frameT;
+  if (T === 'pie') {
     pieYears = years.map((_, i) => pieBuilder(crimeType, i, { cx: 0, cy: 0, R: PIE_R }));
-    const pie = pieYears[yi];
-    lastPie = pie;
-    setDataPair(layoutsByType[crimeType][yi], pie);
-    field.setStagger(0.6);
-    structField.setSize(PIE_LINE_SIZE);
-    startStructTransition(pieFrameLayout(structN, { cx: 0, cy: 0, R: PIE_R, boundaries: pie.boundaries, frameDots: pieFrameDots, thin: pieThin }));
-  } else {
-    setDataPair(lastPie, layoutsByType[crimeType][yi]);
-    field.setStagger(0.55);
-    structField.setSize(structDotSize);
-    startStructTransition(structRest());
-  }
-  homeScene(PIE_MS);
-  t = 0; pieMorphStart = performance.now(); pieMorphing = true;
-  refreshHud();
-}
-
-// Break the single pie into THREE — robbery · burglary · murder, same year, side by side.
-function toggleTriPie() {
-  if (!triPieBuilder || !field || canyonMode || flockMode || forensicsMode) return;
-  if (focusMode) exitFocus(false); // pies read the whole field — the write below replaces the pair
-  const wasPie = pieMode;
-  triPieMode = !triPieMode;
-  playing = false;
-  if (triPieMode) {
-    pieMode = false;
-    unlitBlock(); // no estimate in the compare view (v1)
+    dataT = lastPie = pieYears[yi];
+    frameT = pieFrameLayout(structN, { cx: 0, cy: 0, R: PIE_R, boundaries: lastPie.boundaries, frameDots: pieFrameDots, thin: pieThin });
+  } else if (T === 'compare') {
     triPieYears = years.map((_, i) => triPieBuilder(i, { gap: TRI_GAP, R: TRI_R }));
-    const tp = triPieYears[yi]; lastTriPie = tp;
-    const dataSrc = wasPie && lastPie ? lastPie : layoutsByType[crimeType][yi];
-    setDataPair(dataSrc, tp);
-    field.setStagger(0.6);
-    structField.setSize(PIE_LINE_SIZE);
-    startStructTransition(triPieFrameLayout(structN, { centers: tp.centers, R: TRI_R, boundaries: tp.boundaries, frameDots: pieFrameDots, thin: pieThin }));
+    dataT = lastTriPie = triPieYears[yi];
+    frameT = triPieFrameLayout(structN, { centers: lastTriPie.centers, R: TRI_R, boundaries: lastTriPie.boundaries, frameDots: pieFrameDots, thin: pieThin });
+  } else if (T === 'forensics') {
+    dataT = lastForensics = forensicsBuilder(crimeType);
+    frameT = forensicsFrameLayout(structN, lastForensics.frame, { frameDots: pieFrameDots, thin: pieThin });
   } else {
-    setDataPair(lastTriPie, layoutsByType[crimeType][yi]);
-    field.setStagger(0.55);
-    structField.setSize(structDotSize);
-    startStructTransition(structRest());
+    dataT = pulseMode && pulseData ? pulseData.layouts[mi] : layoutsByType[crimeType][yi];
+    frameT = structRest();
   }
+  setDataPair(from, dataT, true);
+  field.setStagger(T === 'map' ? 0.55 : 0.6);
+  structField.setSize(T === 'map' ? structDotSize : PIE_LINE_SIZE);
+  startStructTransition(frameT);
   homeScene(PIE_MS);
-  t = 0; pieMorphStart = performance.now(); pieMorphing = true;
+  t = 0; pieMorphStart = performance.now(); pieMorphing = true;  // completion re-anchors the year pair on the map
   refreshHud();
+  updateFlag();
 }
-
-// The forensics strip ('X'): the field morphs off the map into ranked ribbons of monthly returns
-// and back. Entered from the FLAT MAP only (pies/pulse/terrain each have their own exits first);
-// inside it, ↑↓ re-sorts to another crime — the re-sort IS the show. Data swarms to the columns,
-// structure to the baseline + seams + D=1 tick — conserved, staggered, no fades (pie grammar).
-function toggleForensics() {
-  if (!forensicsBuilder || !field || drilling) return;
-  if (!forensicsMode && (pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode || flockMode)) return;
-  forensicsMode = !forensicsMode;
-  playing = false;
-  if (forensicsMode) {
-    unlitBlock();                                   // the strip reads the recorded returns — the estimate leaves
-    if (focusMode) exitFocus(false);                // the whole province re-sorts — focus lets go first
-    lastForensics = forensicsBuilder(crimeType);
-    setDataPair(layoutsByType[crimeType][yi], lastForensics);
-    field.setStagger(0.6);
-    structField.setSize(PIE_LINE_SIZE);
-    startStructTransition(forensicsFrameLayout(structN, lastForensics.frame, { frameDots: pieFrameDots, thin: pieThin }));
-  } else {
-    setDataPair(lastForensics, layoutsByType[crimeType][yi]);
-    field.setStagger(0.55);
-    structField.setSize(structDotSize);
-    startStructTransition(structRest());
-  }
-  homeScene(PIE_MS);
-  t = 0; pieMorphStart = performance.now(); pieMorphing = true;
-  refreshHud();
-  updateFlag(); // the strip runs on the monthly series — credit the quarterlies while inside
+const togglePie = () => goTo(pieMode ? 'map' : 'pie');
+const toggleTriPie = () => goTo(triPieMode ? 'map' : 'compare');
+const toggleForensics = () => goTo(forensicsMode ? 'map' : 'forensics');
+// Leave the months without re-seeding the years first — the next morph flies from the month on screen.
+function leavePulse() {
+  if (!pulseMode) return;
+  pulseMode = false; playing = false; morphStart = -1;
+  updateFlag();
 }
 
 // Toggle raw ⇄ per-capita ('C'). The DATA field morphs to the same view in the new mode — dense
 // townships shrink, low-population hotspots swell, because rate ≠ count. Works in every view + region.
+// From the live pose: pressed mid-morph it retargets.
 function toggleMode() {
   if (!field || canyonMode || flockMode || forensicsMode) return; // the canyon is per-capita ONLY; the strip's tallies are counts, not rates
   const newMode = dataMode === 'raw' ? 'percapita' : 'raw';
-  const oldMapLayout = layoutsByType[crimeType][yi];
+  const from = liveData();
   applyMode(newMode);
   playing = false;
   if (pieMode) {
     pieYears = years.map((_, i) => pieBuilder(crimeType, i, { cx: 0, cy: 0, R: PIE_R }));
-    const oldPie = lastPie, pie = pieYears[yi]; lastPie = pie;
-    setDataPair(oldPie, pie);
+    const pie = pieYears[yi]; lastPie = pie;
+    setDataPair(from, pie, true);
     field.setStagger(0.6);
     startStructTransition(pieFrameLayout(structN, { cx: 0, cy: 0, R: PIE_R, boundaries: pie.boundaries, frameDots: pieFrameDots, thin: pieThin }));
   } else if (triPieMode) {
     triPieYears = years.map((_, i) => triPieBuilder(i, { gap: TRI_GAP, R: TRI_R }));
-    const oldTp = lastTriPie, tp = triPieYears[yi]; lastTriPie = tp;
-    setDataPair(oldTp, tp);
+    const tp = triPieYears[yi]; lastTriPie = tp;
+    setDataPair(from, tp, true);
     field.setStagger(0.6);
     startStructTransition(triPieFrameLayout(structN, { centers: tp.centers, R: TRI_R, boundaries: tp.boundaries, frameDots: pieFrameDots, thin: pieThin }));
   } else if (pulseMode) {
     // pulse: same month, raw ⇄ per-capita dot budgets (the provider's monthly() is mode-aware)
-    const from = pulseData.layouts[mi];
     buildPulse();
-    setDataPair(from, pulseData.layouts[mi]);
+    setDataPair(from, pulseData.layouts[mi], true);
     field.setStagger(0.6);
   } else {
     // map: only the DATA redistributes; the geography frame is identical in both modes.
-    setDataPair(oldMapLayout, layoutsByType[crimeType][yi]);
+    setDataPair(from, layoutsByType[crimeType][yi], true);
     field.setStagger(0.55);
     if (unlitField && unlitShown) { // the estimate re-budgets with the mode (same pop denominators)
       unlitField.setStagger(0.55);
@@ -1765,12 +1761,13 @@ function toggleMode() {
 // Click one of the three pies → they all resolve into THAT crime, centred.
 function resolveTriToPie(ci) {
   if (!lastTriPie || !resolvePieBuilder) return;
+  const from = liveData();
   crimeType = crimeTypes[ci];
   layouts = layoutsByType[crimeType];
   const resolved = resolvePieBuilder(ci, yi, { cx: 0, cy: 0, R: PIE_R });
   pieYears = years.map((_, i) => pieBuilder(crimeType, i, { cx: 0, cy: 0, R: PIE_R }));
   lastPie = resolved;
-  setDataPair(lastTriPie, resolved);
+  setDataPair(from, resolved, true);
   field.setStagger(0.6);
   structField.setSize(PIE_LINE_SIZE);
   startStructTransition(pieFrameLayout(structN, { cx: 0, cy: 0, R: PIE_R, boundaries: resolved.boundaries, frameDots: pieFrameDots, thin: pieThin }));
@@ -1780,29 +1777,16 @@ function resolveTriToPie(ci) {
   refreshHud();
 }
 
-// The `M` key: from a pie/3-pie → swarm home to the map. On the Cape Town map → drill back out.
-function goToMap() {
-  if (tollMode) { exitToll(); return; }         // the toll drains home first
-  if (canyonMode) { toggleCanyon(); return; }   // canyon → flat map (exits exactly like terrain)
-  if (flockMode) { landFlock(); return; }       // airborne → land (M is an exit everywhere)
-  if (terrainMode) { toggleTerrain(); return; } // terrain → flat first (then M again exits pulse / drills out)
-  if (pulseMode) { exitPulse(); return; }       // pulse → back to the years
-  if (focusMode) { exitFocus(); return; }       // focused → the whole field first (M again drills out)
-  if (forensicsMode) { toggleForensics(); return; } // strip → swarm home to the map
-  if (triPieMode) { toggleTriPie(); return; }
-  if (pieMode) {
-    pieMode = false;
-    setDataPair(lastPie, layoutsByType[crimeType][yi]);
-    field.setStagger(0.55);
-    structField.setSize(structDotSize);
-    startStructTransition(structRest());
-    homeScene(PIE_MS);
-    t = 0; pieMorphStart = performance.now(); pieMorphing = true;
-    refreshHud();
-    return;
-  }
-  if (region !== 'wc') startDrill('wc'); // already in a district → M drills back out to the province
+// BACK — the `M` key and the readout's ‹: ONE step out, in the same order as ever: a ceremony or a view →
+// the map · the months → the years · a suburb → the whole field · a district's map → the province.
+function back() {
+  if (tollMode || canyonMode || flockMode || terrainMode) { goTo('map'); return; }
+  if (pulseMode) { exitPulse(); return; }
+  if (focusMode) { exitFocus(); return; }
+  if (forensicsMode || triPieMode || pieMode) { goTo('map'); return; }
+  if (region !== 'wc') startDrill('wc');
 }
+const goToMap = back;
 
 // ---- THE DRILL — one conserved swarm each (wcMain.js's grammar), the camera gliding with it ----------
 // Available ONLY from a MAP view (gated at the call sites). DATA: Cape Town's city dots travel
@@ -1823,11 +1807,12 @@ function startDrill(to) {
   drilling = true; drillTo = to; drillStart = performance.now(); playing = false;
   labelLayer.style.opacity = '0'; // labels leave with the outline (tick's drill branch skips updateLabels)
   refreshHud();                   // the sentence's place goes quiet mid-flight; the caption clears
-  field.setSource(liveMap(region));
+  field.setSource(bakeFieldPose());               // from what the eye sees (a pie, a mid-morph, a month…)
   field.setTarget(liveMap(to));
   field.setStagger(0.62);
-  structField.setSource(structCurrent);
+  structField.setSource(strProg < 1 ? bakeStructPose() : structCurrent);
   structField.setTarget(outlines[to]);
+  strProg = 1; structCurrent = outlines[to];      // the drill clock drives the frame now; it lands on the outline
   structField.setStagger(0.62);
   cam.home(mapBox(to), { dur: DRILL_MS, ease: drillEase });
   if (unlitField && unlitShown) { // the estimate can't survive the region change — it flies home with the drill
@@ -1851,7 +1836,7 @@ function enterFocus(si) {
   focusStation = si;
   peopleOn = true;                   // the residents auto-show on each fresh focus (J hides them)
   const dim = focusLayout(layouts[yi], si);
-  setDataPair(layouts[yi], dim);     // flag still false → the door passes both through untouched
+  setDataPair(liveData(), dim, true); // flag still false → the door passes both through untouched (from the live pose)
   focusMode = true;
   field.setStagger(0.55);
   t = 0; pieMorphStart = performance.now(); pieMorphing = true;
@@ -1861,12 +1846,12 @@ function enterFocus(si) {
 }
 function exitFocus(animate = true) {
   if (!focusMode) return;
-  const dim = focusLayout(layouts[yi]);  // the dimmed pose, composed while the flag is still on
+  const from = animate ? liveData() : null;  // the dimmed pose ON SCREEN, captured while the flag is still on
   focusMode = false; focusStation = -1;
   if (beaconField) beaconField.points.visible = false;
   hidePeople();
   if (animate) {                     // fade back up; completion re-anchors the undimmed year pair.
-    setDataPair(dim, layouts[yi]);   // animate:false = a boundary caller (drill/pulse/pie) immediately
+    setDataPair(from, layouts[yi], true); // animate:false = a boundary caller (drill/pulse/pie) immediately
     field.setStagger(0.55);          //   rewrites the whole pair itself, so no write here.
     t = 0; pieMorphStart = performance.now(); pieMorphing = true;
   }
@@ -1984,7 +1969,7 @@ locateInput && locateInput.addEventListener('keydown', (e) => {
   const si = matchStation(locateInput.value);
   if (si < 0) { locateMatch.textContent = 'nothing matches — try the nearest big suburb, or ◎ find me'; return; }
   closeLocate();
-  enterFocus(si);
+  runData(() => enterFocus(si));
 });
 document.getElementById('locate-me')?.addEventListener('click', () => {
   if (!navigator.geolocation) { locateMatch.textContent = 'no location on this device — type your suburb instead'; return; }
@@ -2005,19 +1990,25 @@ document.getElementById('locate-me')?.addEventListener('click', () => {
       return;
     }
     closeLocate();
-    enterFocus(best);
+    runData(() => enterFocus(best));
   }, () => { locateMatch.textContent = 'location unavailable — type your suburb instead'; }, { timeout: 8000, maximumAge: 60000 });
 });
 document.getElementById('locate-close')?.addEventListener('click', closeLocate);
 locateEl && locateEl.addEventListener('click', (e) => { if (e.target === locateEl) closeLocate(); });
 
-window.addEventListener('keydown', (e) => {
+// THE KEYS. Scene keys go through the door from ANY scene (the key of the scene you're in steps back to the
+// map, as ever): P pie · 3 compare · T terrain · V canyon · X forensics · K toll · F release · H suburb · M back.
+// Data keys (space ←→ ↑↓ C U J N Esc) keep their meanings; mid-transition they RETARGET (crime flips) or wait
+// in the single queue slot and run when it lands — never silently dropped.
+const SCENE_KEYS = { KeyP: 'pie', Digit3: 'compare', KeyT: 'terrain', KeyV: 'canyon', KeyX: 'forensics', KeyK: 'toll', KeyF: 'release' };
+window.addEventListener('keydown', (e) => onKey(e));
+function onKey(e) {
   lastInputAt = performance.now();
-  if (dock.popOpen()) { // any key closes a dock popover (its numbers would go stale); Esc is spent on closing it
+  if (dock.popOpen()) { // any key closes a popover (its numbers would go stale); Esc is spent on closing it
     dock.closePop();
     if (e.code === 'Escape') { e.preventDefault(); return; }
   }
-  if (aboutEl && aboutEl.classList.contains('open')) { // the about card swallows keys; Esc closes
+  if (aboutEl && aboutEl.classList.contains('open')) { // the help sheet swallows keys; Esc closes
     if (e.code === 'Escape') { e.preventDefault(); toggleAbout(false); }
     return;
   }
@@ -2025,114 +2016,185 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'Escape') { e.preventDefault(); closeLocate(); }
     return;
   }
-  if (e.key === '?' || e.code === 'Slash') { e.preventDefault(); toggleAbout(); return; } // ? opens the card from ANY state
-  if (e.code === 'Digit0' || e.code === 'Numpad0') { e.preventDefault(); if (!drilling) homeScene(REHOME_MS); return; } // ⌂ — any state, never lands the flock
-  if (e.code === 'KeyP' && e.shiftKey) { e.preventDefault(); setPalette(nextPalette(paletteName), true); return; } // Shift+P cycles the palette candidates (any state)
-  if (tollMode) { // the toll swallows the toolkit: space pauses, 1 holds the 1:1 drip, K/M/Esc end it
-    if (e.code === 'Space') { e.preventDefault(); tollPauseToggle(); }
-    else if (e.code === 'Digit1') { e.preventDefault(); if (!tollHoldKey) { tollHoldKey = true; refreshHud(); } }
-    else if (e.code === 'KeyK' || e.code === 'KeyM' || e.code === 'Escape') { e.preventDefault(); exitToll(); }
-    return;
-  }
-  if (drilling) return; // input is quiet mid-transition
-  if (flockMode) { // airborne: ANY key lands the field (it's the attract state — input means "wake")
+  if (e.key === '?' || e.code === 'Slash') { e.preventDefault(); toggleAbout(); return; } // ? opens the sheet from ANY state
+  if (e.code === 'Digit0' || e.code === 'Numpad0') { e.preventDefault(); runData(() => homeScene(REHOME_MS)); return; } // ⌂ — any state, never lands the flock
+  if (e.code === 'KeyP' && e.shiftKey) { e.preventDefault(); setPalette(nextPalette(paletteName), true); return; } // Shift+P cycles the palette candidates
+  if (tollMode && (e.code === 'Space' || e.code === 'Digit1')) { // the toll's own grammar: space pauses, 1 holds the 1:1 drip
     e.preventDefault();
-    landFlock();
+    if (e.code === 'Space') tollPauseToggle(); else if (!tollHoldKey) { tollHoldKey = true; refreshHud(); }
     return;
   }
-  if (e.code === 'KeyH') { e.preventDefault(); if (focusMode) exitFocus(); else openLocate(); return; }
-  if (pulseMode) { // the pulse has its own clock: arrows step months, N/M return to years
-    if (e.code === 'KeyN' || e.code === 'KeyM') { e.preventDefault(); exitPulse(); }
-    else if (e.code === 'Space') { e.preventDefault(); playing = !playing; if (playing) { holdUntil = performance.now(); morphStart = -1; } }
+  const scene = SCENE_KEYS[e.code];
+  if (scene) { e.preventDefault(); goTo(currentScene() === scene ? 'map' : scene); return; }
+  if (e.code === 'KeyH') { e.preventDefault(); if (focusMode) runData(() => exitFocus()); else goTo('suburb'); return; }
+  if (e.code === 'KeyM') { e.preventDefault(); runData(back); return; }
+  if (tollMode) { if (e.code === 'Escape') { e.preventDefault(); goTo('map'); } return; } // the dial owns time in the ceremony
+  if (flockMode && flockPhase !== 'land') { e.preventDefault(); landFlock(); return; } // airborne: any other key lands the field (wake)
+  const crimeKey = e.code === 'ArrowUp' || e.code === 'ArrowDown';
+  if (heavyBusy() || (flipping && !crimeKey)) { // mid-transition: wait for it (one slot, the last key wins)
+    if (['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyC', 'KeyU', 'KeyJ', 'KeyN', 'Escape'].includes(e.code)) {
+      e.preventDefault();
+      const ev = { code: e.code, key: e.key, shiftKey: e.shiftKey, preventDefault() {} };
+      queuedData = () => onKey(ev);
+    }
+    return;
+  }
+  if (e.code === 'KeyN') { e.preventDefault(); if (pulseMode) exitPulse(); else pulseOn(); return; }
+  if (e.code === 'KeyU') { e.preventDefault(); unlitAct(); return; }   // off the map it takes you to the map, lens on
+  if (pulseMode) { // the pulse has its own clock: arrows step months
+    if (e.code === 'Space') { e.preventDefault(); playing = !playing; if (playing) { holdUntil = performance.now(); morphStart = -1; } }
     else if (e.code === 'ArrowRight') { e.preventDefault(); stepMonth(1); }
     else if (e.code === 'ArrowLeft') { e.preventDefault(); stepMonth(-1); }
     else if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
     else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
     else if (e.code === 'KeyC') { e.preventDefault(); toggleMode(); }
-    else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); }
     return;
   }
-  if (canyonMode) { // the canyon's own quiet toolkit: flip the landform's crime, or leave
-    if (e.code === 'KeyV' || e.code === 'KeyM') { e.preventDefault(); toggleCanyon(); }
-    else if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
+  if (canyonMode || forensicsMode) { // all years (or months) at once: ↑↓ re-shape / re-sort to another crime
+    if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
     else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
     return;
   }
-  if (forensicsMode) { // the strip's own keys: ↑↓ re-sorts to another crime, X or M swarms home
-    if (e.code === 'KeyX' || e.code === 'KeyM') { e.preventDefault(); toggleForensics(); }
-    else if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
-    else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
-    return;
-  }
-  if (e.code === 'KeyX') { e.preventDefault(); toggleForensics(); return; }
-  if (e.code === 'KeyN') { e.preventDefault(); enterPulse(); return; }
-  if (e.code === 'KeyK') { e.preventDefault(); enterToll(); return; } // province flat map only (guards itself)
-  if (e.code === 'KeyF') { e.preventDefault(); enterFlock(); return; } // release the field (province map only — guards itself)
   if (e.code === 'KeyC') { e.preventDefault(); toggleMode(); return; }
-  if (e.code === 'Digit3') { e.preventDefault(); toggleTriPie(); return; }
   if (triPieMode) {
-    if (e.code === 'KeyM') { e.preventDefault(); goToMap(); }
-    else if (e.code === 'ArrowRight') { e.preventDefault(); stepYear(1); }
+    if (e.code === 'ArrowRight') { e.preventDefault(); stepYear(1); }
     else if (e.code === 'ArrowLeft') { e.preventDefault(); stepYear(-1); }
     return;
   }
   if (e.code === 'Space') { e.preventDefault(); playing = !playing; if (playing) { holdUntil = performance.now(); if (pieMode) setYearPair(yi); } }
-  else if (e.code === 'KeyP') { e.preventDefault(); togglePie(); }
-  else if (e.code === 'KeyM') { e.preventDefault(); goToMap(); }
   else if (e.code === 'ArrowRight') { e.preventDefault(); stepYear(1); }
   else if (e.code === 'ArrowLeft') { e.preventDefault(); stepYear(-1); }
   else if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
   else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
-  else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); } // Cape Town relief (no-op in the province)
-  else if (e.code === 'KeyV') { e.preventDefault(); toggleCanyon(); }  // time as the landform (guards itself)
-  else if (e.code === 'KeyU') { e.preventDefault(); toggleUnlit(); }   // the unlit field (map views only)
   else if (e.code === 'KeyJ') { e.preventDefault(); togglePeople(); } // hide/show the residents (focus only)
   else if (e.code === 'Escape') { if (focusMode) { e.preventDefault(); exitFocus(); } }
-});
+}
 window.addEventListener('keyup', (e) => { // release the toll's 1:1 hold
   if (e.code === 'Digit1' && tollHoldKey) { tollHoldKey = false; if (tollMode) refreshHud(); }
 });
 
-// THE ACTION TABLE — the SAME actions the keys drive, reached from the dock (touch parity: on a phone the
-// keyboard toolkit doesn't exist). Guards mirror the keydown handler: input is quiet mid-drill (dockAct), a
-// released field only listens to its landings, and every toggle below guards itself as its key does.
+// ---- THE NAVIGATION DOOR — goTo(scene, opts) --------------------------------------------------------------
+// Every scene is reachable from everywhere: map · pie · compare · terrain · canyon · forensics · toll · suburb
+// · release. The door asks the pure planner (src/hud/nav.js) for ONE step, performs it with the scene's own
+// existing function, and asks again on a later frame once any heavy transition it started has settled — the
+// ceremonies unwind (toll drain-home, canyon sink, terrain flat, flock land), the place changes (a drill from
+// the live pose), then the target enters. Keys, icons and the readout all come through here; every old guard
+// stays inside the functions as a safety net. ONE pending target (the last asked for wins); its icon pulses.
+let navTarget = null, navOpts = {};
+const hasDEM = (rk = region) => !!(regionData[rk] && regionData[rk].terrain && regionData[rk].terrain.elev);
+const currentScene = () => sceneOf(navState());
+function navState() {
+  return { flock: flockMode, toll: tollMode, canyon: canyonMode, forensics: forensicsMode, terrain: terrainMode,
+    compare: triPieMode, pie: pieMode, focus: focusMode, pulse: pulseMode, unlit: unlitOn, region, hasDEM: hasDEM(), morphing: pieMorphing };
+}
+function goTo(scene, opts = {}) {
+  if (!field || !scene) return;
+  lastInputAt = performance.now();
+  navTarget = scene; navOpts = opts;
+  advanceNav();
+  refreshDock();
+}
+// A HEAVY transition is one the engine can't retarget from the live pose — its own clock must land first:
+// a drill, the flock landing, the toll's gather / drain / home, the canyon rising or sinking, the relief (and
+// the field's lean) rising or settling. Everything else (map ⇄ pie ⇄ compare ⇄ forensics, crime flips, year
+// steps, per-capita, focus) retargets immediately.
+function heavyBusy() {
+  if (drilling) return true;
+  if (flockMode && flockPhase === 'land') return true;
+  if (tollMode && tollPhase !== 'toll') return true;
+  if (canyonField && (canyonMode ? pieMorphing : canyonField.points.visible)) return true;
+  if (terrainField && (trProg < 1 || (!terrainMode && terrainField.points.visible))) return true;
+  return Math.abs(tiltCur - ((terrainMode || canyonMode) ? tiltAngle : 0)) > 0.02;
+}
+function advanceNav() {
+  if (!navTarget || heavyBusy()) return;
+  const target = navTarget;
+  const { step, final } = navPlan(navState(), target, navOpts);
+  if (step === 'wait') return;
+  if (final) { navTarget = null; navOpts = {}; }
+  runStep(step);
+  if (step === 'impossible') showImpossible(target);
+  refreshDock();
+}
+function runStep(step) {
+  switch (step) {
+    case 'done': case 'impossible': return;
+    case 'landFlock': landFlock(); return;
+    case 'exitToll': exitToll(); return;
+    case 'exitCanyon': toggleCanyon(); return;
+    case 'flatTerrain': case 'enterTerrain': toggleTerrain(); return;
+    case 'exitFocus': exitFocus(); return;
+    case 'openLocate': openLocate(); return;
+    case 'enterPulse': enterPulse(); return;
+    case 'exitPulse': exitPulse(); return;
+    case 'enterUnlit': toggleUnlit(); return;
+    case 'enterCanyon': prepHeavy(); toggleCanyon(); return;
+    case 'enterToll': prepHeavy(); enterToll(); return;
+    case 'enterFlock': prepHeavy(); enterFlock(); return;
+    default:
+      if (step.startsWith('drill:')) { prepHeavy(); startDrill(step.slice(6)); return; }
+      if (step.startsWith('morph:')) morphScene(step.slice(6));
+  }
+}
+// Before a heavy entry (or a drill): the conserved-swarm view's flags drop (its frame heads home), the months
+// leave quietly, an in-flight flip lands its crime and the morph clock stops — the entry flies from the live pose.
+function prepHeavy() {
+  if (pieMode || triPieMode || forensicsMode) {
+    pieMode = triPieMode = forensicsMode = false;
+    structField.setSize(structDotSize);
+    startStructTransition(structRest());
+  }
+  leavePulse();
+  if (flipping) { flipping = false; crimeType = flipTarget; layouts = layoutsByType[crimeType]; }
+  pieMorphing = false; morphStart = -1;
+}
+function showImpossible(scene) { dock.setCaption(scene === 'terrain' ? `no elevation data for ${(REGION_META[region] || REGION_META.wc).name} in this build` : ''); }
+
+// NEVER DROP INPUT — a data intent that arrives while a heavy transition (or, for non-crime intents, a flip)
+// is in flight waits in ONE slot (the last intent wins) and runs the moment it lands. Crime flips retarget.
+let queuedData = null;
+const dataBusy = () => heavyBusy() || flipping;
+function runData(fn) { if (dataBusy()) queuedData = fn; else fn(); }
+function runCrime(fn) { if (heavyBusy()) queuedData = fn; else fn(); }
+function flushQueue() {
+  if (navTarget) advanceNav();
+  if (queuedData && !dataBusy()) { const f = queuedData; queuedData = null; f(); }
+}
+
+// THE ACTION TABLE — what the readout's words, the ribbon bar and the view icons ask for (the keys ask for the
+// same things). Scene intents go through the door; the rest run now, or wait their turn (runData).
+const pulseOn = () => { if (pulseMode) return; const sc = currentScene(); if (sc === 'map' || sc === 'terrain' || sc === 'suburb') enterPulse(); else goTo('map', { pulse: true }); };
+const unlitAct = () => (pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode || flockMode || focusMode || forensicsMode
+  ? goTo('map', { unlit: true }) : toggleUnlit()); // off the map, the lens takes you to the map WITH the estimate on
+const outScene = () => { const sc = currentScene(); return sc === 'suburb' || sc === 'toll' || sc === 'release' ? 'map' : sc; };
 const ACTIONS = {
   play: () => { if (triPieMode || canyonMode || forensicsMode) return; if (tollMode) { tollPauseToggle(); return; } playing = !playing; if (playing) { holdUntil = performance.now(); if (pulseMode) morphStart = -1; else if (pieMode) setYearPair(yi); } },
-  percapita: () => { if (!tollMode) toggleMode(); }, // toggleMode guards canyon/flock/forensics; the toll swallows C
-  unlit: () => toggleUnlit(),     // guards itself (map views only)
-  // The map WORD: back to the map from any other view. Already on a map (pulse/focus included) it holds —
-  // drilling out is the place crumb's job (M still does both, exactly as before).
-  map: () => { if (pieMode || triPieMode || terrainMode || canyonMode || forensicsMode || tollMode || flockMode) goToMap(); },
-  pie: () => { if (triPieMode || pulseMode) return; togglePie(); },
-  compare: () => { if (pulseMode) return; toggleTriPie(); },
-  terrain: () => toggleTerrain(), // guards itself (needs a loaded DEM, no pies, no drill)
-  canyon: () => toggleCanyon(),   // guards itself (flat map views only)
-  forensics: () => toggleForensics(), // guards itself (flat map in, X/M out)
-  toll: () => (tollMode ? exitToll() : enterToll()),
-  release: () => (flockMode ? landFlock() : enterFlock()), // guards itself (province flat map only)
-  suburb: () => (focusMode ? exitFocus() : openLocate()), // same toggle as the H key
-  pulse: (on) => (on ? enterPulse() : exitPulse()),       // the ribbon's years | months switch (N)
-  crime: (ty) => flipTo(ty),                              // the sentence's crime popover
-  resolve: (ci) => resolveTriToPie(ci),                   // …in compare: open that crime's pie
-  drill: (rk) => startDrill(rk),                          // the place popover (province → a district)
-  drillOut: () => startDrill('wc'),                       // "Western Cape" in a district
-  unfocus: () => exitFocus(),                             // the district/province crumb while standing in a suburb
+  percapita: () => { if (!tollMode) toggleMode(); }, // toggleMode guards canyon/flock/forensics; the toll is raw murders
+  unlit: unlitAct,
+  pulse: (on) => (on ? pulseOn() : exitPulse()),       // the ribbon's years | months switch (N)
+  drill: (rk) => goTo(outScene(), { region: rk }),     // the place list: the same view, another place
+  drillOut: () => (focusMode ? exitFocus() : goTo(outScene(), { region: 'wc' })), // ‹ — out of the suburb, else the district
+  relocate: () => openLocate(),                        // tap the suburb's name → pick another
 };
-const FLOCK_OK = new Set(['release', 'map']);            // airborne, only the landings respond (+ help/home/scrub below)
-
 // ONE door for every dock intent (dock.js calls act(name, arg, el)).
 function dockAct(name, arg, el) {
   lastInputAt = performance.now();
+  wakeChrome();
   if (name === 'help') { toggleAbout(); return; }
-  if (name === 'home') { if (!drilling) homeScene(REHOME_MS); return; } // the compass = the 0 key (never lands the flock)
-  if (name === 'scrub') { scrubTo(arg); return; }
-  if (drilling) return;                                   // input is quiet mid-transition
-  const act = name === 'view' ? arg : name;
-  if (flockMode && !FLOCK_OK.has(act)) return;
-  if (act === 'crimes') { openCrimes(el); return; }
-  if (act === 'districts') { openDistricts(el); return; }
-  const f = ACTIONS[act];
-  if (f) f(arg);
+  if (name === 'home') { runData(() => homeScene(REHOME_MS)); return; } // the compass = the 0 key (never lands the flock)
+  if (name === 'scrub') { runData(() => scrubTo(arg)); return; }
+  if (name === 'view') { viewAct(arg); return; }
+  if (name === 'crimes') { openCrimes(el); return; }                     // popovers open any time; their picks wait if they must
+  if (name === 'districts') { openDistricts(el); return; }
+  if (name === 'crime') { runCrime(() => flipTo(arg)); return; }
+  if (name === 'resolve') { runCrime(() => resolveTriToPie(arg)); return; }
+  const f = ACTIONS[name];
+  if (f) runData(() => f(arg));
+}
+// A view icon: go there — or, when it's the scene you're in, step back to the map (the keys' toggle grammar).
+function viewAct(name) {
+  if (name === 'suburb') { if (focusMode) runData(() => exitFocus()); else goTo('suburb'); return; }
+  goTo(currentScene() === name && name !== 'map' ? 'map' : name);
 }
 
 // The ribbon scrub: a click or drag lands on a column → that year (or month). Routed through stepYear so the
@@ -2144,7 +2206,7 @@ function scrubTo(col) {
   stepYear(col - yi);
 }
 
-// ---- the dock's popovers (open on tap, close on an outside tap / Esc / a pick) ----------------------------
+// ---- the popovers (open on tap, close on an outside tap / Esc / a pick — never on idle) --------------------
 const popNote = (v, unit) => (v == null ? '' : fmtValue(v, unit) + (unit === 'per 100k' ? ' /100k' : ''));
 function openCrimes(el) {
   if (tollMode || flockMode) return;
@@ -2162,17 +2224,24 @@ function openCrimes(el) {
     : canyonMode ? '' : pulseMode ? fmtMonth(monthLabels[mi]) : yearLabels[yi];
   dock.openPop(el, items, { title });
 }
+// The place list: the province + its six districts, each with this crime's number now — pick one to go there
+// in the SAME view (a pie stays a pie).
 function openDistricts(el) {
   const unit = unitOf();
-  const items = DETAIL_REGIONS.map((rk) => {
+  const valueOf = (rk) => {
+    const sts = stationsByRegion[rk];
     const raw = pulseMode && monthLabels
-      ? stationsByRegion[rk].reduce((a, st) => a + ((st.monthly && st.monthly[crimeType] && st.monthly[crimeType][mi]) || 0), 0)
+      ? sts.reduce((a, st) => a + ((st.monthly && st.monthly[crimeType] && st.monthly[crimeType][mi]) || 0), 0)
       : providers[rk].raw.totals[crimeType][yi];
-    const v = dataMode === 'percapita' ? perCap(raw, regionPop(rk)) : raw;
-    return { label: REGION_META[rk].name, note: popNote(v, unit), pick: () => dockAct('drill', rk) };
-  });
+    return dataMode === 'percapita' ? perCap(raw, regionPop(rk)) : raw;
+  };
+  const items = ['wc', ...DETAIL_REGIONS].map((rk) => ({
+    label: rk === 'wc' ? 'Western Cape — the province' : REGION_META[rk].name, note: popNote(valueOf(rk), unit),
+    cur: rk === region, pick: () => dockAct('drill', rk),
+  }));
   dock.openPop(el, items, { title: `${crimeLabels[crimeType] || crimeType} · ${pulseMode ? fmtMonth(monthLabels[mi]) : yearLabels[yi]}` });
 }
+
 // The help sheet (#about: the About card + Keys + Sources) — ?-opened only (the key or the button), never
 // automatic; ✕ / backdrop / Esc close it.
 const aboutEl = document.getElementById('about');
@@ -2184,66 +2253,79 @@ function toggleAbout(show) {
 document.getElementById('about-close')?.addEventListener('click', () => toggleAbout(false));
 aboutEl?.addEventListener('click', (e) => { if (e.target === aboutEl) toggleAbout(false); });
 
-// CINEMA -- after a few idle seconds the chrome bows out and the field stands alone — all but the brand;
-// the ribbon fades to a faint glow (its lit dots stay alive). Any pointer/key/wheel/touch brings it back.
-// The help sheet pins the chrome awake; so does the toll (its counter is its honesty channel).
-const CHROME_IDLE_MS = 6000;
+// CINEMA — after 20 s of stillness the readout + tools bow out (the brand stays; the ribbon keeps a faint glow)
+// and the field stands alone. Never while the pointer is over the chrome, a popover / the help / the locate
+// card is open, the ribbon is held, the toll runs (its counter is its honesty channel) or an intent is queued.
+// A faded control still takes the click (the chrome never stops listening) — one tap wakes AND acts.
+const CHROME_IDLE_MS = 20000;
 let chromeLastActive = performance.now();
-const wakeChrome = () => { chromeLastActive = performance.now(); document.body.classList.remove('quiet'); light.setQuiet(false); };
+function wakeChrome() { chromeLastActive = performance.now(); document.body.classList.remove('quiet'); light.wake(); }
 for (const ev of ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart']) {
-  window.addEventListener(ev, wakeChrome, { passive: true });
+  window.addEventListener(ev, wakeChrome, { passive: true, capture: true });
 }
 setInterval(() => {
-  const asleep = performance.now() - chromeLastActive > CHROME_IDLE_MS
-    && !(aboutEl && aboutEl.classList.contains('open'))
-    && !tollMode; // the counter is the toll's honesty channel — the chrome stays awake
+  const held = (aboutEl && aboutEl.classList.contains('open')) || (locateEl && locateEl.classList.contains('open'))
+    || tollMode || dock.popOpen() || dock.pointerInside() || dock.dragging() || !!navTarget || !!queuedData;
+  const asleep = !held && performance.now() - chromeLastActive > CHROME_IDLE_MS;
   document.body.classList.toggle('quiet', asleep);
   light.setQuiet(asleep);
-  if (asleep) { dock.closePop(); dock.hideTip(); }
-  light.setHudTop(dock.hudTop()); // the shade follows the dock's height (a wrapped sentence on a narrow screen)
+  if (asleep) dock.hideTip();
 }, 500);
 
-// Measure the dock (the layout truth) → the engine-drawn ribbon + compass rects. Init + every resize.
+// ---- THE LAYOUT — 'rail' (default: the view icons in a right glass rail, only the ribbon at the bottom) or
+// 'bottom' (one glass dock: the ribbon on its rim, the icons in a row beneath). Narrow screens (< 900 px) always
+// get 'bottom'. The switch is CSS classes + positions + the claims — live via __viz.hud({ layout }).
+let layoutReq = 'rail';
+const layoutMode = () => (layoutReq === 'rail' && window.innerWidth >= 900 ? 'rail' : 'bottom');
+const bodyPx = (name) => parseFloat(getComputedStyle(document.body).getPropertyValue(name)) || 0;
+// Declare the chrome's zones to the camera door (camera.js hudSafeInset reads --claim-*): the readout's two
+// lines at the top, the rail at the right, the band + the ribbon standing on it at the bottom — FIXED geometry,
+// so every home frames the scene clear of the chrome and nothing re-frames when the readout's text changes.
+function applyLayout() {
+  const mode = layoutMode();
+  document.body.classList.toggle('layout-rail', mode === 'rail');
+  document.body.classList.toggle('layout-bottom', mode === 'bottom');
+  const H = window.innerHeight, st = document.documentElement.style;
+  const line = document.getElementById('ro-line').getBoundingClientRect(), bar = dock.barRect();
+  st.setProperty('--claim-top', Math.round(line.bottom + 12) + 'px');
+  st.setProperty('--claim-bottom', Math.round(H - bar.top + 6) + 'px');
+  st.setProperty('--claim-right', mode === 'rail' ? Math.round(bodyPx('--rail-w') + 12) + 'px' : '0px');
+  st.setProperty('--claim-left', '0px');
+  return mode;
+}
+// The soft backing behind the readout — sized to its text (it's only a shade; the claims above stay fixed).
+function readoutBacking() {
+  const r = dock.readoutRect(), place = document.getElementById('ro-place'), line = document.getElementById('ro-line');
+  const w = Math.max(place.scrollWidth, line.scrollWidth, 120);
+  return { x0: r.left - 8, y0: 6, x1: r.left + Math.min(r.width, w) + 10, y1: r.top + 64 };
+}
+// Measure the chrome (the layout truth) → the engine-drawn glass, rim, ribbon + compass. Init, resize, a switch.
 function layoutHud() {
-  light.layout({ W: window.innerWidth, H: window.innerHeight, fov: camera.fov, track: dock.trackRect(), compass: dock.compassRect(), hudTop: dock.hudTop() });
+  const mode = applyLayout();
+  light.layout({
+    W: window.innerWidth, H: window.innerHeight, fov: camera.fov, track: dock.trackRect(), compass: dock.compassRect(),
+    glass: { band: bodyPx('--band'), rail: mode === 'rail' ? bodyPx('--rail-w') : 0, readout: readoutBacking() },
+  });
 }
 
-// Contextual dock: a control that would no-op in the current state DIMS instead of lying. Geometry stays
-// put (dimming, never hiding — a reflowing row is worse than a grey word). Mirrors the keydown guards
-// exactly (the old chip rules, one per word); called from refreshHud so every state change repaints it.
+// The dock's state: the ACTIVE scene brightens, a queued target PULSES, and an icon fails to form only when
+// its mode is truly impossible here (the relief with no elevation data) — its tip says why. The ribbon bar's
+// play / months / scrub dim only where they mean nothing (no single year to play in compare or the canyon).
 function refreshDock() {
-  const off = dockOffs();
-  const active = tollMode ? 'toll' : canyonMode ? 'canyon' : forensicsMode ? 'forensics' : terrainMode ? 'terrain'
-    : triPieMode ? 'compare' : pieMode ? 'pie' : flockMode ? 'release' : focusMode ? 'suburb' : 'map';
-  dock.setViews({ active, off });
+  const off = iconOffs();
+  const active = currentScene();
+  dock.setViews({ active, off, why: { terrain: `no elevation data for ${(REGION_META[region] || REGION_META.wc).name} in this build` },
+    pending: navTarget && navTarget !== active ? navTarget : null });
   dock.setRibbonBar({
     playing: livePlaying(),
     playOff: triPieMode || canyonMode || forensicsMode || flockMode,
     pulse: pulseMode,
-    switchOff: pieMode || triPieMode || !monthLabels || tollMode || canyonMode || forensicsMode || flockMode,
-    scrubOff: drilling || !ribbonNow || ribbonNow.mode === 'frame',
+    switchOff: !monthLabels,
+    scrubOff: !ribbonNow || ribbonNow.mode === 'frame',
     ncols: ribbonNow ? ribbonNow.ncols : years.length,
   });
 }
-// Which modes would no-op right now (the old chip rules, one per mode) — they FAIL TO FORM in the dock.
-function dockOffs() {
-  const noDEM = !(regionData[region] && regionData[region].terrain && regionData[region].terrain.elev);
-  const off = {
-    map: false,
-    pie: triPieMode || pulseMode || tollMode || canyonMode,
-    compare: pulseMode || tollMode || canyonMode,
-    terrain: pieMode || triPieMode || tollMode || canyonMode || noDEM,
-    canyon: !canyonMode && (pieMode || triPieMode || pulseMode || terrainMode || tollMode),
-    forensics: !forensicsMode && (pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode),
-    toll: !tollMode && (region !== 'wc' || pieMode || triPieMode || pulseMode || terrainMode || canyonMode || flockMode),
-    suburb: !focusMode && (pieMode || triPieMode || tollMode || canyonMode || forensicsMode || flockMode),
-    release: !flockMode && (region !== 'wc' || pieMode || triPieMode || pulseMode || terrainMode || tollMode || canyonMode || forensicsMode),
-  };
-  // Whole-toolkit rules LAST, so no per-mode rule above can re-light one the mode swallows.
-  if (flockMode) for (const k of Object.keys(off)) if (!FLOCK_OK.has(k)) off[k] = true;
-  if (forensicsMode) for (const k of ['pie', 'compare', 'terrain', 'canyon', 'toll']) off[k] = true;
-  return off;
-}
+const iconOffs = () => ({ terrain: !hasDEM() });
 const livePlaying = () => (tollMode ? tollPhase === 'toll' && !tollPaused : playing);
 
 // THE LIVING DOCK's miniatures — each icon = ~70 dots of what its view WOULD show for the current crime / year /
@@ -2260,7 +2342,7 @@ function scheduleIcons() { clearTimeout(iconTimer); iconTimer = setTimeout(refre
 const idle = (fn) => (typeof requestIdleCallback === 'function' ? requestIdleCallback(fn, { timeout: 400 }) : setTimeout(fn, 30));
 function refreshIcons() {
   if (!field || drilling) { if (field) scheduleIcons(); return; }   // mid-drill the region is in flux — after it lands
-  const off = dockOffs(), ty = flipping ? flipTarget : (canyonFlipTo || crimeType);
+  const off = iconOffs(), ty = flipping ? flipTarget : (canyonFlipTo || crimeType);
   iconQueue = [];
   for (const name of ICON_ORDER) {
     if (off[name]) continue;                                         // fails to form — nothing to build
@@ -2457,12 +2539,16 @@ window.__viz = {
   // frameSize, compassR, shadeMax, shadeExtra, quietRibbon, ribbonMax (CSS px; 99999 = full width) }).
   hud: (o) => {
     if (o) {
-      const { ribbonMax, ...tune } = o;
+      const { ribbonMax, layout, ...tune } = o;
       Object.assign(HUD_TUNE, tune);
       if (ribbonMax != null) document.documentElement.style.setProperty('--ribbon-max', ribbonMax + 'px');
+      if (layout === 'rail' || layout === 'bottom') layoutReq = layout;
       layoutHud(); light.retune();
+      if (layout) cam.onResize();                       // re-frame the scene between the new chrome (if still at home)
     }
-    return { tune: { ...HUD_TUNE }, ribbon: light.probe(), caption: dock.caption };
+    const cs = getComputedStyle(document.documentElement), claim = (k) => cs.getPropertyValue('--claim-' + k).trim();
+    return { layout: layoutMode(), requested: layoutReq, claims: { top: claim('top'), right: claim('right'), bottom: claim('bottom') },
+      tune: { ...HUD_TUNE }, ribbon: light.probe(), caption: dock.caption, nav: navTarget, queued: !!queuedData, busy: heavyBusy() };
   },
   // Honesty probe: the sentence's number, the ribbon's value at the current column and the field's own total
   // must agree (same totals, same denominators). → { sentence, ribbonAtCur, fieldRaw, pop, unit, agree }
@@ -3108,6 +3194,7 @@ function tick() {
   updateForensicsLabels();
   // The HUD made of light: ribbon clocks, cinema fades, and the compass — shown only while the camera is AWAY
   // from its scene's home (and not gliding back to it); it IS the map's own circle seen through the camera.
+  flushQueue();                                      // the door's next step + a queued intent, once the heavy clock lands
   const compassOn = !!field && !cam.gliding && !cam.atHome;
   dock.setCompass(compassOn);
   dock.setPlaying(livePlaying());                    // Space etc. flip `playing` without a HUD refresh
@@ -3135,6 +3222,6 @@ window.addEventListener('resize', () => {
   if (canyonField) canyonField.setPixelRatio(renderer.getPixelRatio());
   if (unlitField) unlitField.setPixelRatio(renderer.getPixelRatio());
   light.setPixelRatio(renderer.getPixelRatio());
-  cam.onResize(); // aspect + a re-fit of the current scene's home — unless your hand has moved the camera since
-  layoutHud();    // re-measure the dock → the ribbon + compass redraw into their new rects
+  layoutHud();    // FIRST: the layout (rail/bottom by width), its claims, the glass + ribbon + compass rects
+  cam.onResize(); // then aspect + a re-fit of the current scene's home, framed by the NEW claims (unless your hand moved it)
 });

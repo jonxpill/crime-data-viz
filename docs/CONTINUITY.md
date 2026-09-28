@@ -333,3 +333,8 @@ specific instruments (deferred) · where it lives / distribution · a name.
   HUE as well as light, so every column grew a cool blue "cap" that read as a second signal. Fade on a free
   channel, or quantise (whole dots, the exact number in words). Check what else a lever drives before borrowing
   it. (D5 HUD, 2026-09-28) (?)
+- **Consumers of layout should read the chrome's DECLARED geometry, not measure its live DOM.** The camera fitted
+  its home frame around the HUD by measuring the dock's rect; mid-layout (icons not yet sized) it read absurdly
+  tall, the safe rect lost all height, the fit had no solution and init threw — a black page. Declaring fixed
+  zones (`--claim-*`) from the chrome's own fixed geometry made the frame stable across state and time; measure
+  only as a fallback. (D5 usability pass, 2026-09-28) (?)

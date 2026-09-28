@@ -9,7 +9,7 @@
  */
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { createCameraDoor, fitTopDown, boxPoints, normBox, MAX_TILT } from '../src/camera.js';
+import { createCameraDoor, fitTopDown, boxPoints, normBox, MAX_TILT, hudSafeInset, declaredClaims } from '../src/camera.js';
 
 const near = (a, b, eps, msg) => assert.ok(Math.abs(a - b) <= eps, `${msg}: ${a} vs ${b} (±${eps})`);
 
@@ -143,6 +143,49 @@ const deg = MAX_TILT * 180 / Math.PI;
   cam.orbit({ spin: 20 });
   dom.clientWidth = 1440; dom.clientHeight = 860; cam.onResize();
   near(cam.state().spinDeg, 20, 1e-3, 'a moved camera is left where the hand put it');
+}
+
+// ---- 7. a resize that lands MID-GLIDE: the glide re-solves its target — it lands on the new aspect's fit ------
+{
+  const box = { w: 760, h: 820 };
+  dom.clientWidth = 1440; dom.clientHeight = 860; cam.onResize();
+  cam.home({ w: 300, h: 300 }, { dur: 0 });
+  cam.home(box, { dur: 1000 }); cam.update(20000);             // resolve → the glide starts
+  cam.update(20500);                                            // half-way
+  dom.clientWidth = 900; dom.clientHeight = 860; cam.onResize(); // the window changes under the glide
+  cam.update(22000);                                            // it lands
+  const a = cam.state();
+  cam.home(box, { dur: 0 });                                    // a fresh fit at 900×860, for comparison
+  const b = cam.state();
+  near(a.dist, b.dist, 1e-3, 'the glide landed on the NEW aspect\'s fit (distance)');
+  near(a.target[0], b.target[0], 1e-3, 'target x'); near(a.target[1], b.target[1], 1e-3, 'target y');
+  assert.ok(a.atHome, 'and counts as home');
+  // A near-home pose (damping residue, a nudge — well under 1 % / 0.6°) is still home for a resize: re-fit.
+  cam.orbit({ dist: b.dist * 1.004 });
+  dom.clientWidth = 1440; dom.clientHeight = 860; cam.onResize();
+  cam.home(box, { dur: 0 }); const fresh = cam.state();
+  dom.clientWidth = 900; cam.onResize(); cam.orbit({ dist: cam.state().dist * 1.004 }); dom.clientWidth = 1440; cam.onResize();
+  near(cam.state().dist, fresh.dist, 1e-3, 'a nudged-but-home camera re-fits on resize');
+  dom.clientWidth = 1440; dom.clientHeight = 860; cam.onResize();
+}
+
+// ---- 8. DECLARED claims (the explorer's fixed chrome) are read, floored at the margins, capped at 35 % ------
+{
+  const vars = { '--claim-top': '100px', '--claim-right': '88px', '--claim-bottom': '640px', '--claim-left': '0px' };
+  globalThis.document = { documentElement: {}, querySelector: () => null };
+  globalThis.getComputedStyle = () => ({ getPropertyValue: (k) => vars[k] || '' });
+  const c = declaredClaims();
+  assert.equal(c.top, 100); assert.equal(c.right, 88);
+  const i = hudSafeInset(1440, 860);
+  assert.equal(i.top, 100, 'the readout\'s claim at the top');
+  assert.equal(i.right, 88, 'the rail\'s claim at the right');
+  near(i.bottom, 0.35 * 860, 1e-9, 'a runaway bottom claim is capped at 35 %');
+  near(i.left, 0.06 * 1440, 1e-9, 'an empty side keeps the 6 % margin');
+  vars['--claim-bottom'] = '68px';
+  near(hudSafeInset(1440, 860).bottom, 68, 1e-9, 'the rail layout\'s thin band');
+  for (const k of Object.keys(vars)) delete vars[k];
+  assert.equal(declaredClaims(), null, 'a page that declares nothing falls back to measuring .hud');
+  delete globalThis.document; delete globalThis.getComputedStyle;
 }
 
 console.log('camera door: all tests pass');

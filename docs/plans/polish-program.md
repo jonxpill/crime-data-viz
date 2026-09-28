@@ -119,7 +119,29 @@ Sizes: S (hours) · M (a day) · L (multi-day). Tier = the agent model for execu
   > `src/hud/icons.js` (the living dock: real-data miniatures + the LivingIcon canvas renderer; heavy models —
   > pie · compare · canyon · forensics — cached per key and built in idle time), `tests/hud.test.mjs` in `npm test`.
   > Revision (maker, 2026-09-28): the icon-first living dock replaced "view words + `more`"; ribbon defaults
-  > from the eye pass (lit 0.74 · hot 0.97 · slot 0.035 · dot 2.6) + 3-wide columns with a fixed seeded wobble. The DOM owns the layout;
+  > from the eye pass (lit 0.74 · hot 0.97 · slot 0.035 · dot 2.6) + 3-wide columns with a fixed seeded wobble.
+  > **Usability pass (maker GO 2026-09-28: "still a nightmare to use")** — built on `polish/hud`:
+  > - **One navigation door `goTo(scene, opts)`** (`src/hud/nav.js` = the pure plan, tested): every scene from
+  >   everywhere — heavy ceremonies unwind first (toll drain-home · canyon sink · terrain flat · flock land), then
+  >   the place (a drill from the live pose; "same view, other place"), then the target enters. Keys, icons and
+  >   the readout all route through it; the old guards stay inside as a safety net. An icon FAILS TO FORM only
+  >   when truly impossible (the relief with no elevation data), with a tip saying why.
+  > - **Never drop input**: map ⇄ pie ⇄ compare ⇄ forensics, crime flips, per-capita, year steps in the pies and
+  >   the focus dim all RETARGET from the live pose (`liveData` / `bakeStructPose`); a drill, the toll ceremony,
+  >   the canyon/terrain rise and the flock landing QUEUE (one nav slot + one data slot, last wins, pending icon
+  >   pulses) and run on landing.
+  > - **Readout ≠ tools**: the READOUT top-left under the brand (`‹ Cape Town` / `robbery · 2019/20 · 18,138
+  >   reported · unlit`, every part tappable, the scene caption under it); the TOOLS in in-frame glass —
+  >   `layout: 'rail'` (default: nine icons in a right glass rail, the ribbon alone in a thin bottom band) or
+  >   `'bottom'` (one dock: the ribbon on the rim, the icons in a row); < 900 px always 'bottom'. Live:
+  >   `__viz.hud({ layout })`. Fixed geometry per layout/breakpoint, DECLARED to the camera as `--claim-*`
+  >   (camera.js `hudSafeInset` reads declarations before it measures). Cape Town at 1440×860 frames 653 px tall
+  >   under 'rail' vs 592 px under 'bottom'.
+  > - **Calmer cinema** (20 s; never over the chrome, with a popover/help/locate open, while the ribbon is held,
+  >   in the toll, or with an intent queued); faded controls still take the click; every chrome zone captures its
+  >   pointer events (no click-through to a drill). **Legibility**: readout 18/15 px, labels 12 px, text lifted to
+  >   ≥ 7:1 and dim ≥ 4.8:1 from the palette's tokens, 1 px solid underlines, 34 px popover rows, 28 px ‹ and ?.
+  > - **Camera**: a resize re-fits a near-home pose too (≤ 1 % / 0.6°); mid-glide re-solving pinned by a test. The DOM owns the layout;
   > the engine draws into the measured rects (resize re-measures). Live eye knobs: `__viz.hud({...})`; honesty
   > probe: `__viz.hudCheck()`. Deferred: the `src/input.js` keymap table (keys still live in the explorer's
   > keydown; the dock calls the same action table), the shell. Awaiting the planner's render-and-look.

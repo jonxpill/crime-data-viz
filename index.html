@@ -22,109 +22,129 @@
       #app { position: fixed; inset: 0; }
       canvas { display: block; }
 
-      /* ---- THE DOCK (D5 pass 1) — the HUD made of light. No box: the field flows under the controls; a soft
-         bottom-edge shade is drawn IN the WebGL frame beneath the engine-drawn ribbon (src/hud/light.js), so
-         the ribbon's own glow stays on top. `.hud` = the bottom zone the camera door keeps clear (camera.js
-         measures its top). Keys are never printed on controls — they live in the help sheet (?). */
-      .hud {
-        position: fixed; left: 16px; right: 16px; bottom: 6px; z-index: 10;
-        font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
-        color: var(--hud-text); letter-spacing: 0.02em;
-        pointer-events: none; user-select: none; -webkit-user-select: none;
+      /* ---- THE CHROME (D5 usability pass) — the READOUT is separated from the TOOLS.
+         • top-left, under the brand: THE READOUT — the scene's label, like a museum caption; every part tappable.
+         • the TOOLS in glass drawn IN the frame (src/hud/light.js — a CSS backdrop would dim the ribbon's own
+           light): the ribbon stands on the glass's rim; the nine view icons sit in a right RAIL (layout-rail,
+           the default) or in one centred row under the ribbon (layout-bottom; also every screen < 900 px).
+         Geometry is FIXED per layout + breakpoint (nothing changes width with state) and DECLARED to the camera
+         as --claim-* (set from these rects by wcExplore). Every chrome zone CAPTURES its pointer events — a click
+         there never falls through to the map. Keys live in the help sheet, never on the controls. */
+      :root {
+        --ro-text: #a9b3c4; --ro-dim: #8d98ab;   /* contrast-lifted from the palette's --hud-text/--hud-dim (set live) */
+        --band: 84px; --rail-w: 0px; --rim-inset: 10px; --ribbon-h: 52px;
       }
-      .hud button, #topright button {
+      body.layout-rail { --band: 20px; --rail-w: 76px; }
+      @media (max-width: 700px) { body.layout-bottom { --band: 148px; } }
+      .tap { text-decoration: underline solid 1px; text-decoration-color: color-mix(in srgb, var(--hud-strong) 45%, transparent);
+        text-underline-offset: 4px; }
+      .tap:hover { text-decoration-color: var(--hud-strong); }
+      #readout button, #ribbon-bar button, #topright button, #views button {
         pointer-events: auto; appearance: none; background: none; border: 0; padding: 0; margin: 0;
         font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent;
       }
-      .hud button:focus-visible, #topright button:focus-visible { outline: 1px dotted var(--hud-dim); outline-offset: 2px; }
-      #dock-top { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 8px 28px; }
-      /* THE SENTENCE — the readout IS the control; a dotted underline = "tap me". */
-      #sentence-wrap { position: relative; pointer-events: auto; padding-top: 2px; }
-      #sentence { font-size: 13px; color: var(--hud-strong); white-space: nowrap; }
-      #sentence .sep, #sentence .crumb-sep { color: var(--hud-dim); }
-      .tap { text-decoration: underline dotted; text-decoration-color: var(--hud-dim);
-        text-underline-offset: 4px; text-decoration-thickness: 1px; }
-      .tap:hover { text-decoration-color: var(--hud-strong); }
-      #sentence .off { pointer-events: none; text-decoration: none; }
-      #lens-unlit { margin-left: 16px; color: var(--hud-text); transition: color .3s, opacity .3s; }
-      #lens-unlit.on { color: var(--hud-strong); }
-      #lens-unlit.off { opacity: 0.28; pointer-events: none; }
-      /* The scene's instructions — transient (~4 s on entering a scene that needs them; hover re-shows). */
-      #caption { position: absolute; left: 0; bottom: 100%; margin-bottom: 5px; white-space: nowrap;
-        font-size: 11.5px; color: var(--card-text); opacity: 0; transition: opacity .7s ease; pointer-events: none; }
-      #caption.show { opacity: 0.92; }
-      /* THE LIVING DOCK — nine icon-first real-data miniatures, one fixed cell each, the label centred BENEATH.
-         Grey at rest (structure), white when active, alive on hover (src/hud/icons.js draws the canvases);
-         an unavailable mode FAILS TO FORM (scattered dots, dimmed label, no click) — never merely dimmed. */
-      #views { display: flex; align-items: flex-end; gap: 2px; }
-      #views .view { width: 62px; flex: 0 0 62px; display: flex; flex-direction: column; align-items: center; gap: 2px;
-        padding: 2px 0 0; border-radius: 6px; color: var(--hud-text); }
+      #readout button:focus-visible, #ribbon-bar button:focus-visible, #topright button:focus-visible, #views button:focus-visible {
+        outline: 1px solid color-mix(in srgb, var(--hud-strong) 60%, transparent); outline-offset: 2px; }
+      /* The name — quiet, structure-voiced, top-left. It must never compete with the field. */
+      #brand { position: fixed; left: 18px; top: 12px; z-index: 10; pointer-events: none; user-select: none;
+        font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; }
+      #brand b { display: block; font-weight: 600; font-size: 13px; letter-spacing: 0.3em; color: var(--brand); opacity: 0.92; }
+      /* THE READOUT — line 1 the place (‹ = back out), line 2 crime · year · count · unlit, then the caption. */
+      #readout { position: fixed; left: 18px; top: 36px; z-index: 10; width: min(560px, 46vw); height: 84px;
+        font: 15px/1.4 ui-monospace, "SF Mono", Menlo, monospace; color: var(--ro-text); letter-spacing: 0.01em;
+        pointer-events: auto; user-select: none; -webkit-user-select: none; }
+      #ro-place { display: flex; align-items: center; height: 28px; font-size: 18px; color: var(--hud-strong); }
+      #readout #back { display: none; flex: 0 0 auto; min-width: 28px; height: 28px; margin-left: -6px; font-size: 22px; line-height: 26px;
+        text-align: center; border-radius: 6px; color: var(--hud-strong); }
+      #readout #back.show { display: block; }
+      #readout #back:hover { background: color-mix(in srgb, var(--hud-strong) 12%, transparent); }
+      #readout #place { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+      #ro-line { height: 24px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--hud-strong); }
+      #ro-line .sep { color: var(--ro-dim); }
+      #readout .off { pointer-events: none; text-decoration: none; }
+      #readout #lens-unlit { color: var(--ro-dim); transition: color .3s, opacity .3s; }
+      #readout #lens-unlit.on { color: var(--hud-strong); }
+      #readout #lens-unlit.off { opacity: 0.4; }
+      /* The scene's instructions — transient (~4 s on entering a scene that needs them), under the readout. */
+      #caption { height: 20px; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        font-size: 12.5px; color: var(--ro-text); opacity: 0; transition: opacity .7s ease; pointer-events: none; }
+      #caption.show { opacity: 0.95; }
+      @media (max-width: 1100px) { #readout { font-size: 14px; } #ro-place { font-size: 16px; } }
+      @media (max-width: 700px) { #readout { width: calc(100vw - 36px); } }
+      /* THE BAND — the bottom glass's capture zone (the glass itself is in-frame). */
+      .hud { position: fixed; left: 0; right: var(--rail-w); bottom: 0; height: var(--band); z-index: 9;
+        pointer-events: auto; font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: var(--ro-text); }
+      #rail { position: fixed; right: 0; top: 0; bottom: 0; width: var(--rail-w); z-index: 9; pointer-events: auto; display: none; }
+      body.layout-rail #rail { display: block; }
+      /* THE RIBBON BAR — stands on the rim: ▶ · the invisible hit track over the engine-drawn ribbon · years | months. */
+      #ribbon-bar { position: fixed; left: 0; right: var(--rail-w); bottom: calc(var(--band) - var(--rim-inset)); height: var(--ribbon-h);
+        z-index: 10; display: flex; align-items: stretch; justify-content: center; gap: 12px; padding: 0 16px; pointer-events: auto;
+        font: 12px ui-monospace, "SF Mono", Menlo, monospace; color: var(--ro-text); }
+      #ribbon-bar #rb-play { width: 32px; font-size: 12px; color: var(--ro-text); text-align: center; padding-bottom: var(--rim-inset); }
+      #rb-play:hover, #rb-switch button:hover { color: var(--hud-strong); }
+      #rb-track { flex: 0 1 var(--ribbon-max, 900px); min-width: 0; cursor: ew-resize; touch-action: none; }
+      #rb-switch { display: flex; align-items: center; gap: 6px; font-size: 12px; padding-bottom: var(--rim-inset); }
+      #ribbon-bar #rb-switch button { min-height: 28px; padding: 0 2px; }
+      #rb-switch .sep { color: var(--ro-dim); }
+      #ribbon-bar #rb-switch button.on { color: var(--hud-strong); }
+      #ribbon-bar #rb-play.off, #ribbon-bar #rb-switch.off, #ribbon-bar #rb-switch.off button { opacity: 0.35; pointer-events: none; }
+      #rb-track.off { cursor: default; }
+      #rb-tip, #view-tip { position: fixed; z-index: 20; pointer-events: none; white-space: nowrap;
+        font: 12px/1.3 ui-monospace, "SF Mono", Menlo, monospace; color: var(--hud-strong); letter-spacing: .03em;
+        opacity: 0; transition: opacity .15s; }
+      #rb-tip { transform: translate(-50%, -100%); }
+      #rb-tip.show, #view-tip.show { opacity: 0.97; }
+      #view-tip { padding: 5px 9px; border-radius: 6px; background: rgba(8, 10, 16, 0.92); border: 1px solid rgba(140, 170, 210, 0.16); }
+      /* THE VIEWS — nine icon-first real-data miniatures (src/hud/icons.js draws the canvases), one fixed cell
+         each, label beneath. Grey at rest, white when active, alive on hover, a slow pulse while a queued
+         navigation waits; FAILS TO FORM only when truly impossible (the tip says why). */
+      #views { position: fixed; z-index: 11; display: flex; gap: 2px; pointer-events: auto; }
+      body.layout-bottom #views { left: 50%; transform: translateX(-50%); bottom: 8px; flex-direction: row; align-items: flex-end; }
+      @media (max-width: 700px) { body.layout-bottom #views { flex-wrap: wrap; justify-content: center; width: calc(5 * 70px); } }
+      body.layout-rail #views { right: 0; top: 50%; transform: translateY(-50%); width: var(--rail-w); flex-direction: column; align-items: center; gap: 6px; }
+      #views .view { width: 68px; flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 3px;
+        padding: 3px 0 2px; border-radius: 8px; color: var(--ro-text); }
       #views .view canvas { display: block; width: 52px; height: 36px; }
       #views .view .lbl { display: block; width: 100%; text-align: center; white-space: nowrap; overflow: hidden;
-        font-size: 11px; line-height: 13px; color: var(--hud-text); transition: color .3s, opacity .3s; }
-      #views .view:hover .lbl { color: var(--card-strong); }
+        font-size: 12px; line-height: 15px; color: var(--ro-text); transition: color .3s, opacity .3s; }
+      #views .view:hover .lbl { color: var(--hud-strong); }
       #views .view.on .lbl { color: var(--hud-strong); }
-      #views .view.off { pointer-events: none; cursor: default; }
-      #views .view.off .lbl { opacity: 0.35; }
-      /* THE RIBBON BAR — ▶ · the invisible hit track over the engine-drawn ribbon · years | months. */
-      #ribbon-bar { display: flex; align-items: stretch; justify-content: center; gap: 12px; height: 44px; margin-top: 6px; }
-      #rb-play { width: 22px; font-size: 10px; color: var(--hud-text); text-align: center; }
-      #rb-play:hover, #rb-switch button:hover { color: var(--hud-strong); }
-      #rb-track { flex: 0 1 var(--ribbon-max, 900px); min-width: 0; pointer-events: auto; cursor: ew-resize; touch-action: none; }
-      #rb-switch { display: flex; align-items: center; gap: 6px; font-size: 11px; }
-      #rb-switch .sep { color: var(--hud-dim); }
-      #rb-switch button.on { color: var(--hud-strong); }
-      #rb-play.off, #rb-switch.off { opacity: 0.28; pointer-events: none; }
-      #rb-switch.off button { pointer-events: none; }
-      #rb-track.off { cursor: default; pointer-events: none; }
-      #rb-tip { position: fixed; z-index: 20; transform: translate(-50%, -100%); pointer-events: none; white-space: nowrap;
-        font: 11px/1.3 ui-monospace, "SF Mono", Menlo, monospace; color: var(--hud-strong); letter-spacing: .04em;
-        opacity: 0; transition: opacity .15s; }
-      #rb-tip.show { opacity: 0.95; }
-      /* Popovers — open on tap, close on an outside tap / Esc / a pick. */
-      #pop { position: fixed; z-index: 30; display: none; min-width: 180px; padding: 5px 0; border-radius: 8px;
-        background: rgba(8, 10, 16, 0.92); border: 1px solid rgba(140, 170, 210, 0.14);
+      #views .view.off { cursor: help; }
+      #views .view.off .lbl { opacity: 0.45; }
+      #views .view.pending .lbl { animation: pend 1.4s ease-in-out infinite; }
+      @keyframes pend { 50% { color: var(--hud-strong); } }
+      @media (max-height: 720px) { body.layout-rail #views { gap: 1px; } body.layout-rail #views .view canvas { width: 44px; height: 30px; } }
+      /* Popovers — open on tap, close on an outside tap / Esc / a pick (never on idle). Rows ≥ 32 px at 14 px. */
+      #pop { position: fixed; z-index: 30; display: none; min-width: 220px; max-height: 70vh; overflow-y: auto; padding: 6px 0; border-radius: 9px;
+        background: rgba(8, 10, 16, 0.94); border: 1px solid rgba(140, 170, 210, 0.16);
         backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
-        font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: var(--hud-text); user-select: none; }
+        font: 14px/1.4 ui-monospace, "SF Mono", Menlo, monospace; color: var(--ro-text); user-select: none; }
       #pop.open { display: block; }
-      #pop .pop-title { padding: 3px 12px 4px; font-size: 10.5px; color: var(--hud-dim); letter-spacing: .06em; }
-      #pop button { display: flex; justify-content: space-between; gap: 22px; width: 100%; padding: 4px 12px;
-        appearance: none; background: none; border: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
-      #pop button:hover { background: rgba(140, 170, 210, 0.10); color: var(--hud-strong); }
+      #pop .pop-title { padding: 4px 14px 6px; font-size: 12px; color: var(--ro-dim); letter-spacing: .05em; }
+      #pop button { display: flex; align-items: center; justify-content: space-between; gap: 24px; width: 100%; min-height: 34px;
+        padding: 4px 14px; appearance: none; background: none; border: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+      #pop button:hover { background: rgba(140, 170, 210, 0.12); color: var(--hud-strong); }
       #pop button.cur { color: var(--hud-strong); }
-      #pop button .n { color: var(--hud-dim); }
-      #pop button.off { opacity: 0.3; pointer-events: none; }
-      /* Top-right: the compass (engine-drawn over its hit area, only when you've left home) + the ? */
-      #topright { position: fixed; top: 10px; right: 14px; z-index: 10; display: flex; align-items: center; gap: 8px;
-        font: 12px ui-monospace, "SF Mono", Menlo, monospace; color: var(--hud-text); }
-      #compass-hit { width: 26px; height: 26px; border-radius: 50%; visibility: hidden; pointer-events: none; }
-      #compass-hit.show { visibility: visible; pointer-events: auto; }
-      #topright #help-btn { width: 22px; height: 22px; border-radius: 50%; border: 1px dotted var(--hud-dim); font-size: 11px;
-        color: var(--hud-text); line-height: 20px; text-align: center; }
-      #topright #help-btn:hover { color: var(--hud-strong); border-color: var(--hud-text); }
-      /* CINEMA — after a few idle seconds the chrome bows out; the brand stays, the ribbon fades to a
-         faint glow (engine side). Any input brings it back. (The help card and the Toll pin it awake.) */
-      .hud, #topright, #fps { transition: opacity 1.1s ease; }
-      body.quiet .hud, body.quiet #topright, body.quiet #fps, body.quiet #rb-tip { opacity: 0; }
-      body.quiet .hud button, body.quiet .hud #sentence-wrap, body.quiet #rb-track, body.quiet #topright button { pointer-events: none; }
-      @media (pointer: coarse) {
-        #views .view { padding-top: 4px; }
-        #rb-play { width: 32px; }
-      }
-      @media (max-width: 760px) {
-        .hud { left: 10px; right: 10px; }
-        #sentence { white-space: normal; }
-        #views { flex-wrap: wrap; }
-      }
-      /* The name — quiet, structure-voiced, top-left. It must never compete with the field. */
-      #brand {
-        position: fixed; left: 16px; top: 12px; z-index: 10;
-        font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
-        pointer-events: none; user-select: none;
-      }
-      #brand b { display: block; font-weight: 600; font-size: 13px; letter-spacing: 0.3em; color: var(--brand); opacity: 0.92; }
-      #brand span { display: block; font-size: 10.5px; letter-spacing: 0.05em; color: var(--brand-sub); }
-      @media (max-width: 640px) { #brand span { display: none; } }
+      #pop button .n { color: var(--ro-dim); font-size: 13px; }
+      #pop button.off { opacity: 0.35; pointer-events: none; }
+      /* The compass (engine-drawn over its hit area, only when you've left home) + the ? — top-right corner,
+         or the top of the rail. */
+      #topright { position: fixed; top: 10px; right: 14px; z-index: 11; display: flex; align-items: center; gap: 6px;
+        font: 13px ui-monospace, "SF Mono", Menlo, monospace; color: var(--ro-text); }
+      body.layout-rail #topright { right: 0; width: var(--rail-w); justify-content: center; gap: 2px; }
+      #topright #compass-hit { width: 28px; height: 28px; border-radius: 50%; visibility: hidden; pointer-events: none; }
+      #topright #compass-hit.show { visibility: visible; pointer-events: auto; }
+      #topright #help-btn { width: 28px; height: 28px; border-radius: 50%; border: 1px solid color-mix(in srgb, var(--ro-text) 50%, transparent);
+        font-size: 13px; color: var(--ro-text); line-height: 26px; text-align: center; }
+      #topright #help-btn:hover { color: var(--hud-strong); border-color: var(--hud-strong); }
+      /* CINEMA — after 20 s of stillness (never while you're over the chrome, a popover or the help sheet is
+         open, the ribbon is held, or a navigation is queued) the readout + tools bow out and the stage stands
+         alone (the brand stays; the ribbon keeps a faint glow). A faded control still takes the click. */
+      #readout, #views, #topright, #ribbon-bar, #fps { transition: opacity .25s ease; }
+      body.quiet #readout, body.quiet #views, body.quiet #topright, body.quiet #ribbon-bar, body.quiet #fps, body.quiet #rb-tip {
+        opacity: 0; transition-duration: 1.1s; }
+      body.layout-rail #unlit-chip { right: calc(var(--rail-w) + 12px); }
+      body.layout-rail #fps { right: calc(var(--rail-w) + 12px); }
 
       /* About overlay — chip-opened, never automatic. Esc / ✕ / backdrop closes. */
       #about { position: fixed; inset: 0; z-index: 40; display: none;
@@ -206,17 +226,23 @@
       #unlit-chip b { font-weight: 500; }
     </style>
   </head>
-  <body>
+  <body class="layout-rail">
     <div id="app"></div>
-    <div id="brand">
-      <b>MISDAADVELD</b>
-      <span>Western Cape crime as a field of light</span>
+    <div id="brand"><b>MISDAADVELD</b></div>
+    <!-- THE READOUT (top-left) — the scene's label. Line 1: the place (‹ backs out). Line 2: crime · year ·
+         count · unlit, each tappable. Then the transient scene caption. -->
+    <div id="readout">
+      <div id="ro-place"><button id="back" aria-label="back out">‹</button><button id="place"></button></div>
+      <div id="ro-line"><button id="crime"></button><span class="sep"> · </span><button id="year"></button><span
+        class="sep" id="count-sep"> · </span><button id="count"></button><span class="sep"> · </span><button
+        id="lens-unlit" class="tap" aria-label="the unlit field">unlit</button></div>
+      <div id="caption"></div>
     </div>
     <div id="about">
       <div id="about-card">
         <button id="about-close" aria-label="close">✕</button>
         <h2>MISDAADVELD</h2>
-        <p class="tag">Afrikaans: “crime field” · Western Cape, 2008/09 – 2025/26</p>
+        <p class="tag">Western Cape crime as a field of light · Afrikaans: “crime field” · 2008/09 – 2025/26</p>
         <p><b style="color:var(--hud-strong)">Every glowing dot is one reported crime.</b> Eighteen years of South African
           Police Service records for the Western Cape — robbery, residential burglary, murder, sexual offences,
           commercial crime and carjacking across 150 police precincts — drawn as a single living field of
@@ -252,15 +278,16 @@
           <dt>← →</dt><dd>step a year (a month in the pulse)</dd>
           <dt>↑ ↓</dt><dd>flip the crime</dd>
           <dt>C</dt><dd>reported ⇄ per 100k people</dd>
-          <dt>N</dt><dd>the monthly pulse (N or M back to the years)</dd>
-          <dt>M</dt><dd>back to the map — from any view; on a district's map, out to the province</dd>
           <dt>P · 3</dt><dd>the pie · compare all six crimes (click a pie to open it)</dd>
           <dt>T · V</dt><dd>terrain · the canyon (a surface of rates)</dd>
           <dt>X</dt><dd>forensics — statistics about the statistics</dd>
           <dt>K</dt><dd>the toll — hold the disc or 1 for one murder per second; K, M or Esc ends it</dd>
-          <dt>U</dt><dd>the unlit field — the estimated unreported (map views)</dd>
           <dt>H</dt><dd>stand in your suburb (J hides the residents · H or Esc lets go)</dd>
           <dt>F</dt><dd>release the field (any key or tap lands it)</dd>
+          <dt></dt><dd>every view key works from ANY view — it finds its own way there; pressed again, back to the map</dd>
+          <dt>N</dt><dd>the monthly pulse (N or M back to the years)</dd>
+          <dt>U</dt><dd>the unlit field — the estimated unreported (from anywhere: it takes you to the map)</dd>
+          <dt>M · ‹</dt><dd>back one step — a view to the map; on a district, ‹ out to the province</dd>
           <dt>0</dt><dd>home — the scene's own framing (or tap the compass)</dd>
           <dt>shift P</dt><dd>cycle the palettes</dd>
           <dt>?</dt><dd>this sheet · Esc closes</dd>
@@ -290,39 +317,31 @@
         <p class="priv">“find me” is matched on your device only — your location is never sent, never stored</p>
       </div>
     </div>
+    <!-- THE TOOLS — capture zones over the in-frame glass (src/hud/light.js draws the glass, rim, ribbon, compass). -->
+    <div class="hud" id="dock"></div>
+    <div id="rail"></div>
+    <div id="ribbon-bar">
+      <button id="rb-play" aria-label="play">▶</button>
+      <div id="rb-track" aria-label="the years — drag to scrub"></div>
+      <div id="rb-switch"><button data-pulse="0">years</button><span class="sep">|</span><button data-pulse="1">months</button></div>
+    </div>
+    <div id="views">
+      <button class="view" data-view="map"><canvas width="104" height="72"></canvas><span class="lbl">map</span></button>
+      <button class="view" data-view="pie"><canvas width="104" height="72"></canvas><span class="lbl">pie</span></button>
+      <button class="view" data-view="compare"><canvas width="104" height="72"></canvas><span class="lbl">compare</span></button>
+      <button class="view" data-view="terrain"><canvas width="104" height="72"></canvas><span class="lbl">terrain</span></button>
+      <button class="view" data-view="canyon"><canvas width="104" height="72"></canvas><span class="lbl">canyon</span></button>
+      <button class="view" data-view="forensics"><canvas width="104" height="72"></canvas><span class="lbl">forensics</span></button>
+      <button class="view" data-view="toll"><canvas width="104" height="72"></canvas><span class="lbl">toll</span></button>
+      <button class="view" data-view="suburb"><canvas width="104" height="72"></canvas><span class="lbl">my suburb</span></button>
+      <button class="view" data-view="release"><canvas width="104" height="72"></canvas><span class="lbl">release</span></button>
+    </div>
     <div id="topright">
       <button id="compass-hit" aria-label="return to the home framing"></button>
       <button id="help-btn" aria-label="help — keys and sources">?</button>
     </div>
-    <!-- THE DOCK (D5 pass 1): the sentence (bottom-left) · the views (bottom-right) · the ribbon bar (bottom
-         edge; the ribbon itself is drawn by the engine into #rb-track's rect — src/hud/light.js). -->
-    <div class="hud" id="dock">
-      <div id="dock-top">
-        <div id="sentence-wrap">
-          <div id="caption"></div>
-          <div id="sentence"><span id="place"></span><span class="sep"> · </span><button id="crime"></button><span
-            class="sep"> · </span><button id="year"></button><span class="sep" id="count-sep"> · </span><button
-            id="count"></button><button id="lens-unlit" class="tap" aria-label="the unlit field">unlit</button></div>
-        </div>
-        <div id="views">
-          <button class="view" data-view="map"><canvas width="104" height="72"></canvas><span class="lbl">map</span></button>
-          <button class="view" data-view="pie"><canvas width="104" height="72"></canvas><span class="lbl">pie</span></button>
-          <button class="view" data-view="compare"><canvas width="104" height="72"></canvas><span class="lbl">compare</span></button>
-          <button class="view" data-view="terrain"><canvas width="104" height="72"></canvas><span class="lbl">terrain</span></button>
-          <button class="view" data-view="canyon"><canvas width="104" height="72"></canvas><span class="lbl">canyon</span></button>
-          <button class="view" data-view="forensics"><canvas width="104" height="72"></canvas><span class="lbl">forensics</span></button>
-          <button class="view" data-view="toll"><canvas width="104" height="72"></canvas><span class="lbl">toll</span></button>
-          <button class="view" data-view="suburb"><canvas width="104" height="72"></canvas><span class="lbl">my suburb</span></button>
-          <button class="view" data-view="release"><canvas width="104" height="72"></canvas><span class="lbl">release</span></button>
-        </div>
-      </div>
-      <div id="ribbon-bar">
-        <button id="rb-play" aria-label="play">▶</button>
-        <div id="rb-track" aria-label="the years — drag to scrub"></div>
-        <div id="rb-switch"><button data-pulse="0">years</button><span class="sep">|</span><button data-pulse="1">months</button></div>
-      </div>
-    </div>
     <div id="rb-tip"></div>
+    <div id="view-tip"></div>
     <div id="pop"></div>
     <div id="unlit-chip"></div>
     <div id="fps"></div>
