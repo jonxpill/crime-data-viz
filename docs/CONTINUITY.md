@@ -286,3 +286,8 @@ specific instruments (deferred) · where it lives / distribution · a name.
 - **Sibling labels share a SIZE, never a WIDTH.** Fitting each label to one span makes type size encode
   string length — a meaningless signal that still reads as hierarchy (GAUTENG set ~2× KWAZULU-NATAL looked
   like the headline). Solve the shared size once from the longest label; let shorter ones end early.
+- **When a channel can't tween, stage its swap where the channel is invisible.** The engine tweens
+  positions+density between endpoints but `aZ` is ONE attribute — it snaps on `setTarget`. The canyon's
+  crime flip hides that snap by sinking the surface flat (zScale→0), swapping the landform at zero height,
+  and rising as the new crime — the constraint becomes the choreography. Generalises: mask any
+  non-interpolable state change at the moment its visual weight is zero. (?)

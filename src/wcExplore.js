@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointField } from './engine/PointField.js';
-import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor, tollLayouts, tollFrameLayout, tollHandLayout, textLayout } from './layouts/capeTown.js';
+import { loadCapeTown, buildCrimeLayouts, pieFrameLayout, triPieFrameLayout, terrainViewLayout, bandFor, tollLayouts, tollFrameLayout, tollHandLayout, textLayout, canyonLayout, canyonFrameLayout } from './layouts/capeTown.js';
 
 /*
  * THE APP — a Western Cape crime field you drill into Cape Town from. (Was the single-region Cape Town app
@@ -188,6 +188,22 @@ const bandW = 0.4, terrainDotSize = 2.5, GX = 432, GY = 378; // fixed relief dot
 let terrainTargetLayout = null, terrainCurrent = null;
 let trProg = 1, trStart = 0, trDur = 950, trTo = null;
 
+// ---- the CANYON ('V') — time as the landform ---------------------------------------------------------
+// x = the 18 SAPS years, y = the precincts (district blocks, north→south), height = PER-CAPITA rate;
+// the 2020/21 lockdown reads as ONE valley cutting across the whole range. A separate DATA-role pool
+// (it GLOWS — this is the crime re-arranged, not geography), risen/tilted with the terrain's easing.
+// Per-capita ONLY: raw heights would render population, not story. Dots are SAMPLES of the rate
+// surface — the one view where dot count carries no volume, declared aloud in the hint.
+let canyonField = null, canyonMode = false, canyonZCur = 0, canyonOp = 0;
+let canyonCur = null;                        // the layout on the pool (anchors → hover, grid → labels)
+let canyonCache = { key: '', layout: null }; // ONE (region, crime) build resident — the pulse's cache pattern
+let canyonFlipTo = '';                       // pending crime flip — the swap hides at zero height (see tick)
+let cnProg = 1, cnStart = 0, cnTo = null;    // canyon pool crossfade clock (trProg's pattern)
+const CN_MS = 800, CANYON_DOTS = 48;         // crossfade ms · dots per province cell (150×18×48 = 129,600 pool)
+let canyonZPeak = 260;                       // rate-surface height — a DATA axis, not geography. 90 read as a
+//                                              flat sheet at the framed distance; 260 gives the range walls
+//                                              (maker's eye: tune live via __viz.canyonZ)
+
 const yearEl = document.getElementById('year');
 const fpsEl = document.getElementById('fps');
 const crimeEl = document.getElementById('crime');
@@ -207,6 +223,7 @@ function refreshHint() {
           : (tollHoldPtr || tollHoldKey) ? 'one recorded murder per second — release to resume the sweep'
             : tollPaused ? 'paused — space resumes · drag the dial · K ends the toll'
               : 'drag the dial to scrub · hold the disc (or 1) for one per second · space pauses · K ends the toll')
+    : canyonMode ? 'a surface of rates — height is the data · ↑↓ crime · V or tap → flat map'
     : terrainMode ? 'T or tap → flat map'
       : pulseMode ? '←→ month · space play/pause · N or M → years'
         : (pieMode || triPieMode) ? 'press M for the map'
@@ -391,6 +408,17 @@ async function init() {
   fieldGroup.add(terrainField.points);
   reseedTerrain();
 
+  // The canyon pool ('V') — DATA role: it glows and blooms (crime re-shaped, never structure). Sized
+  // ONCE to the province's cells; a district build re-spreads the same budget over its fewer, taller
+  // cells (area-constant sampling in canyonLayout), so no region ever needs a resize. Hidden until V.
+  canyonField = new PointField(stationsByRegion.wc.length * years.length * CANYON_DOTS, { glow: true, size: 1.9 });
+  canyonField.setPixelRatio(renderer.getPixelRatio());
+  canyonField.setDrift(0.25); // a landform breathes less than the map swarm
+  canyonField.setMaxSize(7);
+  canyonField.points.layers.enable(BLOOM_LAYER);
+  canyonField.points.visible = false;
+  fieldGroup.add(canyonField.points);
+
   applyMode('raw');
   frameUnion(wcRaw.meta.box, ctRaw.meta.box);
   landRegion(); // seed the province at rest
@@ -456,7 +484,7 @@ function startTerrainTransition(toLayout) {
 // coincident band, rise band → relief; on the way back, sink to band, then tick swaps the outline back.
 function toggleTerrain() {
   const d = regionData[region];
-  if (!d || !d.terrain || !d.terrain.elev || pieMode || triPieMode || drilling || tollMode) return; // any region WITH a DEM
+  if (!d || !d.terrain || !d.terrain.elev || pieMode || triPieMode || drilling || tollMode || canyonMode) return; // any region WITH a DEM
   terrainMode = !terrainMode;
   if (terrainMode) {
     structField.points.visible = false;
@@ -516,6 +544,57 @@ function reseedTerrain() {
   }
 }
 
+// ---- the canyon: enter/exit + the (region, crime) build ---------------------------------------------
+// Build (or reuse) THIS (region, crime)'s rate surface. One build resident at a time — a flip or a
+// later re-entry after a drill evicts it (the pulse's monthly() cache is the pattern; a build is
+// ~130k dots × bilinear sampling, cheap to redo, expensive to hoard).
+function canyonRates() {
+  const key = region + '·' + crimeType;
+  if (canyonCache.key !== key) {
+    canyonCache = {
+      key,
+      layout: canyonLayout(canyonField.count, stationsByRegion[region], years, crimeType, regionData[region].meta.box),
+    };
+  }
+  return canyonCache.layout;
+}
+// 'V' on a flat map toggles the canyon. The map's data swarm parks away off-frame (the drill's
+// break-away grammar — the canyon IS the same crime re-shaped, so showing both would double-count
+// it); the canyon pool fades in flat and RISES via the terrain's zScale easing; the structure pool
+// reconfigures into the year/district graticule. Exit reverses all three.
+function toggleCanyon() {
+  if (!canyonField || !field || pieMode || triPieMode || pulseMode || terrainMode || tollMode || drilling || flipping) return;
+  canyonMode = !canyonMode;
+  playing = false; morphStart = -1;
+  if (canyonMode) {
+    canyonCur = canyonRates();
+    canyonField.setSource(canyonCur);
+    canyonField.setTarget(canyonCur);
+    canyonField.setT(1);
+    canyonField.setZScale(0);
+    canyonField.setOpacity(0);                 // fades in as it rises (tick's canyon block)
+    canyonField.points.visible = true;
+    field.setSource(liveMap(region));          // park the map swarm from its LIVE pose (mid-morph safe)
+    field.setTarget(awayAll);
+    field.setStagger(0.6);
+    structField.setSize(PIE_LINE_SIZE);
+    startStructTransition(canyonFrameLayout(structN, { grid: canyonCur.grid, seams: canyonCur.seams }));
+  } else {
+    if (canyonFlipTo) { // a pending flip leaves WITH you — never a stale swap ticking under the map
+      crimeType = canyonFlipTo; canyonFlipTo = '';
+      layouts = layoutsByType[crimeType];
+    }
+    field.setSource(awayAll);                  // the swarm flies home to the map it left
+    field.setTarget(region === 'wc' ? layouts[yi] : lift(region, layouts[yi]));
+    field.setStagger(0.6);
+    structField.setSize(structDotSize);
+    startStructTransition(structRest());
+  }
+  t = 0; pieMorphStart = performance.now(); pieMorphing = true; // completion re-anchors the year pair on exit
+  refreshHud();
+  updateFlag();
+}
+
 // ---- the pulse: month-scrub control ------------------------------------------------------------
 // Mirrors the year grammar exactly: a pair of monthly layouts (mi → mi+1), lifted into the region's
 // conserved slice when drilled in; tick's playing branch advances it at pulse cadence, looping.
@@ -533,7 +612,7 @@ function buildPulse() {
   return !!p;
 }
 function enterPulse() {
-  if (pulseMode || !monthLabels || !field || pieMode || triPieMode || drilling || tollMode) return;
+  if (pulseMode || !monthLabels || !field || pieMode || triPieMode || drilling || tollMode || canyonMode) return;
   if (!buildPulse()) return;
   pulseMode = true;
   playing = true; morphStart = -1; holdUntil = performance.now();
@@ -661,7 +740,7 @@ function tollFracToT(frac) {                         // dial arc (0..1 from twel
 }
 
 function enterToll() {
-  if (tollMode || !field || drilling || pieMorphing || flipping || pieMode || triPieMode || pulseMode || terrainMode) return;
+  if (tollMode || !field || drilling || pieMorphing || flipping || pieMode || triPieMode || pulseMode || terrainMode || canyonMode) return;
   if (region !== 'wc') return;                       // province-only: the toll is the WHOLE province's 18 years
   const { cx, cy, R, dialR } = tollGeom();
   // Province-only full-pool CEREMONY: the pool IS the province (sliceStart() = 0), and tollLayouts
@@ -935,6 +1014,12 @@ function flipCrime(dir) {
   const i = crimeTypes.indexOf(crimeType);
   const next = crimeTypes[(i + dir + crimeTypes.length) % crimeTypes.length];
   if (next === crimeType) return;
+  if (canyonMode) { // canyon: sink flat → swap the landform → rise as the new crime. aZ is ONE
+    if (canyonFlipTo) return;                 // attribute (it snaps on setTarget), so the swap hides
+    canyonFlipTo = next;                      // at zero height — tick performs it once the range is flat.
+    refreshHud(next);
+    return;
+  }
   if (pulseMode) { // pulse: cross-fade this month, old crime → new crime (lazy build evicts the old months)
     const from = pulseData.layouts[mi];
     crimeType = next;
@@ -990,6 +1075,12 @@ function refreshHud(type = crimeType) {
     if (countEl) countEl.textContent = ((pulseData && pulseData.totals[mi]) || 0).toLocaleString();
     return;
   }
+  if (canyonMode) { // all 18 years at once — the canyon has no single year or count to name
+    if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + ' · per 100k';
+    if (yearEl) yearEl.textContent = `${yearLabels[0]}–${yearLabels.at(-1)}`;
+    if (countEl) countEl.textContent = `${(stationsByRegion[region] || stationsByRegion.wc).length} precincts × ${years.length} years`;
+    return;
+  }
   if (yearEl) yearEl.textContent = yearLabels[yi];
   if (crimeEl) crimeEl.textContent = (crimeLabels[type] || type) + (rate ? ' · per 100k' : '');
   if (countEl) countEl.textContent = ((totalsByType[type] && totalsByType[type][yi]) || 0).toLocaleString();
@@ -1000,8 +1091,10 @@ function updateFlag() {
   if (!flagEl || !yearLabels.length) return;
   const span = pulseMode
     ? `${fmtMonth(monthLabels[0])}–${fmtMonth(monthLabels.at(-1))} monthly (SAPS quarterlies, unaudited)`
-    : `${yearLabels[0]}–${yearLabels.at(-1)}` + (dataMode === 'percapita' ? '' : ' (25/26 unaudited)');
-  flagEl.textContent = dataMode === 'percapita'
+    : canyonMode
+      ? `${yearLabels[0]}–${yearLabels.at(-1)} · rates surface · per 100k`
+      : `${yearLabels[0]}–${yearLabels.at(-1)}` + (dataMode === 'percapita' ? '' : ' (25/26 unaudited)');
+  flagEl.textContent = dataMode === 'percapita' || canyonMode // the canyon is per-capita by construction
     ? `◆ crime: SAPS (DataFirst + saps.gov.za) · population: WorldPop 2020 · ${span}`
     : `◆ SAPS crime records · DataFirst + saps.gov.za · ${span}`;
 }
@@ -1009,7 +1102,7 @@ function updateFlag() {
 // Morph off the map into a robbery pie and back. Data swarms into the wedges, structure into the ring
 // + spokes — conserved, staggered, no fades.
 function togglePie() {
-  if (!pieBuilder || !field) return;
+  if (!pieBuilder || !field || canyonMode) return;
   pieMode = !pieMode;
   playing = false;
   if (pieMode) {
@@ -1032,7 +1125,7 @@ function togglePie() {
 
 // Break the single pie into THREE — robbery · burglary · murder, same year, side by side.
 function toggleTriPie() {
-  if (!triPieBuilder || !field) return;
+  if (!triPieBuilder || !field || canyonMode) return;
   const wasPie = pieMode;
   triPieMode = !triPieMode;
   playing = false;
@@ -1058,7 +1151,7 @@ function toggleTriPie() {
 // Toggle raw ⇄ per-capita ('C'). The DATA field morphs to the same view in the new mode — dense
 // townships shrink, low-population hotspots swell, because rate ≠ count. Works in every view + region.
 function toggleMode() {
-  if (!field) return;
+  if (!field || canyonMode) return; // the canyon is per-capita ONLY — there is no raw variant to toggle to
   const newMode = dataMode === 'raw' ? 'percapita' : 'raw';
   const oldMapLayout = layoutsByType[crimeType][yi];
   applyMode(newMode);
@@ -1111,6 +1204,7 @@ function resolveTriToPie(ci) {
 // The `M` key: from a pie/3-pie → swarm home to the map. On the Cape Town map → drill back out.
 function goToMap() {
   if (tollMode) { exitToll(); return; }         // the toll drains home first
+  if (canyonMode) { toggleCanyon(); return; }   // canyon → flat map (exits exactly like terrain)
   if (terrainMode) { toggleTerrain(); return; } // terrain → flat first (then M again exits pulse / drills out)
   if (pulseMode) { exitPulse(); return; }       // pulse → back to the years
   if (triPieMode) { toggleTriPie(); return; }
@@ -1133,7 +1227,7 @@ function goToMap() {
 // STRUCTURE: the province outline reconfigures into Cape Town's outline. Nothing fades except the rural
 // crime that genuinely has no detail to zoom into; the lens never moves.
 function startDrill(to) {
-  if (drilling || to === region || pieMode || triPieMode || tollMode) return;
+  if (drilling || to === region || pieMode || triPieMode || tollMode || canyonMode) return; // exit the canyon first — a drill mid-relief would strand the graticule
   if (pulseMode) { pulseMode = false; playing = false; updateFlag(); } // drill flies on the YEARLY field (liveMap below); land re-seeds yearly
   if (terrainMode) { // never drill mid-relief — snap flat first (normal input exits terrain before this)
     terrainMode = false; zScaleCur = 0; tiltCur = 0; fieldGroup.rotation.x = 0; trProg = 1;
@@ -1176,6 +1270,12 @@ window.addEventListener('keydown', (e) => {
     else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); }
     return;
   }
+  if (canyonMode) { // the canyon's own quiet toolkit: flip the landform's crime, or leave
+    if (e.code === 'KeyV' || e.code === 'KeyM') { e.preventDefault(); toggleCanyon(); }
+    else if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
+    else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
+    return;
+  }
   if (e.code === 'KeyN') { e.preventDefault(); enterPulse(); return; }
   if (e.code === 'KeyK') { e.preventDefault(); enterToll(); return; } // province flat map only (guards itself)
   if (e.code === 'KeyC') { e.preventDefault(); toggleMode(); return; }
@@ -1194,6 +1294,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'ArrowUp') { e.preventDefault(); flipCrime(1); }
   else if (e.code === 'ArrowDown') { e.preventDefault(); flipCrime(-1); }
   else if (e.code === 'KeyT') { e.preventDefault(); toggleTerrain(); } // Cape Town relief (no-op in the province)
+  else if (e.code === 'KeyV') { e.preventDefault(); toggleCanyon(); }  // time as the landform (guards itself)
 });
 window.addEventListener('keyup', (e) => { // release the toll's 1:1 hold
   if (e.code === 'Digit1' && tollHoldKey) { tollHoldKey = false; if (tollMode) refreshHud(); }
@@ -1203,9 +1304,9 @@ window.addEventListener('keyup', (e) => { // release the toll's 1:1 hold
 // exist). Guards mirror the keydown handler exactly: input is quiet mid-drill, and the 3-pie only
 // listens to map/year/compare/per-capita. Blur after click so a focused chip can't re-fire on Space.
 const CHIP_ACTIONS = {
-  play: () => { if (triPieMode) return; if (tollMode) { tollPauseToggle(); return; } playing = !playing; if (playing) { holdUntil = performance.now(); if (pulseMode) morphStart = -1; else if (pieMode) setYearPair(yi); } },
-  yearPrev: () => (pulseMode ? stepMonth(-1) : stepYear(-1)),
-  yearNext: () => (pulseMode ? stepMonth(1) : stepYear(1)),
+  play: () => { if (triPieMode || canyonMode) return; if (tollMode) { tollPauseToggle(); return; } playing = !playing; if (playing) { holdUntil = performance.now(); if (pulseMode) morphStart = -1; else if (pieMode) setYearPair(yi); } },
+  yearPrev: () => { if (canyonMode) return; (pulseMode ? stepMonth(-1) : stepYear(-1)); }, // the canyon holds ALL years at once — no pair to step
+  yearNext: () => { if (canyonMode) return; (pulseMode ? stepMonth(1) : stepYear(1)); },
   crimeUp: () => { if (triPieMode) return; flipCrime(1); },
   crimeDown: () => { if (triPieMode) return; flipCrime(-1); },
   map: () => goToMap(),
@@ -1213,6 +1314,7 @@ const CHIP_ACTIONS = {
   compare: () => { if (pulseMode) return; toggleTriPie(); },
   percapita: () => toggleMode(),
   terrain: () => toggleTerrain(), // guards itself (needs a loaded DEM, no pies, no drill)
+  canyon: () => toggleCanyon(),   // guards itself (flat map views only)
   months: () => (pulseMode ? exitPulse() : enterPulse()),
   toll: () => (tollMode ? exitToll() : enterToll()),
   about: () => toggleAbout(),
@@ -1255,17 +1357,19 @@ for (const el of document.querySelectorAll('.hud [data-act]')) {
 // keydown guards exactly; called from refreshHud so every state change repaints it.
 function refreshChips() {
   const off = (act, is) => { const el = chipEls[act]; if (el) el.classList.toggle('off', !!is); };
-  off('play', triPieMode);
+  off('play', triPieMode || canyonMode);
   // The toll dims the whole toolkit except play (= pause), map (= end), about — months would
   // have to exit first anyway, so it dims with the rest. Everything mirrors the keydown swallow.
-  off('yearPrev', tollMode); off('yearNext', tollMode);
-  off('percapita', tollMode);
-  off('months', pieMode || triPieMode || !monthLabels || tollMode);
+  // The canyon holds all 18 years at once and listens only to ↑↓ crime and V/M (its keydown swallow).
+  off('yearPrev', tollMode || canyonMode); off('yearNext', tollMode || canyonMode);
+  off('percapita', tollMode || canyonMode);
+  off('months', pieMode || triPieMode || !monthLabels || tollMode || canyonMode);
   off('crimeUp', triPieMode || tollMode); off('crimeDown', triPieMode || tollMode);
-  off('pie', triPieMode || pulseMode || tollMode);
-  off('compare', pulseMode || tollMode);
-  off('terrain', pieMode || triPieMode || tollMode || !(regionData[region] && regionData[region].terrain && regionData[region].terrain.elev));
-  off('toll', !tollMode && (region !== 'wc' || pieMode || triPieMode || pulseMode || terrainMode));
+  off('pie', triPieMode || pulseMode || tollMode || canyonMode);
+  off('compare', pulseMode || tollMode || canyonMode);
+  off('terrain', pieMode || triPieMode || tollMode || canyonMode || !(regionData[region] && regionData[region].terrain && regionData[region].terrain.elev));
+  off('canyon', !canyonMode && (pieMode || triPieMode || pulseMode || terrainMode || tollMode));
+  off('toll', !tollMode && (region !== 'wc' || pieMode || triPieMode || pulseMode || terrainMode || canyonMode));
 }
 
 // Debug hook (region-aware).
@@ -1353,6 +1457,9 @@ window.__viz = {
   hideData: (hide = true) => { if (field) field.points.visible = !hide; },
   region: (r) => { if (REGION_META[r]) startDrill(r); return region; }, // debug: force a drill into any region
   terrain: () => { toggleTerrain(); return { terrainMode, region }; },            // debug: toggle the current region's relief
+  canyon: () => { toggleCanyon(); return { canyonMode, region, crime: crimeType }; }, // debug: toggle the rate surface
+  canyonZ: (v) => { if (v != null) canyonZPeak = v; return canyonZPeak; },            // live-tune the surface height
+  canyonState: () => ({ canyonMode, crime: crimeType, flipTo: canyonFlipTo, zCur: canyonZCur, op: canyonOp, region }), // read-only probe
 };
 
 // ---- hover readout — "Nyanga · 2,300 robbery · 2019/20" (works in map AND pie), region-aware ----
@@ -1409,9 +1516,33 @@ function hoverPrecinct(clientX, clientY) {
   return bestD <= (pieMode || triPieMode ? 30 : 40) ? best : -1;
 }
 let mouseX = null, mouseY = null;
+// Canyon hover: snap to the nearest (station, year) cell centre, riding the risen surface. The rate
+// shown is the anchor's own float64 (crimes/pop×100k) — never read back from the GPU arrays.
+function updateCanyonTip() {
+  if (!canyonCur || drilling) { tip.style.opacity = '0'; return; }
+  const rect = renderer.domElement.getBoundingClientRect();
+  const mx = mouseX - rect.left, my = mouseY - rect.top;
+  fieldGroup.updateWorldMatrix(true, false);
+  let best = null, bestD = Infinity;
+  for (const a of canyonCur.anchors) {
+    _hv.set(a.x, a.y, a.z * canyonZCur);
+    fieldGroup.localToWorld(_hv);
+    _hv.project(camera);
+    const sx = (_hv.x * 0.5 + 0.5) * rect.width, sy = (-_hv.y * 0.5 + 0.5) * rect.height;
+    const d = Math.hypot(sx - mx, sy - my);
+    if (d < bestD) { bestD = d; best = a; }
+  }
+  if (!best || bestD > 26) { tip.style.opacity = '0'; return; }
+  tip.innerHTML = `${best.name} · ${crimeLabels[crimeType] || crimeType} · ${yearLabels[best.yi]}` +
+    `<br><span style="color:#9fb0c8">${best.rate.toFixed(1)} per 100k</span>`;
+  tip.style.left = mouseX + 'px';
+  tip.style.top = mouseY + 'px';
+  tip.style.opacity = '1';
+}
 function updateTooltip() {
   if (tollMode) { tip.style.opacity = '0'; return; } // the tooltip sleeps during the ceremony
   if (mouseX == null) return;
+  if (canyonMode) { updateCanyonTip(); return; }
   const si = hoverPrecinct(mouseX, mouseY);
   if (si < 0) { tip.style.opacity = '0'; return; }
   const s = activeStations()[si];
@@ -1440,10 +1571,23 @@ labelLayer.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:5
 document.body.appendChild(labelLayer);
 const labelEls = [], LABEL_MAX = 22;
 let labelSpecs = [], labelsRegion = null;
+const labelsKey = () => region + (canyonMode ? '·canyon' : ''); // the canyon swaps the label set without a region change
 function buildLabelSpecs() {
-  labelsRegion = region;
+  labelsRegion = labelsKey();
   const total = (s) => { let n = 0; for (const ty of crimeTypes) for (const y of years) n += (s.crimes[ty] && s.crimes[ty][y]) || 0; return n; };
-  if (region === 'wc') {
+  if (canyonMode && canyonCur) {
+    // The canyon's labels-on-relief exception: the year axis (few, load-bearing — hover names a cell
+    // but can't name a column). Even years outrank odd, so collision-culling on a narrow screen
+    // drops every OTHER label instead of a random scatter; 2020/21 is even, it always survives.
+    const g = canyonCur.grid;
+    labelSpecs = years.map((_, c) => ({
+      name: yearLabels[c],
+      x: g.x0 + (c + 0.5) * g.cellW,
+      y: g.y0 - g.rows * g.cellH - 14, // just south of the grid — the tilted view's near edge
+      rank: c % 2 === 0 ? 2 : 1,
+      big: false,
+    }));
+  } else if (region === 'wc') {
     labelSpecs = DETAIL_REGIONS.map((rk) => {   // six district names, each at the mean of its stations
       const sts = stationsByRegion.wc.filter((s) => norm(s.dc) === REGION_META[rk].dc);
       const x = sts.reduce((a, s) => a + s.x, 0) / sts.length, y = sts.reduce((a, s) => a + s.y, 0) / sts.length;
@@ -1464,10 +1608,12 @@ function buildLabelSpecs() {
 }
 const _lv = new THREE.Vector3();
 function updateLabels() {
-  const show = !drilling && !pieMode && !triPieMode && !terrainMode && !tollMode && strProg >= 1 && trProg >= 1;
+  const show = canyonMode
+    ? strProg >= 1 // year labels ride in once the graticule settles
+    : !drilling && !pieMode && !triPieMode && !terrainMode && !tollMode && strProg >= 1 && trProg >= 1;
   labelLayer.style.opacity = show ? '1' : '0';
   if (!show) return;
-  if (labelsRegion !== region) buildLabelSpecs();
+  if (labelsRegion !== labelsKey()) buildLabelSpecs();
   fieldGroup.updateWorldMatrix(true, false);
   const W = window.innerWidth, H = window.innerHeight, placed = [];
   for (let i = 0; i < labelEls.length; i++) {
@@ -1510,6 +1656,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
     return;
   }
   if (pieMode) return;                               // no drill from the pie
+  if (canyonMode) { toggleCanyon(); return; }        // tap in the canyon → back to the flat map
   if (terrainMode) { toggleTerrain(); return; }      // tap in Cape Town terrain → back to the flat map
   if (region === 'wc') {
     const { s, d } = nearestStation(stationsByRegion.wc, e.clientX, e.clientY);
@@ -1593,7 +1740,7 @@ function tick() {
     t = swarmEase(p);
     if (p >= 1) {
       pieMorphing = false;
-      if (!pieMode && !triPieMode) (pulseMode ? setMonthPair(mi) : setYearPair(yi)); // re-anchor the scrub pair on the flat map
+      if (!pieMode && !triPieMode && !canyonMode) (pulseMode ? setMonthPair(mi) : setYearPair(yi)); // re-anchor the scrub pair on the flat map (in the canyon the swarm stays parked)
     }
   } else if (flipping) {
     const p = Math.min((now - flipStart) / FLIP_MS, 1);
@@ -1670,7 +1817,7 @@ function tick() {
   // lift the crime with it. In the province zScaleCur stays 0 (T is a no-op there), so it renders flat.
   if (terrainField) {
     zScaleCur += ((terrainMode ? zPeak : 0) - zScaleCur) * 0.06;
-    tiltCur += ((terrainMode ? tiltAngle : 0) - tiltCur) * 0.06;
+    tiltCur += (((terrainMode || canyonMode) ? tiltAngle : 0) - tiltCur) * 0.06; // the canyon shares the view tilt (one relief grammar)
     if (trProg < 1) {
       trProg = Math.min((now - trStart) / trDur, 1);
       terrainField.setT(swarmEase(trProg));
@@ -1683,6 +1830,32 @@ function tick() {
       terrainField.points.visible = false;             // sink done → swap the outline back in (coincident band)
       structField.points.visible = true;
     }
+  }
+  // The canyon: ease the rate surface up/down, fade the pool with it. A pending crime flip parks its
+  // swap at ZERO height — aZ is a single attribute (it snaps on setTarget), so the range sinks flat
+  // as the old crime, swaps unseen, and rises as the new one (density crossfades on the way up).
+  if (canyonField) {
+    canyonZCur += (((canyonMode && !canyonFlipTo) ? canyonZPeak : 0) - canyonZCur) * 0.06;
+    canyonOp += ((canyonMode ? 1 : 0) - canyonOp) * 0.08;
+    if (canyonFlipTo && canyonZCur < canyonZPeak * 0.02) {
+      crimeType = canyonFlipTo; canyonFlipTo = '';
+      layouts = layoutsByType[crimeType];              // the map the exit returns to follows the flip
+      const to = canyonRates();
+      canyonField.setSource(canyonCur);
+      canyonField.setTarget(to);
+      canyonField.setStagger(0.6);
+      cnTo = to; cnStart = now; cnProg = 0;
+      refreshHud();
+    }
+    if (cnProg < 1) {
+      cnProg = Math.min((now - cnStart) / CN_MS, 1);
+      canyonField.setT(swarmEase(cnProg));
+      if (cnProg >= 1 && cnTo) { canyonCur = cnTo; cnTo = null; }
+    }
+    canyonField.setZScale(canyonZCur);
+    canyonField.setOpacity(canyonOp);
+    canyonField.setTime(time);
+    if (!canyonMode && canyonField.points.visible && canyonOp < 0.02) canyonField.points.visible = false;
   }
   fieldGroup.rotation.x = tiltCur;
   controls.update();
@@ -1711,4 +1884,5 @@ window.addEventListener('resize', () => {
   if (field) field.setPixelRatio(renderer.getPixelRatio());
   if (structField) structField.setPixelRatio(renderer.getPixelRatio());
   if (terrainField) terrainField.setPixelRatio(renderer.getPixelRatio());
+  if (canyonField) canyonField.setPixelRatio(renderer.getPixelRatio());
 });
