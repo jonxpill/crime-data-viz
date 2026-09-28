@@ -747,7 +747,7 @@ function gauss(rng) {
  * `cx,cy` shift the word's centre in world units (default: origin); `aspect` lets a caller pre-shape
  * the sampling box independent of the map box (so "MURDER" isn't stretched by a tall province box).
  */
-export function textLayout(word, count, box, { fontFrac = 0.5, jitter = 0.9, weight = 800, seed = 0x7057, cx = 0, cy = 0, spanFrac = 0.9 } = {}) {
+export function textLayout(word, count, box, { fontFrac = 0.5, jitter = 0.9, weight = 800, seed = 0x7057, cx = 0, cy = 0, spanFrac = 0.9, fontWorld = 0 } = {}) {
   const { w: W, h: H } = box;
   const CW = 1024, CH = Math.max(64, Math.round(CW * H / W));
   const cvs = (typeof OffscreenCanvas !== 'undefined')
@@ -758,10 +758,11 @@ export function textLayout(word, count, box, { fontFrac = 0.5, jitter = 0.9, wei
   ctx.fillStyle = '#fff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  let fs = Math.round(CH * fontFrac);
+  // fontWorld (world units) pins an EXACT size — several words set at one shared size; else fit to spanFrac.
+  let fs = fontWorld > 0 ? fontWorld * CH / H : Math.round(CH * fontFrac);
   const setFont = () => { ctx.font = `${weight} ${fs}px ui-monospace, "SF Mono", Menlo, monospace`; };
   setFont();
-  while (ctx.measureText(word).width > CW * spanFrac && fs > 8) { fs -= 4; setFont(); }
+  if (!(fontWorld > 0)) while (ctx.measureText(word).width > CW * spanFrac && fs > 8) { fs -= 4; setFont(); }
   ctx.fillText(word, CW / 2, CH / 2);
   const data = ctx.getImageData(0, 0, CW, CH).data;
   const on = [];
@@ -787,5 +788,6 @@ export function textLayout(word, count, box, { fontFrac = 0.5, jitter = 0.9, wei
     ? { cx: cx + (((minX + maxX) / 2) / CW - 0.5) * W, cy: cy + (0.5 - ((minY + maxY) / 2) / CH) * H,
         w: ((maxX - minX) / CW) * W, h: ((maxY - minY) / CH) * H }
     : { cx, cy, w: 0, h: 0 };
-  return { positions, density, bounds };
+  // ink: lit canvas pixels — two words from the same box compare by it (match their dots-per-ink density).
+  return { positions, density, bounds, ink: nOn };
 }

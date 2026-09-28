@@ -55,7 +55,9 @@ export function createTollDiptychView(ctx) {
     namePx: 13,            // base name size in 'shared' mode (px; scales with zoom)
     figClearFrac: 0.85,    // 'each': figure clearance beyond the word's half-width, ∝ word height (single-page parity)
     figHFrac: 0.30,        // 'each': figure font ∝ its word's ink height (the single page's proportion) — fixed-px read too LARGE here
-    nameSpanFrac: 0.29,    // 'each': name width as a fraction of its word's ink width (single-page parity)
+    // 'each': the NAME is spelled in the word's own dots (caps, same face) at ONE shared size — the LONGEST
+    // name's ink spans its word's ink × spanFrac; shorter names seat on the first letter. Dimmer than the word.
+    eachName: { spanFrac: 1.0, gapFrac: 0.24, density: 0.26, weight: 800 },
     readingBelow: 34,      // 'shared': the pair sits UNDER its disc (flanking figures collided mid-frame + clipped at the edges)
     pairGap: 24,           // 'shared': half-gap between the pair's numbers at the disc's centreline
     nameAbove: 20,         // 'shared': name's world offset above each dial's top
@@ -67,6 +69,8 @@ export function createTollDiptychView(ctx) {
   const TOLL_FRAME_DOTS = 200000, TOLL_THIN = 0.22;
   const PIE_LINE_SIZE = 1.3, STRUCT_DOT_SIZE = 1.6;    // struct dot size during the ceremony / restored on exit
   const WORD_N_TOTAL = 33000;   // 'each'-mode word budget, split across N discs (≈11k ink/word at N=3 — the proven density)
+  const NAME_N_MAX = 7000;      // 'each'-mode name budget per disc (used ∝ ink at the word's density; the rest discards)
+  const WORD_POOL = WORD_N_TOTAL + NAME_N_MAX * provinces.length; // [ words | names ] — one matte pool
   const tollW = () => Math.min(0.95, TOLL_FLIGHT_S / (TOLL_SWEEP_MS / 1000));
   const swarmEase = (x) => x;                          // constant speed (parity: wcExplore L163)
 
@@ -194,24 +198,44 @@ export function createTollDiptychView(ctx) {
     const box = ctx.data.box, cy = box.h * OPT.cyFrac;
     if (wordsMode === 'shared') {
       const o = OPT.sharedWord;                        // ONE central word spanning the composition
-      const lay = textLayout(tollWord, WORD_N_TOTAL, box, {
+      const word = textLayout(tollWord, WORD_N_TOTAL, box, {
         fontFrac: o.fontFrac, jitter: o.jitter, weight: o.weight, spanFrac: o.spanFrac,
         cx: o.cx, cy: cy + o.yFrac * box.h,
       });
+      const lay = { positions: new Float32Array(WORD_POOL * 2), density: new Float32Array(WORD_POOL) };
+      lay.positions.set(word.positions); lay.density.set(word.density); // name slots → density 0 (discarded)
       wordField.setSource(lay); wordField.setTarget(lay); wordField.setT(1);
       wordBounds = null;                               // figures anchor to the DISCS in this mode
     } else {
-      const o = OPT.eachWord;                          // a word over each disc, like the single pages
+      const o = OPT.eachWord, on = OPT.eachName;       // a word over each disc, like the single pages
       const half = Math.floor(WORD_N_TOTAL / discs.length);
-      const positions = new Float32Array(WORD_N_TOTAL * 2), density = new Float32Array(WORD_N_TOTAL);
-      wordBounds = discs.map((d, i) => {
-        const lay = textLayout(tollWord, half, box, {
-          fontFrac: o.fontFrac, jitter: o.jitter, weight: o.weight, spanFrac: o.spanFrac,
-          cx: d.cx, cy: cy + o.yFrac * box.h,
-        });
-        positions.set(lay.positions, i * half * 2);
-        density.set(lay.density, i * half);
-        return lay.bounds;
+      const positions = new Float32Array(WORD_POOL * 2), density = new Float32Array(WORD_POOL);
+      const words = discs.map((d) => textLayout(tollWord, half, box, {
+        fontFrac: o.fontFrac, jitter: o.jitter, weight: o.weight, spanFrac: o.spanFrac,
+        cx: d.cx, cy: cy + o.yFrac * box.h,
+      }));
+      words.forEach((w, i) => { positions.set(w.positions, i * half * 2); density.set(w.density, i * half); });
+      wordBounds = words.map((w) => w.bounds);
+
+      // THE NAMES, carved in the same material: one shared size (ink width is linear in font size, so one
+      // probe of the longest name solves it), jitter scaled with the letters so the grain matches the word.
+      const names = provinces.map((p) => p.label.toUpperCase());
+      const longest = names.reduce((a, b) => (b.length > a.length ? b : a));
+      const wb0 = wordBounds[0];
+      const probe = textLayout(longest, 1, box, { fontWorld: wb0.h, weight: on.weight });
+      const fontWorld = wb0.h * (wb0.w * on.spanFrac) / probe.bounds.w;
+      const jitter = Math.max(0.3, o.jitter * (probe.bounds.h * fontWorld / wb0.h) / wb0.h);
+      names.forEach((nm, i) => {
+        const wb = wordBounds[i], nl = textLayout(nm, NAME_N_MAX, box, { fontWorld, jitter, weight: on.weight });
+        const n = Math.min(NAME_N_MAX, Math.round(half * nl.ink / words[i].ink)); // the word's dots-per-ink
+        const dx = (wb.cx - wb.w / 2) - (nl.bounds.cx - nl.bounds.w / 2);      // ink left edge on the first letter
+        const dy = (wb.cy + wb.h / 2 + wb.h * on.gapFrac) - (nl.bounds.cy - nl.bounds.h / 2); // a gap above the ink
+        const base = WORD_N_TOTAL + i * NAME_N_MAX;
+        for (let k = 0; k < n; k++) {
+          positions[(base + k) * 2] = nl.positions[k * 2] + dx;
+          positions[(base + k) * 2 + 1] = nl.positions[k * 2 + 1] + dy;
+          density[base + k] = on.density;
+        }
       });
       const lay = { positions, density };
       wordField.setSource(lay); wordField.setTarget(lay); wordField.setT(1);
@@ -227,29 +251,19 @@ export function createTollDiptychView(ctx) {
     reading = discs.map(() => ({
       year: ctx.hud.makeFigure('transform:translate(-100%,-50%);text-align:right'),
       total: ctx.hud.makeFigure('transform:translate(0,-50%);text-align:left'),
-      name: ctx.hud.makeFigure(''),
-      nameUnit: 0,                                     // name px width per 1px font-size (monospace → exact)
+      name: ctx.hud.makeFigure(''),                    // 'shared' mode only — 'each' spells the name in dots
     }));
-    discs.forEach((d, i) => {
-      const rd = reading[i];
-      rd.name.set(provinces[i].label);
-      // Small-probe measure (single page's trick): tiny font → no viewport clamp, exact ratio.
-      rd.name.el.style.fontSize = '10px';
-      rd.nameUnit = rd.name.el.getBoundingClientRect().width / 10;
-      rd.name.el.style.fontSize = '';
-    });
+    discs.forEach((d, i) => reading[i].name.set(provinces[i].label));
     applyWordsMode();
   }
   function applyWordsMode() {
-    if (!reading) return;
-    for (const rd of reading) {
-      // 'each': the name's left edge seats on the word's first letter (single-page grammar).
-      // 'shared': the name centres above its disc.
-      rd.name.el.style.transform = wordsMode === 'each' ? 'translate(0,-50%)' : 'translate(-50%,-50%)';
-      rd.name.el.style.textAlign = wordsMode === 'each' ? 'left' : 'center';
-    }
+    // 'shared': the HTML name centres above its disc. 'each': the name is carved into the word pool
+    // (showWord), so the HTML name stands down.
+    if (reading) for (const rd of reading) rd.name.show(active && wordsMode !== 'each');
   }
-  function showReading(v) { if (reading) for (const rd of reading) { rd.year.show(v); rd.total.show(v); rd.name.show(v); } }
+  function showReading(v) {
+    if (reading) for (const rd of reading) { rd.year.show(v); rd.total.show(v); rd.name.show(v && wordsMode !== 'each'); }
+  }
 
   // Pin the reading to PROJECTED world anchors every frame (holds at any window aspect/zoom/resize) and
   // scale the type with the zoom — the reading is part of the object, not chrome floating over it.
@@ -278,9 +292,6 @@ export function createTollDiptychView(ctx) {
         const half = wb.w / 2 + wb.h * OPT.figClearFrac;
         const L = project(wb.cx - half, wb.cy), R = project(wb.cx + half, wb.cy);
         rd.year.place(L.x, L.y); rd.total.place(R.x, R.y);
-        const nx = project(wb.cx - wb.w / 2, wb.cy + wb.h * 0.62);
-        rd.name.place(nx.x, nx.y);                     // seated just above the ink, on the first letter
-        if (rd.nameUnit) rd.name.el.style.fontSize = ((wb.w * ppw * OPT.nameSpanFrac) / rd.nameUnit).toFixed(2) + 'px';
       } else {
         rd.year.el.style.fontSize = figFs;
         rd.total.el.style.fontSize = figFs;
@@ -515,7 +526,7 @@ export function createTollDiptychView(ctx) {
 
     enter() {
       // Owned pools/primitives: built ONCE (lazily), kept across ceremonies, disposed in dispose().
-      if (!wordField) wordField = ctx.makePool({ count: WORD_N_TOTAL, glow: false, size: 1.4, maxSize: 6, matte: '#3a4656', renderOrder: -2 });
+      if (!wordField) wordField = ctx.makePool({ count: WORD_POOL, glow: false, size: 1.4, maxSize: 6, matte: '#3a4656', renderOrder: -2 });
       if (!roll) roll = ctx.hud.floatingCaption('rollover');
       if (!reading) buildReading();
 
