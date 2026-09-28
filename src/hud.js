@@ -137,7 +137,7 @@ export function createHud() {
     const el = document.createElement('div');
     el.style.cssText =
       'position:fixed;z-index:8;transform:translate(-50%,-50%);' +
-      'font:400 14px/1.02 ui-monospace,"SF Mono",Menlo,monospace;letter-spacing:0.04em;color:#5a6377;' +
+      'font:400 14px/1.02 ui-monospace,"SF Mono",Menlo,monospace;letter-spacing:0.04em;color:var(--fig,#5a6377);' +
       'font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;user-select:none;' +
       'opacity:0;transition:opacity 0.8s ease;' + (cssText || '');
     (app || document.body).appendChild(el);

@@ -18,6 +18,8 @@
 //  • The choreographed leave is view-owned: K/M/Esc → phase='drain'; update runs drain→home; at home-complete
 //    it calls ctx.setView(idle,{paused:true}) — the FROZEN return — which is what triggers exit().
 import { tollLayouts, tollFrameLayout, tollHandLayout, textLayout } from '../layouts/capeTown.js';
+import { rampIndexOf, ROLES } from '../palette.js';
+const MURDER_RAMP = rampIndexOf('murder');            // the discs are murders → the contact family's ramp
 
 export function createTollView(ctx) {
   const { years, yearLabels } = ctx.data;
@@ -225,6 +227,7 @@ export function createTollView(ctx) {
     const slice = {
       positions: tollFrame.positions.subarray(tollHand.start * 2, (tollHand.start + tollHand.count) * 2),
       density: tollFrame.density.subarray(tollHand.start, tollHand.start + tollHand.count),
+      role: ROLES.frame,                               // the hand is frame, like the dial it rides
     };
     ctx.structField.setSource(slice, tollHand.start);
     ctx.structField.setTarget(slice, tollHand.start);
@@ -406,7 +409,7 @@ export function createTollView(ctx) {
 
     enter() {
       // wordField: built ONCE (lazily), kept across ceremonies (no 22k-pt GC churn), disposed in dispose().
-      if (!wordField) wordField = ctx.makePool({ count: WORD_N, glow: false, size: 1.4, maxSize: 6, matte: '#3a4656', renderOrder: -2 });
+      if (!wordField) wordField = ctx.makePool({ count: WORD_N, glow: false, size: 1.4, maxSize: 6, matte: '#3a4656', role: 'words', renderOrder: -2 });
       if (!roll) roll = ctx.hud.floatingCaption('rollover');
 
       const { cx, cy, R, dialR } = tollGeom();
@@ -414,6 +417,7 @@ export function createTollView(ctx) {
       // endpoints (raw murder counts). BLOCKER 1: the six-crime-sized pool holds M (guarded here too).
       tollData = tollLayouts(ctx.data.stations, { years, count: ctx.data.COUNT, park: ctx.data.park, cx, cy, R, dialR });
       if (!tollData) { console.error('[toll] pool cannot hold the toll — ceremony unavailable'); return; }
+      tollData.source.ramp = tollData.disc.ramp = MURDER_RAMP; // palette tone: both endpoints are murders
 
       active = true;
       phase = 'gather'; paused = false; done = false;
@@ -438,6 +442,7 @@ export function createTollView(ctx) {
       }
       phaseStart = performance.now();
       tollFrame = tollFrameLayout(ctx.data.structN, { cx, cy, R, dialR, ticks: years.length, seamRadii: tollData.seamRadii, frameDots: TOLL_FRAME_DOTS, thin: TOLL_THIN });
+      tollFrame.role = ROLES.frame;                     // palette tone: the dial is frame (the outline stays role 0)
       tollHand = tollFrame.hand;
       ctx.structField.setSize(PIE_LINE_SIZE);
       ctx.struct.startTo(tollFrame, TOLL_GATHER_MS, 0.6);
